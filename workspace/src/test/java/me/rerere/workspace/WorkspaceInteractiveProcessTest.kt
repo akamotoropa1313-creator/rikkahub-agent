@@ -67,6 +67,47 @@ class WorkspaceInteractiveProcessTest {
         assertTrue(process.isAlive)
     }
 
+    @Test fun `cleanup failure remains registered for retry`() {
+        val base = createTempDirectory("interactive").toFile()
+        val process = ControlledProcess(ignoreDestroy = true, ignoreForce = true)
+        val manager = WorkspaceManager(base, shellRunner = RecordingRunner { process })
+        manager.ensureWorkspace("root")
+        manager.startInteractiveProcess("root", "server")
+
+        assertThrows(WorkspaceProcessCleanupException::class.java) { manager.deleteWorkspace("root") }
+        assertTrue(manager.workspaceDir("root").exists())
+        assertTrue(process.isAlive)
+        assertEquals(1, process.forceCalls)
+
+        process.ignoreForce = false
+        assertTrue(manager.deleteWorkspace("root"))
+        assertEquals(2, process.forceCalls)
+        assertFalse(process.isAlive)
+        assertFalse(manager.workspaceDir("root").exists())
+    }
+
+    @Test fun `multiple processes retain only failed handle for deletion retry`() {
+        val base = createTempDirectory("interactive").toFile()
+        val successful = ControlledProcess()
+        val retryable = ControlledProcess(ignoreDestroy = true, ignoreForce = true)
+        val processes = ArrayDeque<Process>().apply { add(successful); add(retryable) }
+        val manager = WorkspaceManager(base, shellRunner = RecordingRunner { processes.removeFirst() })
+        manager.ensureWorkspace("root")
+        manager.startInteractiveProcess("root", "first")
+        manager.startInteractiveProcess("root", "second")
+
+        assertThrows(WorkspaceProcessCleanupException::class.java) { manager.deleteWorkspace("root") }
+        assertFalse(successful.isAlive)
+        assertTrue(retryable.isAlive)
+        assertEquals(1, successful.destroyCalls)
+
+        retryable.ignoreForce = false
+        assertTrue(manager.deleteWorkspace("root"))
+        assertEquals(1, successful.destroyCalls)
+        assertFalse(retryable.isAlive)
+        assertFalse(manager.workspaceDir("root").exists())
+    }
+
     @Test fun `deletion kills interactive process before directory`() {
         val base = createTempDirectory("interactive").toFile()
         val process = ControlledProcess()
@@ -134,8 +175,9 @@ private class CloseTrackingOutputStream : ByteArrayOutputStream() {
 
 private class ControlledProcess(
     private val ignoreDestroy: Boolean = false,
-    private val ignoreForce: Boolean = false,
+    ignoreForce: Boolean = false,
 ) : Process() {
+    @Volatile var ignoreForce = ignoreForce
     val stdin = CloseTrackingOutputStream()
     private val stdout = ByteArrayInputStream("out".toByteArray())
     private val stderr = ByteArrayInputStream("err".toByteArray())

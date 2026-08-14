@@ -35,8 +35,10 @@ class WorkspaceCodexAppServerLauncherTest {
         val transport = WorkspaceCodexAppServerLauncher(manager).launch("workspace")
         val dispatcher = CodexAppServerRequestDispatcher(transport)
 
-        val response = async { dispatcher.sendRequest("test/method") }
-        assertTrue(process.stdin.flushed.await(2, java.util.concurrent.TimeUnit.SECONDS))
+        val response = async(Dispatchers.Default) { dispatcher.sendRequest("test/method") }
+        assertTrue(withContext(Dispatchers.IO) {
+            process.stdin.flushed.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        })
         val request = CodexAppServerJsonRpc().json.parseToJsonElement(process.stdin.text().trim()).jsonObject
         assertEquals("test/method", request["method"]!!.jsonPrimitive.content)
         val id = request["id"]!!.jsonPrimitive.content

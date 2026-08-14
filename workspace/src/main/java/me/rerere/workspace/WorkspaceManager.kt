@@ -52,7 +52,9 @@ class WorkspaceManager(
     fun deleteWorkspace(root: String): Boolean = synchronized(processLifecycleLock) {
         // 先杀掉该 workspace 所有后台进程, 再删目录, 避免进程仍持有已删除目录下的 fd
         killAllBackground(root)
-        interactive.remove(root)?.toList()?.forEach { it.close() }
+        // Keep handles registered until their successful close invokes onClose. A failed cleanup
+        // must remain discoverable so a later deletion retries it instead of orphaning the process.
+        interactive[root]?.toList().orEmpty().forEach { it.close() }
         workspaceDir(root).deleteRecursively()
     }
 
