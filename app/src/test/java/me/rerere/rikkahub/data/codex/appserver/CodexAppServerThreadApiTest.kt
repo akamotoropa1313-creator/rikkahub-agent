@@ -4,6 +4,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -131,35 +132,37 @@ class CodexAppServerThreadApiTest {
     @Test
     fun `malformed results and resume mismatch fail explicitly`() {
         runBlocking {
-            val malformed = listOf(
-                JsonNull, JsonPrimitive("bad"), JsonArray(emptyList()), JsonObject(emptyMap()),
-                buildJsonObject { put("thread", JsonPrimitive("bad")) },
-                buildJsonObject { put("thread", JsonObject(emptyMap())) },
-                buildJsonObject { put("thread", buildJsonObject { put("id", 3) }) },
-                result(" "),
-                buildJsonObject { put("thread", buildJsonObject { put("id", "id") }); put("model", 4) },
-            )
-            malformed.forEach { raw ->
-                fixture().use { f ->
-                    val call = async { f.api.startThread() }; f.respond(f.takeRequest(), raw)
-                    expect<CodexAppServerThreadProtocolException> { call.await() }
-                }
-            }
-            listOf("model", "modelProvider", "cwd").forEach { field ->
-                listOf(null, JsonNull, JsonPrimitive(7), JsonPrimitive(true), JsonArray(emptyList()), JsonObject(emptyMap())).forEach { bad ->
+            supervisorScope {
+                val malformed = listOf(
+                    JsonNull, JsonPrimitive("bad"), JsonArray(emptyList()), JsonObject(emptyMap()),
+                    buildJsonObject { put("thread", JsonPrimitive("bad")) },
+                    buildJsonObject { put("thread", JsonObject(emptyMap())) },
+                    buildJsonObject { put("thread", buildJsonObject { put("id", 3) }) },
+                    result(" "),
+                    buildJsonObject { put("thread", buildJsonObject { put("id", "id") }); put("model", 4) },
+                )
+                malformed.forEach { raw ->
                     fixture().use { f ->
-                        val call = async { f.api.startThread() }
-                        val response = result("id").toMutableMap().apply {
-                            if (bad == null) remove(field) else put(field, bad)
-                        }.let(::JsonObject)
-                        f.respond(f.takeRequest(), response)
+                        val call = async { f.api.startThread() }; f.respond(f.takeRequest(), raw)
                         expect<CodexAppServerThreadProtocolException> { call.await() }
                     }
                 }
-            }
-            fixture().use { f ->
-                val call = async { f.api.resumeThread("wanted") }; f.respond(f.takeRequest(), result("other"))
-                expect<CodexAppServerThreadIdMismatchException> { call.await() }
+                listOf("model", "modelProvider", "cwd").forEach { field ->
+                    listOf(null, JsonNull, JsonPrimitive(7), JsonPrimitive(true), JsonArray(emptyList()), JsonObject(emptyMap())).forEach { bad ->
+                        fixture().use { f ->
+                            val call = async { f.api.startThread() }
+                            val response = result("id").toMutableMap().apply {
+                                if (bad == null) remove(field) else put(field, bad)
+                            }.let(::JsonObject)
+                            f.respond(f.takeRequest(), response)
+                            expect<CodexAppServerThreadProtocolException> { call.await() }
+                        }
+                    }
+                }
+                fixture().use { f ->
+                    val call = async { f.api.resumeThread("wanted") }; f.respond(f.takeRequest(), result("other"))
+                    expect<CodexAppServerThreadIdMismatchException> { call.await() }
+                }
             }
         }
     }
@@ -180,11 +183,12 @@ class CodexAppServerThreadApiTest {
     fun `timeout and cancellation remove pending and never retry`() {
         runBlocking {
             fixture().use { f ->
+                val writes = f.transport.successfulWriteCount()
                 val timed = async { f.api.startThread(timeout = 10.milliseconds) }
                 f.takeRequest(); expect<kotlinx.coroutines.TimeoutCancellationException> { timed.await() }
-                assertEquals(0, f.dispatcher.pendingRequestCount()); assertEquals(2, f.transport.successfulWriteCount())
+                assertEquals(0, f.dispatcher.pendingRequestCount()); assertEquals(writes + 1, f.transport.successfulWriteCount())
                 val cancelled = async { f.api.startThread() }; f.takeRequest(); cancelled.cancelAndJoin()
-                assertEquals(0, f.dispatcher.pendingRequestCount()); assertEquals(3, f.transport.successfulWriteCount())
+                assertEquals(0, f.dispatcher.pendingRequestCount()); assertEquals(writes + 2, f.transport.successfulWriteCount())
             }
         }
     }
@@ -192,11 +196,13 @@ class CodexAppServerThreadApiTest {
     @Test
     fun `json rpc errors remain dispatcher errors`() {
         runBlocking {
-            fixture().use { f ->
-                val call = async { f.api.startThread() }; val request = f.takeRequest()
-                f.transport.injectServerLine(codec.encode(JsonRpcErrorResponse(request.id, JsonRpcError(42, "no"))))
-                val error = expect<CodexAppServerResponseException> { call.await() }
-                assertEquals(42, error.error.code); assertEquals("no", error.error.message)
+            supervisorScope {
+                fixture().use { f ->
+                    val call = async { f.api.startThread() }; val request = f.takeRequest()
+                    f.transport.injectServerLine(codec.encode(JsonRpcErrorResponse(request.id, JsonRpcError(42, "no"))))
+                    val error = expect<CodexAppServerResponseException> { call.await() }
+                    assertEquals(42, error.error.code); assertEquals("no", error.error.message)
+                }
             }
         }
     }
@@ -204,11 +210,13 @@ class CodexAppServerThreadApiTest {
     @Test
     fun `resume json rpc error preserves code and message`() {
         runBlocking {
-            fixture().use { f ->
-                val call = async { f.api.resumeThread("id") }; val request = f.takeRequest()
-                f.transport.injectServerLine(codec.encode(JsonRpcErrorResponse(request.id, JsonRpcError(73, "resume denied"))))
-                val error = expect<CodexAppServerResponseException> { call.await() }
-                assertEquals(73, error.error.code); assertEquals("resume denied", error.error.message)
+            supervisorScope {
+                fixture().use { f ->
+                    val call = async { f.api.resumeThread("id") }; val request = f.takeRequest()
+                    f.transport.injectServerLine(codec.encode(JsonRpcErrorResponse(request.id, JsonRpcError(73, "resume denied"))))
+                    val error = expect<CodexAppServerResponseException> { call.await() }
+                    assertEquals(73, error.error.code); assertEquals("resume denied", error.error.message)
+                }
             }
         }
     }
@@ -300,7 +308,18 @@ class CodexAppServerThreadApiTest {
     }
     private fun decodeRequest(line: String) = (codec.decode(line).getOrThrow() as JsonRpcMessage.Request).value
     private fun decodeNotification(line: String) = (codec.decode(line).getOrThrow() as JsonRpcMessage.Notification).value
-    private suspend inline fun <reified T : Throwable> expect(crossinline block: suspend () -> Unit): T = try { block(); fail("Expected ${T::class.java.simpleName}"); error("unreachable") } catch (e: Throwable) { val actual = e.cause ?: e; if (actual !is T) throw e; actual }
+    private suspend inline fun <reified T : Throwable> expect(crossinline block: suspend () -> Unit): T =
+        try {
+            block()
+            fail("Expected ${T::class.java.simpleName}")
+            error("unreachable")
+        } catch (error: Throwable) {
+            when {
+                error is T -> error
+                error.cause is T -> error.cause as T
+                else -> throw error
+            }
+        }
 
     private inner class Fixture(val transport: FakeCodexAppServerTransport, val dispatcher: CodexAppServerRequestDispatcher, val connection: CodexAppServerConnection, val api: CodexAppServerThreadApi) : AutoCloseable {
         suspend fun takeRequest() = decodeRequest(transport.takeClientLine())
