@@ -96,8 +96,8 @@ class CodexAppServerTurnStreamingStdioIntegrationTest {
             process.writeStdout(response(threadRequest, buildJsonObject { put("thread", buildJsonObject { put("id", "thread-1") }); put("model", "gpt"); put("modelProvider", "openai"); put("cwd", "/workspace") }))
             assertEquals("thread-1", startingThread.await().thread.id)
 
-            val api = CodexAppServerTurnApi(connection); val events = mutableListOf<CodexAppServerTurnEvent>()
-            val collector = launch(start = CoroutineStart.UNDISPATCHED) { api.events.collect { events += it } }
+            val api = CodexAppServerTurnApi(connection); val events = mutableListOf<CodexAppServerTurnEvent>(); val allEvents = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val collector = launch(start = CoroutineStart.UNDISPATCHED) { api.events.collect { events += it; if (events.size == 20) allEvents.complete(Unit) } }
             val startingTurn = async(Dispatchers.Default) { api.startTurn("thread-1", listOf(CodexAppServerTurnInput.Text("Hello Codex"))) }
             awaitFlushes(process, 4); val request = line(process, 3); assertEquals("turn/start", request["method"]!!.jsonPrimitive.content)
             assertEquals("Hello Codex", request["params"]!!.jsonObject["input"]!!.let { it as JsonArray }[0].jsonObject["text"]!!.jsonPrimitive.content)
@@ -112,13 +112,30 @@ class CodexAppServerTurnStreamingStdioIntegrationTest {
             process.writeStdout(notification("item/reasoning/summaryTextDelta", indexed("summaryIndex", 0, "draft summary")))
             process.writeStdout(notification("item/reasoning/textDelta", indexed("contentIndex", 0, "draft raw")))
             val finalReasoning = reasoning(listOf("Final summary"), listOf("Final content")); process.writeStdout(notification("item/completed", itemParams(finalReasoning, "completedAtMs", 4)))
+            process.writeStdout(notification("item/started", itemParams(command(null, "inProgress"), "startedAtMs", 5)))
+            process.writeStdout(notification("item/commandExecution/outputDelta", commandDelta("draft ")))
+            process.writeStdout(notification("item/commandExecution/outputDelta", commandDelta("output")))
+            process.writeStdout(notification("item/completed", itemParams(command("final authoritative output", "completed"), "completedAtMs", 6)))
+            val provisional = change("draft.txt", "add", "+draft\n")
+            val finalChange = change("final.txt", "delete", "-final\n")
+            process.writeStdout(notification("item/started", itemParams(fileChange(listOf(provisional), "inProgress"), "startedAtMs", 7)))
+            process.writeStdout(notification("item/fileChange/patchUpdated", patchUpdated(listOf(provisional))))
+            val turnDiff = "--- a/final.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-final\n"
+            process.writeStdout(notification("turn/diff/updated", buildJsonObject { put("threadId", "thread-1"); put("turnId", "turn-1"); put("diff", turnDiff) }))
+            process.writeStdout(notification("item/completed", itemParams(fileChange(listOf(finalChange), "completed"), "completedAtMs", 8)))
             process.writeStdout(notification("turn/completed", turnParams("completed")))
-            withTimeout(2_000) { while (events.size < 12) yield() }
+            withTimeout(2_000) { allEvents.await() }
             assertTrue(events[0] is CodexAppServerTurnEvent.TurnStarted); assertTrue(events[1] is CodexAppServerTurnEvent.ItemStarted)
             assertEquals(listOf("Hello", ", ", "world"), events.filterIsInstance<CodexAppServerTurnEvent.AgentMessageDelta>().map { it.delta })
             val completed = events.filterIsInstance<CodexAppServerTurnEvent.ItemCompleted>()
             assertEquals("Hello, final!", (completed[0].item as CodexAppServerItemSnapshot.AgentMessage).text); assertEquals(finalAgent, completed[0].item.raw)
             val reasoning = completed[1].item as CodexAppServerItemSnapshot.Reasoning; assertEquals(listOf("Final summary"), reasoning.summary); assertEquals(listOf("Final content"), reasoning.content); assertEquals(finalReasoning, reasoning.raw)
+            assertEquals(listOf("draft ", "output"), events.filterIsInstance<CodexAppServerTurnEvent.CommandExecutionOutputDelta>().map { it.delta })
+            val finalCommand = completed[2].item as CodexAppServerItemSnapshot.CommandExecution
+            assertEquals("echo test", finalCommand.command); assertEquals(CodexAppServerCommandExecutionSource.Agent, finalCommand.source); assertEquals("final authoritative output", finalCommand.aggregatedOutput)
+            val patch = events.filterIsInstance<CodexAppServerTurnEvent.FileChangePatchUpdated>().single(); assertEquals("draft.txt", patch.changes.single().path)
+            assertEquals(turnDiff, events.filterIsInstance<CodexAppServerTurnEvent.TurnDiffUpdated>().single().diff)
+            val finalFile = completed[3].item as CodexAppServerItemSnapshot.FileChange; assertEquals("final.txt", finalFile.changes.single().path); assertEquals("-final\n", finalFile.changes.single().diff)
             assertTrue(events.last() is CodexAppServerTurnEvent.TurnCompleted)
             collector.cancelAndJoin(); connection.close()
         }
@@ -132,6 +149,11 @@ class CodexAppServerTurnStreamingStdioIntegrationTest {
     private fun turnParams(status: String) = buildJsonObject { put("threadId", "thread-1"); put("turn", turn(status)) }
     private fun agent(text: String) = buildJsonObject { put("type", "agentMessage"); put("id", "agent-1"); put("text", text) }
     private fun reasoning(summary: List<String>, content: List<String>) = buildJsonObject { put("type", "reasoning"); put("id", "reasoning-1"); put("summary", JsonArray(summary.map(::JsonPrimitive))); put("content", JsonArray(content.map(::JsonPrimitive))) }
+    private fun command(output: String?, status: String) = buildJsonObject { put("type", "commandExecution"); put("id", "command-1"); put("command", "echo test"); put("cwd", "/workspace"); put("status", status); put("commandActions", JsonArray(emptyList())); output?.let { put("aggregatedOutput", it) } }
+    private fun commandDelta(value: String) = buildJsonObject { put("threadId", "thread-1"); put("turnId", "turn-1"); put("itemId", "command-1"); put("delta", value) }
+    private fun change(path: String, kind: String, diff: String) = buildJsonObject { put("path", path); put("kind", buildJsonObject { put("type", kind) }); put("diff", diff) }
+    private fun fileChange(changes: List<JsonObject>, status: String) = buildJsonObject { put("type", "fileChange"); put("id", "file-1"); put("status", status); put("changes", JsonArray(changes)) }
+    private fun patchUpdated(changes: List<JsonObject>) = buildJsonObject { put("threadId", "thread-1"); put("turnId", "turn-1"); put("itemId", "file-1"); put("changes", JsonArray(changes)) }
     private fun itemParams(item: JsonObject, key: String, value: Long) = buildJsonObject { put("threadId", "thread-1"); put("turnId", "turn-1"); put("item", item); put(key, value) }
     private fun delta(value: String) = buildJsonObject { put("threadId", "thread-1"); put("turnId", "turn-1"); put("itemId", "agent-1"); put("delta", value) }
     private fun indexed(key: String, value: Long, delta: String? = null) = buildJsonObject { put("threadId", "thread-1"); put("turnId", "turn-1"); put("itemId", "reasoning-1"); put(key, value); delta?.let { put("delta", it) } }
