@@ -51,16 +51,26 @@ class CodexAppServerRequestDispatcherTest {
 
             dispatcher.respondError(JsonRpcId.StringId("approval"), JsonRpcError(12, "denied"))
             val error = CodexAppServerJsonRpc().decode(transport.takeClientLine()).getOrThrow() as JsonRpcMessage.ErrorResponse
+            assertEquals(JsonRpcId.StringId("approval"), error.value.id)
             assertEquals("denied", error.value.error.message)
         }
     }
 
     @Test
-    fun correlatesSuccessAndNumericStringCompatibility() = runBlocking {
+    fun numericAndStringIdsAreNotInterchangeable() = runBlocking {
         fixture().use { (transport, dispatcher) ->
             val request = async(start = CoroutineStart.UNDISPATCHED) { dispatcher.sendRequest("test") }
             transport.takeClientLine()
+            val diagnostic = async(start = CoroutineStart.UNDISPATCHED) {
+                dispatcher.events.take(1).toList().single()
+            }
             transport.injectServerLine("""{"id":"1","result":{"ok":true}}""")
+            assertEquals(
+                CodexAppServerEvent.UnknownResponseId(JsonRpcId.StringId("1")),
+                withTimeout(2.seconds) { diagnostic.await() },
+            )
+            assertTrue(!request.isCompleted)
+            transport.injectServerLine("""{"id":1,"result":{"ok":true}}""")
             assertTrue(request.await().jsonObject["ok"]!!.jsonPrimitive.content.toBoolean())
         }
     }
@@ -173,6 +183,7 @@ class CodexAppServerRequestDispatcherTest {
             transport.takeClientLine()
             val failure = IllegalStateException("broken pipe")
             transport.injectFailure(failure)
+            assertEquals(failure, dispatcher.awaitTerminal())
             assertEquals(failure, request.await().exceptionOrNull())
             assertTrue(withTimeout(2.seconds) { event.await() } is CodexAppServerEvent.TransportFailure)
             assertEquals(0, dispatcher.pendingRequestCount())
@@ -185,9 +196,124 @@ class CodexAppServerRequestDispatcherTest {
             val request = async(start = CoroutineStart.UNDISPATCHED) { runCatching { dispatcher.sendRequest("wait") } }
             transport.takeClientLine()
             transport.injectEof()
+            dispatcher.awaitTerminal()
             assertTrue(request.await().exceptionOrNull() is CodexAppServerTransportClosedException)
             assertEquals(0, dispatcher.pendingRequestCount())
         }
+    }
+
+    @Test
+    fun naturalFlowCompletionFailsPendingAndCleansMap() = runBlocking {
+        fixture().use { (transport, dispatcher) ->
+            val request = async(start = CoroutineStart.UNDISPATCHED) {
+                runCatching { dispatcher.sendRequest("wait") }
+            }
+            transport.takeClientLine()
+            transport.completeInbound()
+            assertTrue(dispatcher.awaitTerminal() is CodexAppServerTransportClosedException)
+            assertTrue(request.await().exceptionOrNull() is CodexAppServerTransportClosedException)
+            assertEquals(0, dispatcher.pendingRequestCount())
+        }
+    }
+
+    @Test
+    fun flowExceptionFailsPendingAndCleansMap() = runBlocking {
+        fixture().use { (transport, dispatcher) ->
+            val request = async(start = CoroutineStart.UNDISPATCHED) {
+                runCatching { dispatcher.sendRequest("wait") }
+            }
+            transport.takeClientLine()
+            val failure = IllegalStateException("reader failed")
+            transport.failInbound(failure)
+            assertEquals(failure, dispatcher.awaitTerminal())
+            assertEquals(failure, request.await().exceptionOrNull())
+            assertEquals(0, dispatcher.pendingRequestCount())
+        }
+    }
+
+    @Test
+    fun terminalTransitionRacingRequestRegistrationCannotLeakPendingEntry() = runBlocking {
+        fixture().use { (transport, dispatcher) ->
+            val gate = transport.pauseWrites()
+            val request = async(start = CoroutineStart.UNDISPATCHED) {
+                runCatching { dispatcher.sendRequest("racing") }
+            }
+            gate.awaitWriteAttempt() // The request is registered and blocked in the fake write.
+            val failure = IllegalStateException("transport failed")
+            transport.injectFailure(failure)
+            assertEquals(failure, dispatcher.awaitTerminal())
+            assertEquals(0, dispatcher.pendingRequestCount())
+            transport.resumeWrites(gate)
+            assertTrue(request.await().isFailure)
+            assertEquals(0, dispatcher.pendingRequestCount())
+        }
+    }
+
+    @Test
+    fun requestWriteFailureTerminatesDispatcherAndCleansPending() = runBlocking {
+        fixture().use { (transport, dispatcher) ->
+            val failure = IllegalStateException("request write failed")
+            transport.failNextWrite(failure)
+            val result = runCatching { dispatcher.sendRequest("write") }
+            assertEquals(failure, result.exceptionOrNull())
+            assertEquals(failure, dispatcher.awaitTerminal())
+            assertEquals(0, dispatcher.pendingRequestCount())
+        }
+    }
+
+    @Test
+    fun notificationWriteFailureFailsExistingPendingRequest() = runBlocking {
+        fixture().use { (transport, dispatcher) ->
+            val pending = async(start = CoroutineStart.UNDISPATCHED) {
+                runCatching { dispatcher.sendRequest("wait") }
+            }
+            transport.takeClientLine()
+            val failure = IllegalStateException("notification write failed")
+            transport.failNextWrite(failure)
+            assertEquals(failure, runCatching { dispatcher.sendNotification("notify") }.exceptionOrNull())
+            assertEquals(failure, dispatcher.awaitTerminal())
+            assertEquals(failure, pending.await().exceptionOrNull())
+            assertEquals(0, dispatcher.pendingRequestCount())
+        }
+    }
+
+    @Test
+    fun serverResponseWriteFailuresTerminateDispatcher() = runBlocking {
+        fixture().use { (transport, dispatcher) ->
+            val failure = IllegalStateException("success response write failed")
+            transport.failNextWrite(failure)
+            assertEquals(
+                failure,
+                runCatching { dispatcher.respondSuccess(JsonRpcId.StringId("approval")) }.exceptionOrNull(),
+            )
+            assertEquals(failure, dispatcher.awaitTerminal())
+            assertEquals(0, dispatcher.pendingRequestCount())
+        }
+        fixture().use { (transport, dispatcher) ->
+            val failure = IllegalStateException("error response write failed")
+            transport.failNextWrite(failure)
+            assertEquals(
+                failure,
+                runCatching {
+                    dispatcher.respondError(JsonRpcId.StringId("approval"), JsonRpcError(1, "no"))
+                }.exceptionOrNull(),
+            )
+            assertEquals(failure, dispatcher.awaitTerminal())
+        }
+    }
+
+    @Test
+    fun everyOutboundApiUsesUnifiedClosedException() = runBlocking {
+        val transport = FakeCodexAppServerTransport()
+        val dispatcher = CodexAppServerRequestDispatcher(transport)
+        dispatcher.close()
+        assertTrue(runCatching { dispatcher.sendRequest("x") }.exceptionOrNull() is CodexAppServerDispatcherClosedException)
+        assertTrue(runCatching { dispatcher.sendNotification("x") }.exceptionOrNull() is CodexAppServerDispatcherClosedException)
+        assertTrue(runCatching { dispatcher.respondSuccess(JsonRpcId.StringId("x")) }.exceptionOrNull() is CodexAppServerDispatcherClosedException)
+        assertTrue(
+            runCatching { dispatcher.respondError(JsonRpcId.StringId("x"), JsonRpcError(1, "x")) }
+                .exceptionOrNull() is CodexAppServerDispatcherClosedException
+        )
     }
 
     @Test

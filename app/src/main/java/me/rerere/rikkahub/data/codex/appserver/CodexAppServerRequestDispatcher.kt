@@ -1,10 +1,8 @@
 package me.rerere.rikkahub.data.codex.appserver
 
 import java.io.Closeable
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,8 +25,10 @@ class CodexAppServerRequestDispatcher(
     private val defaultTimeout: Duration = 5.minutes,
 ) : Closeable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val pending = ConcurrentHashMap<JsonRpcId.NumberId, CompletableDeferred<JsonElement>>()
-    private val closed = AtomicBoolean(false)
+    private val stateLock = Any()
+    private val pending = mutableMapOf<JsonRpcId.NumberId, CompletableDeferred<JsonElement>>()
+    private var terminalCause: Throwable? = null
+    private val terminal = CompletableDeferred<Throwable>()
     private val mutableEvents = MutableSharedFlow<CodexAppServerEvent>(extraBufferCapacity = 64)
 
     /** Notifications, server requests, and diagnostics in transport arrival order. */
@@ -36,15 +36,28 @@ class CodexAppServerRequestDispatcher(
 
     init {
         scope.launch {
-            transport.events.collect { event ->
-                when (event) {
-                    is CodexAppServerTransportEvent.Line -> consumeLine(event.value)
-                    is CodexAppServerTransportEvent.Failure -> failTransport(event.cause)
-                    CodexAppServerTransportEvent.Closed -> failTransport(
-                        CodexAppServerTransportClosedException(),
-                        CodexAppServerEvent.TransportClosed,
-                    )
+            try {
+                transport.events.collect { event ->
+                    when (event) {
+                        is CodexAppServerTransportEvent.Line -> consumeLine(event.value)
+                        is CodexAppServerTransportEvent.Failure -> terminate(
+                            event.cause,
+                            CodexAppServerEvent.TransportFailure(event.cause),
+                        )
+                        CodexAppServerTransportEvent.Closed -> terminate(
+                            CodexAppServerTransportClosedException(),
+                            CodexAppServerEvent.TransportClosed,
+                        )
+                    }
                 }
+                terminate(
+                    CodexAppServerTransportClosedException(),
+                    CodexAppServerEvent.TransportClosed,
+                )
+            } catch (error: CancellationException) {
+                if (currentTerminalCause() == null) throw error
+            } catch (error: Throwable) {
+                terminate(error, CodexAppServerEvent.TransportFailure(error))
             }
         }
     }
@@ -54,40 +67,43 @@ class CodexAppServerRequestDispatcher(
         params: JsonElement? = null,
         timeout: Duration = defaultTimeout,
     ): JsonElement {
-        check(!closed.get()) { "Dispatcher is closed" }
-        val id = idAllocator.allocate()
         val response = CompletableDeferred<JsonElement>()
-        check(pending.putIfAbsent(id, response) == null)
+        val id = synchronized(stateLock) {
+            throwIfTerminalLocked()
+            val allocated = idAllocator.allocate()
+            check(pending.put(allocated, response) == null)
+            allocated
+        }
         try {
-            if (closed.get()) throw CodexAppServerDispatcherClosedException()
-            try {
-                transport.sendLine(codec.encode(JsonRpcRequest(id, method, params)))
-            } catch (error: Throwable) {
-                if (error !is CancellationException) failTransport(error)
-                throw error
-            }
+            sendLineSafely(codec.encode(JsonRpcRequest(id, method, params)))
             return withTimeout(timeout) { response.await() }
-        } catch (error: Throwable) {
-            response.completeExceptionally(error)
-            throw error
         } finally {
-            pending.remove(id, response)
+            synchronized(stateLock) { pending.remove(id, response) }
         }
     }
 
     suspend fun sendNotification(method: String, params: JsonElement? = null) {
-        check(!closed.get()) { "Dispatcher is closed" }
-        transport.sendLine(codec.encode(JsonRpcNotification(method, params)))
+        sendLineSafely(codec.encode(JsonRpcNotification(method, params)))
     }
 
     suspend fun respondSuccess(id: JsonRpcId, result: JsonElement = JsonNull) {
-        check(!closed.get()) { "Dispatcher is closed" }
-        transport.sendLine(codec.encode(JsonRpcResponse(id, result)))
+        sendLineSafely(codec.encode(JsonRpcResponse(id, result)))
     }
 
     suspend fun respondError(id: JsonRpcId, error: JsonRpcError) {
-        check(!closed.get()) { "Dispatcher is closed" }
-        transport.sendLine(codec.encode(JsonRpcErrorResponse(id, error)))
+        sendLineSafely(codec.encode(JsonRpcErrorResponse(id, error)))
+    }
+
+    private suspend fun sendLineSafely(line: String) {
+        synchronized(stateLock) { throwIfTerminalLocked() }
+        try {
+            transport.sendLine(line)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            terminate(error, CodexAppServerEvent.TransportFailure(error))
+            throw error
+        }
     }
 
     private suspend fun consumeLine(line: String) {
@@ -108,11 +124,12 @@ class CodexAppServerRequestDispatcher(
     }
 
     private suspend fun complete(id: JsonRpcId, result: Result<JsonElement>) {
-        val numericId = when (id) {
-            is JsonRpcId.NumberId -> id
-            is JsonRpcId.StringId -> id.value.toLongOrNull()?.let(JsonRpcId::NumberId)
+        val deferred = synchronized(stateLock) {
+            when (id) {
+                is JsonRpcId.NumberId -> pending.remove(id)
+                is JsonRpcId.StringId -> null
+            }
         }
-        val deferred = numericId?.let(pending::remove)
         if (deferred == null) {
             mutableEvents.emit(CodexAppServerEvent.UnknownResponseId(id))
         } else {
@@ -120,37 +137,43 @@ class CodexAppServerRequestDispatcher(
         }
     }
 
-    private suspend fun failTransport(
-        cause: Throwable,
-        event: CodexAppServerEvent = CodexAppServerEvent.TransportFailure(cause),
-    ) {
-        mutableEvents.emit(event)
-        failPending(cause)
-        if (closed.compareAndSet(false, true)) {
-            transport.close()
-            scope.cancel()
+    /**
+     * Linearizes every terminal path under [stateLock]. Once the cause is published, registration
+     * and every outbound API reject new work. Pending entries are detached atomically, so a request
+     * can be either in the detached batch or rejected, but can never be inserted behind cleanup.
+     */
+    private fun terminate(cause: Throwable, diagnostic: CodexAppServerEvent?) {
+        val toFail = synchronized(stateLock) {
+            if (terminalCause != null) return
+            terminalCause = cause
+            pending.values.toList().also { pending.clear() }
         }
+        toFail.forEach { it.completeExceptionally(cause) }
+        terminal.complete(cause)
+        runCatching { transport.close() }
+        // Terminal correctness never waits for a diagnostic collector.
+        if (diagnostic != null) mutableEvents.tryEmit(diagnostic)
+        scope.cancel()
     }
 
-    private fun failPending(cause: Throwable) {
-        pending.entries.forEach { (id, deferred) ->
-            if (pending.remove(id, deferred)) deferred.completeExceptionally(cause)
-        }
+    private fun throwIfTerminalLocked() {
+        terminalCause?.let { throw CodexAppServerDispatcherClosedException(it) }
     }
 
-    /** Visible for lifecycle/leak assertions without exposing the pending map itself. */
-    internal fun pendingRequestCount(): Int = pending.size
+    private fun currentTerminalCause(): Throwable? = synchronized(stateLock) { terminalCause }
+
+    internal fun pendingRequestCount(): Int = synchronized(stateLock) { pending.size }
+    internal suspend fun awaitTerminal(): Throwable = terminal.await()
 
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
-        failPending(CodexAppServerDispatcherClosedException())
-        transport.close()
-        scope.cancel()
+        terminate(CodexAppServerDispatcherClosedException(), diagnostic = null)
     }
 }
 
 class CodexAppServerResponseException(val error: JsonRpcError) :
     Exception("JSON-RPC error ${error.code}: ${error.message}")
 
-class CodexAppServerDispatcherClosedException : Exception("Codex App Server dispatcher closed")
+class CodexAppServerDispatcherClosedException(cause: Throwable? = null) :
+    Exception("Codex App Server dispatcher is closed", cause)
+
 class CodexAppServerTransportClosedException : Exception("Codex App Server transport reached EOF or closed")
