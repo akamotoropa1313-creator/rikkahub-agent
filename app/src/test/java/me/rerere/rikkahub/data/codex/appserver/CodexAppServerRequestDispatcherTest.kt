@@ -183,7 +183,7 @@ class CodexAppServerRequestDispatcherTest {
             transport.takeClientLine()
             val failure = IllegalStateException("broken pipe")
             transport.injectFailure(failure)
-            assertEquals(failure, dispatcher.awaitTerminal())
+            assertEquivalentFailure(failure, dispatcher.awaitTerminal())
             assertEquivalentFailure(failure, request.await().exceptionOrNull())
             assertTrue(withTimeout(2.seconds) { event.await() } is CodexAppServerEvent.TransportFailure)
             assertEquals(0, dispatcher.pendingRequestCount())
@@ -225,7 +225,7 @@ class CodexAppServerRequestDispatcherTest {
             transport.takeClientLine()
             val failure = IllegalStateException("reader failed")
             transport.failInbound(failure)
-            assertEquals(failure, dispatcher.awaitTerminal())
+            assertEquivalentFailure(failure, dispatcher.awaitTerminal())
             assertEquivalentFailure(failure, request.await().exceptionOrNull())
             assertEquals(0, dispatcher.pendingRequestCount())
         }
@@ -241,7 +241,7 @@ class CodexAppServerRequestDispatcherTest {
             gate.awaitWriteAttempt() // The request is registered and blocked in the fake write.
             val failure = IllegalStateException("transport failed")
             transport.injectFailure(failure)
-            assertEquals(failure, dispatcher.awaitTerminal())
+            assertEquivalentFailure(failure, dispatcher.awaitTerminal())
             assertEquals(0, dispatcher.pendingRequestCount())
             transport.resumeWrites(gate)
             assertTrue(request.await().isFailure)
@@ -256,7 +256,7 @@ class CodexAppServerRequestDispatcherTest {
             transport.failNextWrite(failure)
             val result = runCatching { dispatcher.sendRequest("write") }
             assertEquals(failure, result.exceptionOrNull())
-            assertEquals(failure, dispatcher.awaitTerminal())
+            assertEquivalentFailure(failure, dispatcher.awaitTerminal())
             assertEquals(0, dispatcher.pendingRequestCount())
         }
     }
@@ -271,7 +271,7 @@ class CodexAppServerRequestDispatcherTest {
             val failure = IllegalStateException("notification write failed")
             transport.failNextWrite(failure)
             assertEquals(failure, runCatching { dispatcher.sendNotification("notify") }.exceptionOrNull())
-            assertEquals(failure, dispatcher.awaitTerminal())
+            assertEquivalentFailure(failure, dispatcher.awaitTerminal())
             assertEquivalentFailure(failure, pending.await().exceptionOrNull())
             assertEquals(0, dispatcher.pendingRequestCount())
         }
@@ -286,7 +286,7 @@ class CodexAppServerRequestDispatcherTest {
                 failure,
                 runCatching { dispatcher.respondSuccess(JsonRpcId.StringId("approval")) }.exceptionOrNull(),
             )
-            assertEquals(failure, dispatcher.awaitTerminal())
+            assertEquivalentFailure(failure, dispatcher.awaitTerminal())
             assertEquals(0, dispatcher.pendingRequestCount())
         }
         fixture().use { (transport, dispatcher) ->
@@ -298,7 +298,7 @@ class CodexAppServerRequestDispatcherTest {
                     dispatcher.respondError(JsonRpcId.StringId("approval"), JsonRpcError(1, "no"))
                 }.exceptionOrNull(),
             )
-            assertEquals(failure, dispatcher.awaitTerminal())
+            assertEquivalentFailure(failure, dispatcher.awaitTerminal())
         }
     }
 
