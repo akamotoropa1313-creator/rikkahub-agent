@@ -53,6 +53,10 @@ data class CodexAppServerTurnStartResult(
     val rawResult: JsonObject,
 )
 
+data class CodexAppServerTurnInterruptResult(
+    val rawResult: JsonObject,
+)
+
 class CodexAppServerTurnApi(private val connection: CodexAppServerConnection) {
     /**
      * A cold, ordered projection of [CodexAppServerConnection.events]. It neither consumes nor
@@ -75,6 +79,32 @@ class CodexAppServerTurnApi(private val connection: CodexAppServerConnection) {
         )
         return decodeTurnStartResult(result)
     }
+
+    suspend fun interruptTurn(
+        threadId: String,
+        turnId: String,
+        timeout: Duration = 30.seconds,
+    ): CodexAppServerTurnInterruptResult {
+        require(threadId.isNotBlank()) { "threadId must not be blank" }
+        require(turnId.isNotBlank()) { "turnId must not be blank" }
+        val result = connection.sendRequestAfterReady(
+            method = "turn/interrupt",
+            params = JsonObject(
+                mapOf(
+                    "threadId" to JsonPrimitive(threadId),
+                    "turnId" to JsonPrimitive(turnId),
+                ),
+            ),
+            timeout = timeout,
+        )
+        return decodeTurnInterruptResult(result)
+    }
+}
+
+internal fun decodeTurnInterruptResult(value: JsonElement): CodexAppServerTurnInterruptResult {
+    val result = value as? JsonObject
+        ?: throw CodexAppServerTurnProtocolException("turn/interrupt result must be an object")
+    return CodexAppServerTurnInterruptResult(result)
 }
 
 internal fun decodeTurnStartResult(value: JsonElement): CodexAppServerTurnStartResult {

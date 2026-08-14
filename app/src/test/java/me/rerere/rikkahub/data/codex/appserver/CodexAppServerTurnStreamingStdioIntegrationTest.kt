@@ -27,6 +27,63 @@ class CodexAppServerTurnStreamingStdioIntegrationTest {
     private val json = CodexAppServerJsonRpc().json
 
     @Test
+    fun `controlled stdio interrupt accepts completion before response and stays ready`() {
+        runBlocking {
+            val process = AppServerTestProcess()
+            val manager = WorkspaceManager(createTempDirectory("turn-interrupt").toFile(), shellRunner = AppServerRecordingRunner(process))
+            manager.ensureWorkspace("workspace")
+            val connection = WorkspaceCodexAppServerConnectionFactory(manager, "0.1.0").create("workspace")
+            try {
+                val initializing = async(Dispatchers.Default) { connection.initialize() }
+                awaitFlushes(process, 1)
+                val initialize = line(process, 0)
+                process.writeStdout(response(initialize, buildJsonObject { put("userAgent", "codex/test"); put("codexHome", "/tmp"); put("platformFamily", "unix"); put("platformOs", "linux") }))
+                initializing.await(); awaitFlushes(process, 2)
+
+                val threadApi = CodexAppServerThreadApi(connection)
+                val startingThread = async(Dispatchers.Default) { threadApi.startThread() }
+                awaitFlushes(process, 3)
+                val threadRequest = line(process, 2)
+                process.writeStdout(response(threadRequest, buildJsonObject { put("thread", buildJsonObject { put("id", "thread-1") }); put("model", "gpt"); put("modelProvider", "openai"); put("cwd", "/workspace") }))
+                startingThread.await()
+
+                val api = CodexAppServerTurnApi(connection)
+                val completed = kotlinx.coroutines.CompletableDeferred<CodexAppServerTurnEvent.TurnCompleted>()
+                val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+                    api.events.collect { if (it is CodexAppServerTurnEvent.TurnCompleted) completed.complete(it) }
+                }
+                val startingTurn = async(Dispatchers.Default) { api.startTurn("thread-1", listOf(CodexAppServerTurnInput.Text("Stop this"))) }
+                awaitFlushes(process, 4)
+                val turnRequest = line(process, 3)
+                process.writeStdout(notification("turn/started", turnParams("inProgress")))
+                process.writeStdout(notification("item/agentMessage/delta", delta("partial")))
+                process.writeStdout(response(turnRequest, buildJsonObject { put("turn", turn("inProgress")) }))
+                startingTurn.await()
+
+                val interrupting = async(Dispatchers.Default) { api.interruptTurn("thread-1", "turn-1") }
+                awaitFlushes(process, 5)
+                val interruptRequest = line(process, 4)
+                assertEquals("turn/interrupt", interruptRequest["method"]!!.jsonPrimitive.content)
+                assertEquals(
+                    buildJsonObject { put("threadId", "thread-1"); put("turnId", "turn-1") },
+                    interruptRequest["params"]!!.jsonObject,
+                )
+                process.writeStdout(notification("turn/completed", turnParams("interrupted")))
+                assertEquals(CodexAppServerTurnStatus.Interrupted, withTimeout(2_000) { completed.await() }.turn.status)
+                assertTrue(!interrupting.isCompleted)
+                process.writeStdout(response(interruptRequest, JsonObject(emptyMap())))
+                assertEquals(JsonObject(emptyMap()), interrupting.await().rawResult)
+                assertTrue(connection.state.value is CodexAppServerConnectionState.Ready)
+                assertTrue(process.isAlive)
+                assertEquals(0, process.destroyCalls)
+                collector.cancelAndJoin()
+            } finally {
+                connection.close()
+            }
+        }
+    }
+
+    @Test
     fun `controlled stdio preserves early and ordered streaming through the full stack`() {
         runBlocking {
             val process = AppServerTestProcess(); val manager = WorkspaceManager(createTempDirectory("turn-stream").toFile(), shellRunner = AppServerRecordingRunner(process))

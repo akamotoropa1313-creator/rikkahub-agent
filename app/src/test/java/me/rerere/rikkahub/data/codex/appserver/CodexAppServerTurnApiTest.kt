@@ -28,6 +28,114 @@ class CodexAppServerTurnApiTest {
     private val codec = CodexAppServerJsonRpc()
 
     @Test
+    fun `interrupt emits exact wire contract and preserves future result fields`() {
+        runBlocking {
+            fixture().use { f ->
+                val call = async { f.api.interruptTurn("thread-1", "turn-1") }
+                val raw = codec.json.parseToJsonElement(f.transport.takeClientLine()).jsonObject
+                assertEquals("turn/interrupt", raw["method"]!!.jsonPrimitive.content)
+                assertFalse("jsonrpc" in raw)
+                assertEquals(
+                    buildJsonObject { put("threadId", "thread-1"); put("turnId", "turn-1") },
+                    raw["params"]!!.jsonObject,
+                )
+                val request = decodeRequest(raw.toString())
+                val result = buildJsonObject { put("futureField", 123) }
+                f.respond(request, result)
+                assertEquals(result, call.await().rawResult)
+                assertEquals(0, f.dispatcher.pendingRequestCount())
+            }
+        }
+    }
+
+    @Test
+    fun `interrupt validates ids and ready state before writing`() {
+        runBlocking {
+            fixture().use { f ->
+                val writes = f.transport.successfulWriteCount()
+                expect<IllegalArgumentException> { f.api.interruptTurn(" ", "turn") }
+                expect<IllegalArgumentException> { f.api.interruptTurn("thread", " ") }
+                assertEquals(writes, f.transport.successfulWriteCount())
+            }
+            val transport = FakeCodexAppServerTransport()
+            val connection = CodexAppServerConnection(
+                CodexAppServerRequestDispatcher(transport),
+                CodexAppServerClientInfo(name = "test", version = "1"),
+            )
+            expect<CodexAppServerNotReadyException> {
+                CodexAppServerTurnApi(connection).interruptTurn("thread", "turn")
+            }
+            assertEquals(0, transport.successfulWriteCount())
+            connection.close()
+        }
+    }
+
+    @Test
+    fun `interrupt rejects non-object success results and propagates rpc errors without events`() {
+        runBlocking { supervisorScope {
+            listOf(JsonArray(emptyList()), JsonPrimitive("bad"), JsonNull).forEach { result ->
+                fixture().use { f ->
+                    val call = async { f.api.interruptTurn("thread", "turn") }
+                    f.respond(decodeRequest(f.transport.takeClientLine()), result)
+                    expect<CodexAppServerTurnProtocolException> { call.await() }
+                    assertEquals(0, f.dispatcher.pendingRequestCount())
+                }
+            }
+            fixture().use { f ->
+                val events = mutableListOf<CodexAppServerTurnEvent>()
+                val collector = launch(start = CoroutineStart.UNDISPATCHED) { f.api.events.collect { events += it } }
+                val call = async { f.api.interruptTurn("thread", "turn") }
+                val request = decodeRequest(f.transport.takeClientLine())
+                f.transport.injectServerLine(codec.encode(JsonRpcErrorResponse(request.id, JsonRpcError(409, "already completed"))))
+                assertEquals(409, expect<CodexAppServerResponseException> { call.await() }.error.code)
+                assertTrue(events.isEmpty())
+                assertEquals(0, f.dispatcher.pendingRequestCount())
+                collector.cancelAndJoin()
+            }
+        } }
+    }
+
+    @Test
+    fun `turn completed notification may precede interrupt response`() {
+        runBlocking {
+            fixture().use { f ->
+                val completed = kotlinx.coroutines.CompletableDeferred<CodexAppServerTurnEvent.TurnCompleted>()
+                val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+                    f.api.events.collect { if (it is CodexAppServerTurnEvent.TurnCompleted) completed.complete(it) }
+                }
+                val call = async { f.api.interruptTurn("thread", "turn") }
+                val request = decodeRequest(f.transport.takeClientLine())
+                f.transport.injectServerLine(codec.encode(JsonRpcNotification("turn/completed", turnEventParams("thread", "turn", "interrupted"))))
+                assertEquals(CodexAppServerTurnStatus.Interrupted, withTimeout(1_000) { completed.await() }.turn.status)
+                assertFalse(call.isCompleted)
+                f.respond(request, JsonObject(emptyMap()))
+                assertEquals(JsonObject(emptyMap()), withTimeout(1_000) { call.await() }.rawResult)
+                collector.cancelAndJoin()
+            }
+        }
+    }
+
+    @Test
+    fun `interrupt response may precede turn completed notification`() {
+        runBlocking {
+            fixture().use { f ->
+                val completed = kotlinx.coroutines.CompletableDeferred<CodexAppServerTurnEvent.TurnCompleted>()
+                val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+                    f.api.events.collect { if (it is CodexAppServerTurnEvent.TurnCompleted) completed.complete(it) }
+                }
+                val call = async { f.api.interruptTurn("thread", "turn") }
+                val request = decodeRequest(f.transport.takeClientLine())
+                f.respond(request, JsonObject(emptyMap()))
+                withTimeout(1_000) { call.await() }
+                assertFalse(completed.isCompleted)
+                f.transport.injectServerLine(codec.encode(JsonRpcNotification("turn/completed", turnEventParams("thread", "turn", "interrupted"))))
+                assertEquals(CodexAppServerTurnStatus.Interrupted, withTimeout(1_000) { completed.await() }.turn.status)
+                collector.cancelAndJoin()
+            }
+        }
+    }
+
+    @Test
     fun `minimum text wire is exact ordered unicode input and raw response is preserved`() {
         runBlocking {
             fixture().use { f ->
@@ -208,6 +316,10 @@ class CodexAppServerTurnApiTest {
         init.await(); t.takeClientLine(); return Fixture(t, d, c, CodexAppServerTurnApi(c))
     }
     private fun turnResult(id: String, status: String, extra: Boolean = false) = buildJsonObject { put("turn", buildJsonObject { put("id", id); put("status", status); if (extra) put("future", 1) }); if (extra) put("extra", true) }
+    private fun turnEventParams(threadId: String, turnId: String, status: String) = buildJsonObject {
+        put("threadId", threadId)
+        put("turn", buildJsonObject { put("id", turnId); put("status", status) })
+    }
     private fun decodeRequest(line: String) = (codec.decode(line).getOrThrow() as JsonRpcMessage.Request).value
     private suspend inline fun <reified T : Throwable> expect(crossinline block: suspend () -> Unit): T = try { block(); fail("Expected ${T::class.java.simpleName}"); error("unreachable") } catch (e: Throwable) { if (e is T) e else if (e.cause is T) e.cause as T else throw e }
     private data class JsonElementCase(val value: kotlinx.serialization.json.JsonElement)
