@@ -72,6 +72,11 @@ jobs:
           ./gradlew :app:testDebugUnitTest
           --tests 'me.rerere.rikkahub.data.codex.appserver.*Test'
 
+      - name: Run workspace interactive process unit tests
+        run: >-
+          ./gradlew :workspace:testDebugUnitTest
+          --tests 'me.rerere.workspace.*Interactive*Test'
+
       - name: Print Codex App Server dispatcher JUnit failure details
         if: failure()
         shell: bash
@@ -83,3 +88,9 @@ jobs:
           else
             echo "JUnit XML not found: $report"
           fi
+
+      - name: Print workspace interactive process JUnit failure details
+        if: failure()
+        shell: bash
+        run: |
+          find workspace/build/test-results/testDebugUnitTest -name '*Interactive*Test.xml' -print -exec cat {} \; 2>/dev/null || true
