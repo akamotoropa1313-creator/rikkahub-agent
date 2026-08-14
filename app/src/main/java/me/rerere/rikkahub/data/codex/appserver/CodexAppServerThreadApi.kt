@@ -17,7 +17,7 @@ data class CodexAppServerThreadStartParams(
     val serviceName: String? = null,
     val baseInstructions: String? = null,
     val developerInstructions: String? = null,
-    val personality: String? = null,
+    val personality: CodexAppServerPersonality? = null,
     val ephemeral: Boolean? = null,
 )
 
@@ -29,8 +29,14 @@ data class CodexAppServerThreadResumeParams(
     val config: Map<String, JsonElement>? = null,
     val baseInstructions: String? = null,
     val developerInstructions: String? = null,
-    val personality: String? = null,
+    val personality: CodexAppServerPersonality? = null,
 )
+
+enum class CodexAppServerPersonality(val wireValue: String) {
+    NONE("none"),
+    FRIENDLY("friendly"),
+    PRAGMATIC("pragmatic"),
+}
 
 data class CodexAppServerThreadSnapshot(
     val id: String,
@@ -40,9 +46,9 @@ data class CodexAppServerThreadSnapshot(
 
 data class CodexAppServerThreadOpenResult(
     val thread: CodexAppServerThreadSnapshot,
-    val model: String?,
-    val modelProvider: String?,
-    val cwd: String?,
+    val model: String,
+    val modelProvider: String,
+    val cwd: String,
     /** The complete result object. [thread.raw] references its thread value without copying it. */
     val rawResult: JsonObject,
 )
@@ -82,16 +88,17 @@ class CodexAppServerThreadApi(private val connection: CodexAppServerConnection) 
         if (id.isBlank()) throw CodexAppServerThreadProtocolException("thread.id must not be blank")
         return CodexAppServerThreadOpenResult(
             thread = CodexAppServerThreadSnapshot(id, thread),
-            model = result.optionalString("model"),
-            modelProvider = result.optionalString("modelProvider"),
-            cwd = result.optionalString("cwd"),
+            model = result.requiredString("model"),
+            modelProvider = result.requiredString("modelProvider"),
+            cwd = result.requiredString("cwd"),
             rawResult = result,
         )
     }
 }
 
-private fun JsonObject.optionalString(name: String): String? {
-    val value = this[name] ?: return null
+private fun JsonObject.requiredString(name: String): String {
+    val value = this[name]
+        ?: throw CodexAppServerThreadProtocolException("thread result is missing $name")
     val primitive = value as? JsonPrimitive
         ?: throw CodexAppServerThreadProtocolException("$name must be a string")
     return primitive.takeIf { it.isString }?.contentOrNull
@@ -102,14 +109,16 @@ private fun CodexAppServerThreadStartParams.toJson() = buildMap<String, JsonElem
     putOptional("model", model); putOptional("modelProvider", modelProvider); putOptional("cwd", cwd)
     config?.let { put("config", JsonObject(it)) }; putOptional("serviceName", serviceName)
     putOptional("baseInstructions", baseInstructions); putOptional("developerInstructions", developerInstructions)
-    putOptional("personality", personality); ephemeral?.let { put("ephemeral", JsonPrimitive(it)) }
+    personality?.let { put("personality", JsonPrimitive(it.wireValue)) }
+    ephemeral?.let { put("ephemeral", JsonPrimitive(it)) }
 }.let(::JsonObject)
 
 private fun CodexAppServerThreadResumeParams.toJson(threadId: String) = buildMap<String, JsonElement> {
     put("threadId", JsonPrimitive(threadId)); putOptional("model", model)
     putOptional("modelProvider", modelProvider); putOptional("cwd", cwd)
     config?.let { put("config", JsonObject(it)) }; putOptional("baseInstructions", baseInstructions)
-    putOptional("developerInstructions", developerInstructions); putOptional("personality", personality)
+    putOptional("developerInstructions", developerInstructions)
+    personality?.let { put("personality", JsonPrimitive(it.wireValue)) }
 }.let(::JsonObject)
 
 private fun MutableMap<String, JsonElement>.putOptional(name: String, value: String?) {

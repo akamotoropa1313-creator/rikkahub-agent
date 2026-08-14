@@ -27,7 +27,11 @@ class CodexAppServerThreadApiTest {
     @Test fun `default start uses exact minimal wire and decodes raw result`() = runBlocking {
         fixture().use { f ->
             val call = async { f.api.startThread() }
-            val request = f.takeRequest()
+            val (raw, request) = f.takeRawRequest()
+            assertEquals("thread/start", raw["method"]?.jsonPrimitive?.content)
+            assertFalse("jsonrpc" in raw)
+            assertFalse(raw["id"]!!.jsonPrimitive.isString)
+            assertEquals(JsonObject(emptyMap()), raw["params"])
             assertEquals("thread/start", request.method)
             assertTrue(request.id is JsonRpcId.NumberId)
             assertEquals(JsonObject(emptyMap()), request.params)
@@ -45,7 +49,7 @@ class CodexAppServerThreadApiTest {
                 model = "gpt", modelProvider = "openai", cwd = "/repo",
                 config = mapOf("reasoning" to JsonPrimitive("high")), serviceName = "rikkahub",
                 baseInstructions = "base", developerInstructions = "dev",
-                personality = "pragmatic", ephemeral = false,
+                personality = CodexAppServerPersonality.PRAGMATIC, ephemeral = false,
             )
             val call = async { f.api.startThread(params) }
             val request = f.takeRequest()
@@ -59,23 +63,41 @@ class CodexAppServerThreadApiTest {
     @Test fun `resume sends only opaque thread id and preserves raw turns`() = runBlocking {
         fixture().use { f ->
             val call = async { f.api.resumeThread("not-a-uuid") }
-            val request = f.takeRequest()
+            val (raw, request) = f.takeRawRequest()
+            assertEquals("thread/resume", raw["method"]?.jsonPrimitive?.content)
+            assertFalse("jsonrpc" in raw)
+            assertFalse(raw["id"]!!.jsonPrimitive.isString)
+            assertEquals(buildJsonObject { put("threadId", "not-a-uuid") }, raw["params"])
             assertEquals("thread/resume", request.method)
             assertEquals(setOf("threadId"), request.params!!.jsonObject.keys)
             assertFalse("history" in request.params!!.jsonObject)
             assertFalse("path" in request.params!!.jsonObject)
             val turns = JsonArray(listOf(buildJsonObject { put("futureItem", "untouched") }))
-            f.respond(request, buildJsonObject { put("thread", buildJsonObject { put("id", "not-a-uuid"); put("turns", turns) }) })
+            f.respond(request, buildJsonObject {
+                put("thread", buildJsonObject { put("id", "not-a-uuid"); put("turns", turns) })
+                put("model", "gpt"); put("modelProvider", "openai"); put("cwd", "/workspace")
+            })
             assertEquals(turns, call.await().thread.raw["turns"])
         }
     }
 
     @Test fun `resume overrides serialize only supported fields`() = runBlocking {
         fixture().use { f ->
-            val call = async { f.api.resumeThread("id", CodexAppServerThreadResumeParams(model = "gpt", modelProvider = "p", cwd = "/x", config = mapOf("x" to JsonPrimitive(1)), baseInstructions = "b", developerInstructions = "d", personality = "p")) }
+            val call = async { f.api.resumeThread("id", CodexAppServerThreadResumeParams(model = "gpt", modelProvider = "p", cwd = "/x", config = mapOf("x" to JsonPrimitive(1)), baseInstructions = "b", developerInstructions = "d", personality = CodexAppServerPersonality.FRIENDLY)) }
             val request = f.takeRequest()
             assertEquals(setOf("threadId", "model", "modelProvider", "cwd", "config", "baseInstructions", "developerInstructions", "personality"), request.params!!.jsonObject.keys)
             f.respond(request, result("id")); call.await()
+        }
+    }
+
+    @Test fun `all personality values serialize with official wire spelling`() = runBlocking {
+        CodexAppServerPersonality.entries.forEach { personality ->
+            fixture().use { f ->
+                val call = async { f.api.startThread(CodexAppServerThreadStartParams(personality = personality)) }
+                val request = f.takeRequest()
+                assertEquals(personality.wireValue, request.params!!.jsonObject["personality"]!!.jsonPrimitive.content)
+                f.respond(request, result("id")); call.await()
+            }
         }
     }
 
@@ -101,6 +123,18 @@ class CodexAppServerThreadApiTest {
             fixture().use { f ->
                 val call = async { f.api.startThread() }; f.respond(f.takeRequest(), raw)
                 expect<CodexAppServerThreadProtocolException> { call.await() }
+            }
+        }
+        listOf("model", "modelProvider", "cwd").forEach { field ->
+            listOf(null, JsonNull, JsonPrimitive(7), JsonPrimitive(true), JsonArray(emptyList()), JsonObject(emptyMap())).forEach { bad ->
+                fixture().use { f ->
+                    val call = async { f.api.startThread() }
+                    val response = result("id").toMutableMap().apply {
+                        if (bad == null) remove(field) else put(field, bad)
+                    }.let(::JsonObject)
+                    f.respond(f.takeRequest(), response)
+                    expect<CodexAppServerThreadProtocolException> { call.await() }
+                }
             }
         }
         fixture().use { f ->
@@ -137,6 +171,26 @@ class CodexAppServerThreadApiTest {
         }
     }
 
+    @Test fun `resume json rpc error preserves code and message`() = runBlocking {
+        fixture().use { f ->
+            val call = async { f.api.resumeThread("id") }; val request = f.takeRequest()
+            f.transport.injectServerLine(codec.encode(JsonRpcErrorResponse(request.id, JsonRpcError(73, "resume denied"))))
+            val error = expect<CodexAppServerResponseException> { call.await() }
+            assertEquals(73, error.error.code); assertEquals("resume denied", error.error.message)
+        }
+    }
+
+    @Test fun `resume timeout removes pending and does not retry`() = runBlocking {
+        fixture().use { f ->
+            val writes = f.transport.successfulWriteCount()
+            val call = async { f.api.resumeThread("id", timeout = 10.milliseconds) }
+            val request = f.takeRequest(); assertEquals("thread/resume", request.method)
+            expect<kotlinx.coroutines.TimeoutCancellationException> { call.await() }
+            assertEquals(0, f.dispatcher.pendingRequestCount())
+            assertEquals(writes + 1, f.transport.successfulWriteCount())
+        }
+    }
+
     @Test fun `notifications before after or absent never gate response and remain observable`() = runBlocking {
         listOf("before", "after", "absent").forEach { order ->
             fixture().use { f ->
@@ -153,24 +207,50 @@ class CodexAppServerThreadApiTest {
 
     @Test fun `thread calls require ready connection`() = runBlocking {
         val transport = FakeCodexAppServerTransport(); val dispatcher = CodexAppServerRequestDispatcher(transport)
-        val connection = CodexAppServerConnection(dispatcher, CodexAppServerClientInfo("test", "1"))
+        val connection = CodexAppServerConnection(dispatcher, CodexAppServerClientInfo(name = "test", version = "1"))
         expect<CodexAppServerNotReadyException> { CodexAppServerThreadApi(connection).startThread() }
         connection.close()
         expect<CodexAppServerNotReadyException> { CodexAppServerThreadApi(connection).resumeThread("id") }
     }
 
+    @Test fun `initializing and failed connections reject thread calls`() = runBlocking {
+        val initializingTransport = FakeCodexAppServerTransport()
+        val initializingDispatcher = CodexAppServerRequestDispatcher(initializingTransport)
+        val initializingConnection = CodexAppServerConnection(
+            initializingDispatcher, CodexAppServerClientInfo(name = "test", version = "1")
+        )
+        val initialize = async { initializingConnection.initialize() }
+        initializingTransport.takeClientLine()
+        expect<CodexAppServerNotReadyException> { CodexAppServerThreadApi(initializingConnection).startThread() }
+        initialize.cancelAndJoin(); initializingConnection.close()
+
+        val failedTransport = FakeCodexAppServerTransport()
+        val failedDispatcher = CodexAppServerRequestDispatcher(failedTransport)
+        val failedConnection = CodexAppServerConnection(
+            failedDispatcher, CodexAppServerClientInfo(name = "test", version = "1")
+        )
+        failedTransport.injectFailure(IllegalStateException("broken"))
+        withTimeout(1_000) { while (failedConnection.state.value !is CodexAppServerConnectionState.Failed) kotlinx.coroutines.yield() }
+        expect<CodexAppServerNotReadyException> { CodexAppServerThreadApi(failedConnection).resumeThread("id") }
+        failedConnection.close()
+    }
+
     private suspend fun fixture(): Fixture {
         val transport = FakeCodexAppServerTransport(); val dispatcher = CodexAppServerRequestDispatcher(transport)
-        val connection = CodexAppServerConnection(dispatcher, CodexAppServerClientInfo("test", "1"))
+        val connection = CodexAppServerConnection(dispatcher, CodexAppServerClientInfo(name = "test", version = "1"))
         val initialized = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.currentCoroutineContext()).async { connection.initialize() }
         val init = decodeRequest(transport.takeClientLine())
-        transport.injectServerLine(codec.encode(JsonRpcResponse(init.id, buildJsonObject { put("userAgent", "fake") })))
+        transport.injectServerLine(codec.encode(JsonRpcResponse(init.id, buildJsonObject {
+            put("userAgent", "fake"); put("codexHome", "/tmp/codex")
+            put("platformFamily", "unix"); put("platformOs", "linux")
+        })))
         initialized.await(); decodeNotification(transport.takeClientLine())
         return Fixture(transport, dispatcher, connection, CodexAppServerThreadApi(connection))
     }
 
     private fun result(id: String, extra: Boolean = false) = buildJsonObject {
         put("thread", buildJsonObject { put("id", id) }); put("model", "gpt")
+        put("modelProvider", "openai"); put("cwd", "/workspace")
         if (extra) put("unknown", "future")
     }
     private fun decodeRequest(line: String) = (codec.decode(line).getOrThrow() as JsonRpcMessage.Request).value
@@ -179,6 +259,10 @@ class CodexAppServerThreadApiTest {
 
     private inner class Fixture(val transport: FakeCodexAppServerTransport, val dispatcher: CodexAppServerRequestDispatcher, val connection: CodexAppServerConnection, val api: CodexAppServerThreadApi) : AutoCloseable {
         suspend fun takeRequest() = decodeRequest(transport.takeClientLine())
+        suspend fun takeRawRequest(): Pair<JsonObject, JsonRpcRequest> {
+            val raw = codec.json.parseToJsonElement(transport.takeClientLine()).jsonObject
+            return raw to (codec.decode(raw.toString()).getOrThrow() as JsonRpcMessage.Request).value
+        }
         fun respond(request: JsonRpcRequest, result: kotlinx.serialization.json.JsonElement) = transport.injectServerLine(codec.encode(JsonRpcResponse(request.id, result)))
         override fun close() = connection.close()
     }
