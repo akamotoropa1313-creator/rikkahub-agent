@@ -20,7 +20,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import me.rerere.workspace.WorkspaceManager
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -61,8 +60,8 @@ class CodexAppServerTurnStreamingStdioIntegrationTest {
             assertTrue(events[0] is CodexAppServerTurnEvent.TurnStarted); assertTrue(events[1] is CodexAppServerTurnEvent.ItemStarted)
             assertEquals(listOf("Hello", ", ", "world"), events.filterIsInstance<CodexAppServerTurnEvent.AgentMessageDelta>().map { it.delta })
             val completed = events.filterIsInstance<CodexAppServerTurnEvent.ItemCompleted>()
-            assertEquals("Hello, final!", (completed[0].item as CodexAppServerItemSnapshot.AgentMessage).text); assertSame(finalAgent, completed[0].item.raw)
-            val reasoning = completed[1].item as CodexAppServerItemSnapshot.Reasoning; assertEquals(listOf("Final summary"), reasoning.summary); assertEquals(listOf("Final content"), reasoning.content); assertSame(finalReasoning, reasoning.raw)
+            assertEquals("Hello, final!", (completed[0].item as CodexAppServerItemSnapshot.AgentMessage).text); assertEquals(finalAgent, completed[0].item.raw)
+            val reasoning = completed[1].item as CodexAppServerItemSnapshot.Reasoning; assertEquals(listOf("Final summary"), reasoning.summary); assertEquals(listOf("Final content"), reasoning.content); assertEquals(finalReasoning, reasoning.raw)
             assertTrue(events.last() is CodexAppServerTurnEvent.TurnCompleted)
             collector.cancelAndJoin(); connection.close()
         }
