@@ -7,6 +7,21 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.contentOrNull
+
+sealed interface CodexAppServerCommandExecutionStatus { data object InProgress : CodexAppServerCommandExecutionStatus; data object Completed : CodexAppServerCommandExecutionStatus; data object Failed : CodexAppServerCommandExecutionStatus; data object Declined : CodexAppServerCommandExecutionStatus; data class Unknown(val rawValue: String) : CodexAppServerCommandExecutionStatus }
+sealed interface CodexAppServerCommandExecutionSource { data object Agent : CodexAppServerCommandExecutionSource; data object UserShell : CodexAppServerCommandExecutionSource; data object UnifiedExecStartup : CodexAppServerCommandExecutionSource; data object UnifiedExecInteraction : CodexAppServerCommandExecutionSource; data class Unknown(val rawValue: String) : CodexAppServerCommandExecutionSource }
+sealed interface CodexAppServerCommandAction { val raw: JsonObject; val command: String
+    data class Read(override val command: String, val name: String, val path: String, override val raw: JsonObject) : CodexAppServerCommandAction
+    data class ListFiles(override val command: String, val path: String?, override val raw: JsonObject) : CodexAppServerCommandAction
+    data class Search(override val command: String, val query: String?, val path: String?, override val raw: JsonObject) : CodexAppServerCommandAction
+    data class UnknownCommand(override val command: String, override val raw: JsonObject) : CodexAppServerCommandAction
+    data class Other(val type: String, override val raw: JsonObject, override val command: String = raw.optionalString("command") ?: "") : CodexAppServerCommandAction
+}
+sealed interface CodexAppServerPatchApplyStatus { data object InProgress : CodexAppServerPatchApplyStatus; data object Completed : CodexAppServerPatchApplyStatus; data object Failed : CodexAppServerPatchApplyStatus; data object Declined : CodexAppServerPatchApplyStatus; data class Unknown(val rawValue: String) : CodexAppServerPatchApplyStatus }
+sealed interface CodexAppServerPatchChangeKind { val raw: JsonObject; data class Add(override val raw: JsonObject) : CodexAppServerPatchChangeKind; data class Delete(override val raw: JsonObject) : CodexAppServerPatchChangeKind; data class Update(val movePath: String?, override val raw: JsonObject) : CodexAppServerPatchChangeKind; data class Other(val type: String, override val raw: JsonObject) : CodexAppServerPatchChangeKind }
+data class CodexAppServerFileUpdateChange(val path: String, val kind: CodexAppServerPatchChangeKind, val diff: String, val raw: JsonObject)
 
 sealed interface CodexAppServerItemSnapshot {
     val id: String
@@ -26,6 +41,9 @@ sealed interface CodexAppServerItemSnapshot {
         override val raw: JsonObject,
     ) : CodexAppServerItemSnapshot { override val type = "reasoning" }
 
+    data class CommandExecution(override val id: String, val command: String, val cwd: String, val processId: String?, val source: CodexAppServerCommandExecutionSource?, val status: CodexAppServerCommandExecutionStatus, val commandActions: List<CodexAppServerCommandAction>, val aggregatedOutput: String?, val exitCode: Int?, val durationMs: Long?, val pluginId: String?, val scriptPath: String?, override val raw: JsonObject) : CodexAppServerItemSnapshot { override val type = "commandExecution" }
+    data class FileChange(override val id: String, val changes: List<CodexAppServerFileUpdateChange>, val status: CodexAppServerPatchApplyStatus, override val raw: JsonObject) : CodexAppServerItemSnapshot { override val type = "fileChange" }
+
     data class Other(
         override val id: String,
         override val type: String,
@@ -44,6 +62,10 @@ sealed interface CodexAppServerTurnEvent {
     data class ReasoningSummaryTextDelta(val threadId: String, val turnId: String, val itemId: String, val delta: String, val summaryIndex: Long, override val rawParams: JsonObject) : CodexAppServerTurnEvent
     data class ReasoningSummaryPartAdded(val threadId: String, val turnId: String, val itemId: String, val summaryIndex: Long, override val rawParams: JsonObject) : CodexAppServerTurnEvent
     data class ReasoningTextDelta(val threadId: String, val turnId: String, val itemId: String, val delta: String, val contentIndex: Long, override val rawParams: JsonObject) : CodexAppServerTurnEvent
+    data class CommandExecutionOutputDelta(val threadId: String, val turnId: String, val itemId: String, val delta: String, override val rawParams: JsonObject) : CodexAppServerTurnEvent
+    data class TerminalInteraction(val threadId: String, val turnId: String, val itemId: String, val processId: String, val stdin: String, override val rawParams: JsonObject) : CodexAppServerTurnEvent
+    data class FileChangePatchUpdated(val threadId: String, val turnId: String, val itemId: String, val changes: List<CodexAppServerFileUpdateChange>, override val rawParams: JsonObject) : CodexAppServerTurnEvent
+    data class TurnDiffUpdated(val threadId: String, val turnId: String, val diff: String, override val rawParams: JsonObject) : CodexAppServerTurnEvent
     data class MalformedNotification(val method: String, override val rawParams: JsonElement?, val cause: Throwable) : CodexAppServerTurnEvent
 }
 
@@ -51,6 +73,8 @@ private val turnEventMethods = setOf(
     "turn/started", "turn/completed", "item/started", "item/completed",
     "item/agentMessage/delta", "item/reasoning/summaryTextDelta",
     "item/reasoning/summaryPartAdded", "item/reasoning/textDelta",
+    "item/commandExecution/outputDelta", "item/commandExecution/terminalInteraction",
+    "item/fileChange/patchUpdated", "turn/diff/updated",
 )
 
 /** Preserves source arrival order and converts each malformed known notification into a value. */
@@ -76,6 +100,10 @@ private fun decodeTurnEvent(method: String, value: JsonElement?): CodexAppServer
         "item/reasoning/summaryTextDelta" -> CodexAppServerTurnEvent.ReasoningSummaryTextDelta(p.string("threadId"), p.string("turnId"), p.string("itemId"), p.string("delta"), p.long("summaryIndex"), p)
         "item/reasoning/summaryPartAdded" -> CodexAppServerTurnEvent.ReasoningSummaryPartAdded(p.string("threadId"), p.string("turnId"), p.string("itemId"), p.long("summaryIndex"), p)
         "item/reasoning/textDelta" -> CodexAppServerTurnEvent.ReasoningTextDelta(p.string("threadId"), p.string("turnId"), p.string("itemId"), p.string("delta"), p.long("contentIndex"), p)
+        "item/commandExecution/outputDelta" -> CodexAppServerTurnEvent.CommandExecutionOutputDelta(p.string("threadId"), p.string("turnId"), p.string("itemId"), p.string("delta"), p)
+        "item/commandExecution/terminalInteraction" -> CodexAppServerTurnEvent.TerminalInteraction(p.string("threadId"), p.string("turnId"), p.string("itemId"), p.string("processId"), p.string("stdin"), p)
+        "item/fileChange/patchUpdated" -> CodexAppServerTurnEvent.FileChangePatchUpdated(p.string("threadId"), p.string("turnId"), p.string("itemId"), decodeChanges(p["changes"]), p)
+        "turn/diff/updated" -> CodexAppServerTurnEvent.TurnDiffUpdated(p.string("threadId"), p.string("turnId"), p.string("diff"), p)
         else -> error("unreachable")
     }
 }
@@ -95,9 +123,26 @@ internal fun decodeItemSnapshot(raw: JsonObject): CodexAppServerItemSnapshot {
     return when (val type = raw.requiredString("item.type", "type")) {
         "agentMessage" -> CodexAppServerItemSnapshot.AgentMessage(id, raw.requiredString("item.text", "text"), raw)
         "reasoning" -> CodexAppServerItemSnapshot.Reasoning(id, raw.stringListOrEmpty("summary"), raw.stringListOrEmpty("content"), raw)
+        "commandExecution" -> decodeCommandExecution(id, raw)
+        "fileChange" -> CodexAppServerItemSnapshot.FileChange(id, decodeChanges(raw["changes"]), decodePatchStatus(raw.requiredString("item.status", "status")), raw)
         else -> CodexAppServerItemSnapshot.Other(id, type, raw)
     }
 }
+
+private fun decodeCommandExecution(id: String, raw: JsonObject) = CodexAppServerItemSnapshot.CommandExecution(
+    id, raw.requiredString("item.command", "command"), raw.requiredString("item.cwd", "cwd"), raw.optionalString("processId"),
+    raw.optionalString("source")?.let(::decodeSource), decodeCommandStatus(raw.requiredString("item.status", "status")),
+    (raw["commandActions"] as? JsonArray ?: malformed("item.commandActions must be an array")).mapIndexed { i, it -> decodeAction(it as? JsonObject ?: malformed("item.commandActions[$i] must be an object")) },
+    raw.optionalString("aggregatedOutput"), raw.optionalInt("exitCode"), raw.optionalLong("durationMs"), raw.optionalString("pluginId"), raw.optionalString("scriptPath"), raw)
+
+private fun decodeAction(raw: JsonObject): CodexAppServerCommandAction { val type = raw.requiredString("action.type", "type"); val command = raw.requiredString("action.command", "command"); return when(type) { "read" -> CodexAppServerCommandAction.Read(command, raw.requiredString("action.name", "name"), raw.requiredString("action.path", "path"), raw); "listFiles" -> CodexAppServerCommandAction.ListFiles(command, raw.optionalString("path"), raw); "search" -> CodexAppServerCommandAction.Search(command, raw.optionalString("query"), raw.optionalString("path"), raw); "unknown" -> CodexAppServerCommandAction.UnknownCommand(command, raw); else -> CodexAppServerCommandAction.Other(type, raw, command) } }
+private fun decodeChanges(value: JsonElement?): List<CodexAppServerFileUpdateChange> = (value as? JsonArray ?: malformed("changes must be an array")).mapIndexed { i, e -> val raw = e as? JsonObject ?: malformed("changes[$i] must be an object"); val kindRaw = raw["kind"] as? JsonObject ?: malformed("changes[$i].kind must be an object"); val type = kindRaw.requiredString("kind.type", "type"); val kind = when(type) { "add" -> CodexAppServerPatchChangeKind.Add(kindRaw); "delete" -> CodexAppServerPatchChangeKind.Delete(kindRaw); "update" -> CodexAppServerPatchChangeKind.Update(kindRaw.optionalString("move_path"), kindRaw); else -> CodexAppServerPatchChangeKind.Other(type, kindRaw) }; CodexAppServerFileUpdateChange(raw.requiredString("change.path", "path"), kind, raw.requiredString("change.diff", "diff"), raw) }
+private fun decodeCommandStatus(v:String)=when(v){"inProgress"->CodexAppServerCommandExecutionStatus.InProgress;"completed"->CodexAppServerCommandExecutionStatus.Completed;"failed"->CodexAppServerCommandExecutionStatus.Failed;"declined"->CodexAppServerCommandExecutionStatus.Declined;else->CodexAppServerCommandExecutionStatus.Unknown(v)}
+private fun decodeSource(v:String)=when(v){"agent"->CodexAppServerCommandExecutionSource.Agent;"userShell"->CodexAppServerCommandExecutionSource.UserShell;"unifiedExecStartup"->CodexAppServerCommandExecutionSource.UnifiedExecStartup;"unifiedExecInteraction"->CodexAppServerCommandExecutionSource.UnifiedExecInteraction;else->CodexAppServerCommandExecutionSource.Unknown(v)}
+private fun decodePatchStatus(v:String)=when(v){"inProgress"->CodexAppServerPatchApplyStatus.InProgress;"completed"->CodexAppServerPatchApplyStatus.Completed;"failed"->CodexAppServerPatchApplyStatus.Failed;"declined"->CodexAppServerPatchApplyStatus.Declined;else->CodexAppServerPatchApplyStatus.Unknown(v)}
+private fun JsonObject.optionalString(key:String):String? { val e=this[key]?:return null; if(e.toString()=="null") return null; return (e as? JsonPrimitive)?.takeIf{it.isString}?.contentOrNull ?: malformed("$key must be a string or null") }
+private fun JsonObject.optionalLong(key:String):Long? { val e=this[key]?:return null; if(e.toString()=="null") return null; return (e as? JsonPrimitive)?.takeUnless{it.isString}?.longOrNull ?: malformed("$key must be an integer or null") }
+private fun JsonObject.optionalInt(key:String):Int? { val e=this[key]?:return null; if(e.toString()=="null") return null; return (e as? JsonPrimitive)?.takeUnless{it.isString}?.intOrNull ?: malformed("$key must be an i32 integer or null") }
 
 private fun JsonObject.stringListOrEmpty(key: String): List<String> {
     val value = this[key] ?: return emptyList()

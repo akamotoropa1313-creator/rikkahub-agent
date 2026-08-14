@@ -20,6 +20,37 @@ import org.junit.Test
 
 class CodexAppServerTurnEventTest {
     @Test
+    fun `command and file snapshots preserve typed and authoritative wire data`() {
+        val diff = "--- a/ü\n+++ b/ü\n@@ -1 +1 @@\n- old\n+\tnew  \n"
+        val action = buildJsonObject { put("type", "futureAction"); put("command", "future"); put("future", 1) }
+        val command = buildJsonObject { put("type", "commandExecution"); put("id", "c"); put("command", "printf x"); put("cwd", "/opaque"); put("processId", "42"); put("source", "futureSource"); put("status", "futureStatus"); put("commandActions", JsonArray(listOf(action))); put("aggregatedOutput", "final authoritative output"); put("exitCode", -1); put("durationMs", Long.MAX_VALUE) }
+        val projected = decodeItemSnapshot(command) as CodexAppServerItemSnapshot.CommandExecution
+        assertEquals(Long.MAX_VALUE, projected.durationMs); assertEquals("final authoritative output", projected.aggregatedOutput)
+        assertTrue(projected.status is CodexAppServerCommandExecutionStatus.Unknown); assertTrue(projected.source is CodexAppServerCommandExecutionSource.Unknown)
+        assertSame(action, (projected.commandActions.single() as CodexAppServerCommandAction.Other).raw); assertSame(command, projected.raw)
+
+        val kind = buildJsonObject { put("type", "update"); put("move_path", "new/path") }
+        val change = buildJsonObject { put("path", "old/path"); put("kind", kind); put("diff", diff) }
+        val file = buildJsonObject { put("type", "fileChange"); put("id", "f"); put("status", "completed"); put("changes", JsonArray(listOf(change))) }
+        val fileProjected = decodeItemSnapshot(file) as CodexAppServerItemSnapshot.FileChange
+        assertEquals(diff, fileProjected.changes.single().diff)
+        assertEquals("new/path", (fileProjected.changes.single().kind as CodexAppServerPatchChangeKind.Update).movePath)
+        assertTrue("camelCase wire key must not be used", "movePath" !in kind); assertSame(file, fileProjected.raw)
+    }
+
+    @Test
+    fun `new streaming notifications remain ordered and malformed update does not stop stream`() = runBlocking {
+        val source = MutableSharedFlow<CodexAppServerEvent>(); val events = mutableListOf<CodexAppServerTurnEvent>()
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { source.toCodexAppServerTurnEvents().collect { events += it } }
+        emit(source, "item/commandExecution/outputDelta", delta("draft output"))
+        emit(source, "item/fileChange/patchUpdated", buildJsonObject { put("threadId", "thread"); put("turnId", "turn"); put("itemId", "item"); put("changes", "bad") })
+        emit(source, "turn/diff/updated", buildJsonObject { put("threadId", "thread"); put("turnId", "turn"); put("diff", "+ exact\n") })
+        emit(source, "item/commandExecution/terminalInteraction", buildJsonObject { put("threadId", "thread"); put("turnId", "turn"); put("itemId", "item"); put("processId", "p"); put("stdin", "secret") })
+        assertTrue(events[0] is CodexAppServerTurnEvent.CommandExecutionOutputDelta); assertTrue(events[1] is CodexAppServerTurnEvent.MalformedNotification)
+        assertEquals("+ exact\n", (events[2] as CodexAppServerTurnEvent.TurnDiffUpdated).diff); assertTrue(events[3] is CodexAppServerTurnEvent.TerminalInteraction)
+        job.cancelAndJoin()
+    }
+    @Test
     fun `all lifecycle and streaming notifications map in arrival order`() {
         runBlocking {
             val source = MutableSharedFlow<CodexAppServerEvent>(); val events = mutableListOf<CodexAppServerTurnEvent>()
