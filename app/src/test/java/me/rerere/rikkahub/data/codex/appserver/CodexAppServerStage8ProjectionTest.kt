@@ -28,6 +28,8 @@ class CodexAppServerStage8ProjectionTest {
             val item = commandItem(source = source)
             assertEquals(expected, (decodeItemSnapshot(item) as CodexAppServerItemSnapshot.CommandExecution).source)
         }
+        expectProtocolFailure { decodeItemSnapshot(JsonObject(commandItem() + ("source" to JsonNull))) }
+        expectProtocolFailure { decodeItemSnapshot(JsonObject(commandItem() + ("source" to JsonPrimitive(42)))) }
     }
 
     @Test

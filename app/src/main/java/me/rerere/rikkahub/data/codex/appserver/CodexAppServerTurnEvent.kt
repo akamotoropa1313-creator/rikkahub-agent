@@ -132,7 +132,7 @@ internal fun decodeItemSnapshot(raw: JsonObject): CodexAppServerItemSnapshot {
 
 private fun decodeCommandExecution(id: String, raw: JsonObject) = CodexAppServerItemSnapshot.CommandExecution(
     id, raw.requiredString("item.command", "command"), raw.requiredString("item.cwd", "cwd"), raw.optionalString("processId"),
-    raw.optionalString("source")?.let(::decodeSource) ?: CodexAppServerCommandExecutionSource.Agent, decodeCommandStatus(raw.requiredString("item.status", "status")),
+    raw.defaultedCommandSource(), decodeCommandStatus(raw.requiredString("item.status", "status")),
     (raw["commandActions"] as? JsonArray ?: malformed("item.commandActions must be an array")).mapIndexed { i, it -> decodeAction(it as? JsonObject ?: malformed("item.commandActions[$i] must be an object")) },
     raw.optionalString("aggregatedOutput"), raw.optionalInt("exitCode"), raw.optionalLong("durationMs"), raw.optionalString("pluginId"), raw.optionalString("scriptPath"), raw)
 
@@ -150,6 +150,9 @@ private fun decodeChanges(value: JsonElement?): List<CodexAppServerFileUpdateCha
 private fun decodeCommandStatus(v:String)=when(v){"inProgress"->CodexAppServerCommandExecutionStatus.InProgress;"completed"->CodexAppServerCommandExecutionStatus.Completed;"failed"->CodexAppServerCommandExecutionStatus.Failed;"declined"->CodexAppServerCommandExecutionStatus.Declined;else->CodexAppServerCommandExecutionStatus.Unknown(v)}
 private fun decodeSource(v:String)=when(v){"agent"->CodexAppServerCommandExecutionSource.Agent;"userShell"->CodexAppServerCommandExecutionSource.UserShell;"unifiedExecStartup"->CodexAppServerCommandExecutionSource.UnifiedExecStartup;"unifiedExecInteraction"->CodexAppServerCommandExecutionSource.UnifiedExecInteraction;else->CodexAppServerCommandExecutionSource.Unknown(v)}
 private fun decodePatchStatus(v:String)=when(v){"inProgress"->CodexAppServerPatchApplyStatus.InProgress;"completed"->CodexAppServerPatchApplyStatus.Completed;"failed"->CodexAppServerPatchApplyStatus.Failed;"declined"->CodexAppServerPatchApplyStatus.Declined;else->CodexAppServerPatchApplyStatus.Unknown(v)}
+private fun JsonObject.defaultedCommandSource(): CodexAppServerCommandExecutionSource =
+    if ("source" !in this) CodexAppServerCommandExecutionSource.Agent
+    else decodeSource(requiredString("item.source", "source"))
 private fun JsonObject.optionalString(key:String):String? { val e=this[key]?:return null; if(e === JsonNull) return null; return (e as? JsonPrimitive)?.takeIf{it.isString}?.contentOrNull ?: malformed("$key must be a string or null") }
 private fun JsonObject.optionalLong(key:String):Long? { val e=this[key]?:return null; if(e === JsonNull) return null; return (e as? JsonPrimitive)?.takeUnless{it.isString}?.longOrNull ?: malformed("$key must be an integer or null") }
 private fun JsonObject.optionalInt(key:String):Int? { val e=this[key]?:return null; if(e === JsonNull) return null; return (e as? JsonPrimitive)?.takeUnless{it.isString}?.intOrNull ?: malformed("$key must be an i32 integer or null") }
