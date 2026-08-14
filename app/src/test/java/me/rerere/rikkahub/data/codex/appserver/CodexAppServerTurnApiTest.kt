@@ -1,0 +1,218 @@
+package me.rerere.rikkahub.data.codex.appserver
+
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Test
+import kotlin.time.Duration.Companion.milliseconds
+
+class CodexAppServerTurnApiTest {
+    private val codec = CodexAppServerJsonRpc()
+
+    @Test
+    fun `minimum text wire is exact ordered unicode input and raw response is preserved`() {
+        runBlocking {
+            fixture().use { f ->
+                val call = async { f.api.startTurn("thread-1", listOf(CodexAppServerTurnInput.Text("Hello"), CodexAppServerTurnInput.Text("日本語 🌏"))) }
+                val raw = codec.json.parseToJsonElement(f.transport.takeClientLine()).jsonObject
+                assertEquals("turn/start", raw["method"]!!.jsonPrimitive.content)
+                assertFalse("jsonrpc" in raw); assertFalse(raw["id"]!!.jsonPrimitive.isString)
+                val params = raw["params"]!!.jsonObject
+                assertEquals(setOf("threadId", "input"), params.keys)
+                assertEquals("thread-1", params["threadId"]!!.jsonPrimitive.content)
+                assertEquals(listOf("Hello", "日本語 🌏"), params["input"]!!.let { it as JsonArray }.map { it.jsonObject["text"]!!.jsonPrimitive.content })
+                assertTrue((params["input"] as JsonArray).all { it.jsonObject.keys == setOf("type", "text") && it.jsonObject["type"]!!.jsonPrimitive.content == "text" })
+                val request = decodeRequest(raw.toString()); val result = turnResult("turn-1", "inProgress", true)
+                f.respond(request, result)
+                val opened = call.await()
+                assertEquals("turn-1", opened.turn.id); assertEquals(CodexAppServerTurnStatus.InProgress, opened.turn.status)
+                assertSame(opened.rawResult["turn"], opened.turn.raw); assertEquals(result, opened.rawResult)
+            }
+        }
+    }
+
+    @Test
+    fun `stable overrides serialize and unsupported fields remain absent`() {
+        runBlocking {
+            fixture().use { f ->
+                val schema = buildJsonObject { put("type", "object") }
+                val call = async { f.api.startTurn("t", emptyList(), CodexAppServerTurnStartParams("message", "/x", "gpt", "future-effort", CodexAppServerReasoningSummary.DETAILED, CodexAppServerPersonality.FRIENDLY, schema)) }
+                val request = decodeRequest(f.transport.takeClientLine()); val p = request.params!!.jsonObject
+                assertEquals(setOf("threadId", "input", "clientUserMessageId", "cwd", "model", "effort", "summary", "personality", "outputSchema"), p.keys)
+                assertEquals("future-effort", p["effort"]!!.jsonPrimitive.content); assertEquals("detailed", p["summary"]!!.jsonPrimitive.content)
+                listOf("approvalPolicy", "sandboxPolicy", "serviceTier", "additionalContext", "permissions", "collaborationMode", "multiAgentMode").forEach { assertFalse(it in p) }
+                f.respond(request, turnResult("id", "completed")); call.await()
+            }
+        }
+    }
+
+    @Test
+    fun `all reasoning summary values use official spelling`() {
+        runBlocking {
+            CodexAppServerReasoningSummary.entries.forEach { value -> fixture().use { f ->
+                val call = async { f.api.startTurn("t", emptyList(), CodexAppServerTurnStartParams(summary = value)) }
+                val request = decodeRequest(f.transport.takeClientLine())
+                assertEquals(value.wireValue, request.params!!.jsonObject["summary"]!!.jsonPrimitive.content)
+                f.respond(request, turnResult("id", "completed")); call.await()
+            } }
+        }
+    }
+
+    @Test
+    fun `blank thread id rejects before write and ready gate is required`() {
+        runBlocking {
+            fixture().use { f ->
+                val writes = f.transport.successfulWriteCount()
+                expect<IllegalArgumentException> { f.api.startTurn("  ", emptyList()) }
+                assertEquals(writes, f.transport.successfulWriteCount()); assertEquals(0, f.dispatcher.pendingRequestCount())
+            }
+            val t = FakeCodexAppServerTransport(); val d = CodexAppServerRequestDispatcher(t)
+            val c = CodexAppServerConnection(
+                d,
+                CodexAppServerClientInfo(name = "test", version = "1"),
+            )
+            expect<CodexAppServerNotReadyException> { CodexAppServerTurnApi(c).startTurn("t", emptyList()) }
+            c.close()
+        }
+    }
+
+    @Test
+    fun `malformed response projection is rejected while unknown status is retained`() {
+        runBlocking { supervisorScope {
+            val malformed = listOf<JsonElementCase>(
+                JsonElementCase(JsonNull), JsonElementCase(JsonPrimitive("x")), JsonElementCase(JsonObject(emptyMap())),
+                JsonElementCase(buildJsonObject { put("turn", "x") }), JsonElementCase(buildJsonObject { put("turn", buildJsonObject { put("status", "completed") }) }),
+                JsonElementCase(buildJsonObject { put("turn", buildJsonObject { put("id", 2); put("status", "completed") }) }),
+                JsonElementCase(turnResult(" ", "completed")), JsonElementCase(buildJsonObject { put("turn", buildJsonObject { put("id", "id") }) }),
+                JsonElementCase(buildJsonObject { put("turn", buildJsonObject { put("id", "id"); put("status", 2) }) }),
+            )
+            malformed.forEach { (value) -> fixture().use { f -> val call = async { f.api.startTurn("t", emptyList()) }; f.respond(decodeRequest(f.transport.takeClientLine()), value); expect<CodexAppServerTurnProtocolException> { call.await() } } }
+            fixture().use { f -> val call = async { f.api.startTurn("t", emptyList()) }; val request = decodeRequest(f.transport.takeClientLine()); f.respond(request, turnResult("id", "future")); assertEquals(CodexAppServerTurnStatus.Unknown("future"), call.await().turn.status) }
+        } }
+    }
+
+    @Test
+    fun `concurrent starts correlate out of order without retry and cancellation cleans pending`() {
+        runBlocking {
+            fixture().use { f ->
+                val calls = (0..2).map { n -> async { f.api.startTurn("t$n", listOf(CodexAppServerTurnInput.Text("$n"))) } }
+                val requests = (0..2).map { decodeRequest(f.transport.takeClientLine()) }
+                listOf(2, 0, 1).forEach { f.respond(requests[it], turnResult("turn-$it", "inProgress")) }
+                assertEquals(listOf("turn-0", "turn-1", "turn-2"), calls.map { it.await().turn.id })
+                val before = f.transport.successfulWriteCount()
+                val timed = async { f.api.startTurn("t", emptyList(), timeout = 10.milliseconds) }; f.transport.takeClientLine()
+                expect<kotlinx.coroutines.TimeoutCancellationException> { timed.await() }; assertEquals(0, f.dispatcher.pendingRequestCount()); assertEquals(before + 1, f.transport.successfulWriteCount())
+                val cancelled = async { f.api.startTurn("t", emptyList()) }; f.transport.takeClientLine(); cancelled.cancelAndJoin()
+                assertEquals(0, f.dispatcher.pendingRequestCount()); assertEquals(before + 2, f.transport.successfulWriteCount())
+            }
+        }
+    }
+
+    @Test
+    fun `json rpc error propagates and response alone completes`() {
+        runBlocking { supervisorScope { fixture().use { f ->
+            val call = async { f.api.startTurn("t", emptyList()) }; val request = decodeRequest(f.transport.takeClientLine())
+            f.transport.injectServerLine(codec.encode(JsonRpcErrorResponse(request.id, JsonRpcError(9, "denied"))))
+            assertEquals(9, expect<CodexAppServerResponseException> { call.await() }.error.code)
+            val onlyResponse = async { f.api.startTurn("t", emptyList()) }; val second = decodeRequest(f.transport.takeClientLine()); f.respond(second, turnResult("ok", "completed")); assertEquals("ok", onlyResponse.await().turn.id)
+        } } }
+    }
+
+    @Test
+    fun `response completes before a later typed turn started notification`() {
+        runBlocking {
+            fixture().use { f ->
+                val events = mutableListOf<CodexAppServerTurnEvent>()
+                val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+                    f.api.events.collect { events += it }
+                }
+                val call = async { f.api.startTurn("thread", emptyList()) }
+                val request = decodeRequest(f.transport.takeClientLine())
+                f.respond(request, turnResult("turn", "inProgress"))
+                assertEquals("turn", call.await().turn.id)
+                assertTrue(events.isEmpty())
+
+                f.transport.injectServerLine(codec.encode(JsonRpcNotification(
+                    "turn/started",
+                    buildJsonObject {
+                        put("threadId", "thread")
+                        put("turn", buildJsonObject { put("id", "turn"); put("status", "inProgress") })
+                    },
+                )))
+                withTimeout(1_000) { while (events.isEmpty()) yield() }
+                assertTrue(events.single() is CodexAppServerTurnEvent.TurnStarted)
+                collector.cancelAndJoin()
+            }
+        }
+    }
+
+    @Test
+    fun `raw connection events remain observable beside typed turn events`() {
+        runBlocking {
+            fixture().use { f ->
+                val rawEvents = mutableListOf<CodexAppServerEvent>()
+                val typedEvents = mutableListOf<CodexAppServerTurnEvent>()
+                val rawCollector = launch(start = CoroutineStart.UNDISPATCHED) {
+                    f.connection.events.collect { rawEvents += it }
+                }
+                val typedCollector = launch(start = CoroutineStart.UNDISPATCHED) {
+                    f.api.events.collect { typedEvents += it }
+                }
+                val unrelated = buildJsonObject { put("x", 1) }
+                f.transport.injectServerLine(codec.encode(JsonRpcNotification("future/event", unrelated)))
+                val delta = buildJsonObject {
+                    put("threadId", "thread"); put("turnId", "turn")
+                    put("itemId", "item"); put("delta", "hello")
+                }
+                f.transport.injectServerLine(codec.encode(JsonRpcNotification("item/agentMessage/delta", delta)))
+                withTimeout(1_000) { while (rawEvents.size < 2 || typedEvents.isEmpty()) yield() }
+
+                val future = rawEvents[0] as CodexAppServerEvent.UnknownNotification
+                assertEquals("future/event", future.method); assertEquals(unrelated, future.params)
+                assertEquals(
+                    "item/agentMessage/delta",
+                    (rawEvents[1] as CodexAppServerEvent.UnknownNotification).method,
+                )
+                assertEquals("hello", (typedEvents.single() as CodexAppServerTurnEvent.AgentMessageDelta).delta)
+                rawCollector.cancelAndJoin(); typedCollector.cancelAndJoin()
+            }
+        }
+    }
+
+    private suspend fun fixture(): Fixture {
+        val t = FakeCodexAppServerTransport(); val d = CodexAppServerRequestDispatcher(t)
+        val c = CodexAppServerConnection(
+            d,
+            CodexAppServerClientInfo(name = "test", version = "1"),
+        )
+        val init = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.currentCoroutineContext()).async { c.initialize() }; val request = decodeRequest(t.takeClientLine())
+        t.injectServerLine(codec.encode(JsonRpcResponse(request.id, buildJsonObject { put("userAgent", "fake"); put("codexHome", "/tmp"); put("platformFamily", "unix"); put("platformOs", "linux") })))
+        init.await(); t.takeClientLine(); return Fixture(t, d, c, CodexAppServerTurnApi(c))
+    }
+    private fun turnResult(id: String, status: String, extra: Boolean = false) = buildJsonObject { put("turn", buildJsonObject { put("id", id); put("status", status); if (extra) put("future", 1) }); if (extra) put("extra", true) }
+    private fun decodeRequest(line: String) = (codec.decode(line).getOrThrow() as JsonRpcMessage.Request).value
+    private suspend inline fun <reified T : Throwable> expect(crossinline block: suspend () -> Unit): T = try { block(); fail("Expected ${T::class.java.simpleName}"); error("unreachable") } catch (e: Throwable) { if (e is T) e else if (e.cause is T) e.cause as T else throw e }
+    private data class JsonElementCase(val value: kotlinx.serialization.json.JsonElement)
+    private inner class Fixture(val transport: FakeCodexAppServerTransport, val dispatcher: CodexAppServerRequestDispatcher, val connection: CodexAppServerConnection, val api: CodexAppServerTurnApi) : AutoCloseable {
+        fun respond(request: JsonRpcRequest, value: kotlinx.serialization.json.JsonElement) = transport.injectServerLine(codec.encode(JsonRpcResponse(request.id, value)))
+        override fun close() = connection.close()
+    }
+}
