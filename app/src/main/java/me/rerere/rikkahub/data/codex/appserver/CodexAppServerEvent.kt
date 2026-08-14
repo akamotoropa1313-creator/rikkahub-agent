@@ -7,19 +7,21 @@ import kotlinx.serialization.json.JsonElement
  * codec; unknown methods retain their complete parameters for forward compatibility.
  */
 sealed interface CodexAppServerEvent {
-    val method: String
-    val params: JsonElement?
-
     data class UnknownNotification(
-        override val method: String,
-        override val params: JsonElement?,
+        val method: String,
+        val params: JsonElement?,
     ) : CodexAppServerEvent
 
     data class ServerRequest(
         val id: JsonRpcId,
-        override val method: String,
-        override val params: JsonElement?,
+        val method: String,
+        val params: JsonElement?,
     ) : CodexAppServerEvent
+
+    data class MalformedInbound(val line: String, val cause: Throwable) : CodexAppServerEvent
+    data class UnknownResponseId(val id: JsonRpcId) : CodexAppServerEvent
+    data class TransportFailure(val cause: Throwable) : CodexAppServerEvent
+    data object TransportClosed : CodexAppServerEvent
 }
 
 fun JsonRpcMessage.toCodexAppServerEventOrNull(): CodexAppServerEvent? = when (this) {

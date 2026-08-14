@@ -70,4 +70,16 @@ jobs:
       - name: Run Codex App Server protocol unit tests
         run: >-
           ./gradlew :app:testDebugUnitTest
-          --tests 'me.rerere.rikkahub.data.codex.appserver.CodexAppServerJsonRpcTest'
+          --tests 'me.rerere.rikkahub.data.codex.appserver.*Test'
+
+      - name: Print Codex App Server dispatcher JUnit failure details
+        if: failure()
+        shell: bash
+        run: |
+          report="app/build/test-results/testDebugUnitTest/TEST-me.rerere.rikkahub.data.codex.appserver.CodexAppServerRequestDispatcherTest.xml"
+          if [[ -f "$report" ]]; then
+            echo "JUnit XML: $report"
+            cat "$report"
+          else
+            echo "JUnit XML not found: $report"
+          fi
