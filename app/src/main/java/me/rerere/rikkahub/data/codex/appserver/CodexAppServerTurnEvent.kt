@@ -133,10 +133,10 @@ internal fun decodeItemSnapshot(raw: JsonObject): CodexAppServerItemSnapshot {
 private fun decodeCommandExecution(id: String, raw: JsonObject) = CodexAppServerItemSnapshot.CommandExecution(
     id, raw.requiredString("item.command", "command"), raw.requiredString("item.cwd", "cwd"), raw.optionalString("processId"),
     raw.defaultedCommandSource(), decodeCommandStatus(raw.requiredString("item.status", "status")),
-    (raw["commandActions"] as? JsonArray ?: malformed("item.commandActions must be an array")).mapIndexed { i, it -> decodeAction(it as? JsonObject ?: malformed("item.commandActions[$i] must be an object")) },
+    (raw["commandActions"] as? JsonArray ?: malformed("item.commandActions must be an array")).mapIndexed { i, it -> decodeCommandAction(it as? JsonObject ?: malformed("item.commandActions[$i] must be an object")) },
     raw.optionalString("aggregatedOutput"), raw.optionalInt("exitCode"), raw.optionalLong("durationMs"), raw.optionalString("pluginId"), raw.optionalString("scriptPath"), raw)
 
-private fun decodeAction(raw: JsonObject): CodexAppServerCommandAction {
+internal fun decodeCommandAction(raw: JsonObject): CodexAppServerCommandAction {
     val type = raw.requiredString("action.type", "type")
     return when (type) {
         "read" -> CodexAppServerCommandAction.Read(raw.requiredString("action.command", "command"), raw.requiredString("action.name", "name"), raw.requiredString("action.path", "path"), raw)

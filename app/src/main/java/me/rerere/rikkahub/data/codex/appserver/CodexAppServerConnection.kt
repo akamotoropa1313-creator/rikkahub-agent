@@ -148,6 +148,14 @@ class CodexAppServerConnection(
         return dispatcher.sendRequest(method, params, timeout)
     }
 
+    internal suspend fun respondServerRequestAfterReady(id: JsonRpcId, result: JsonElement) {
+        val current = mutableState.value
+        if (current !is CodexAppServerConnectionState.Ready) {
+            throw CodexAppServerNotReadyException(current)
+        }
+        dispatcher.respondSuccess(id, result)
+    }
+
     /** Returns a transition only for the first, still-current handshake failure. */
     private fun failHandshake(current: Handshake, cause: Throwable): FailureTransition? {
         if (handshake !== current) return null
