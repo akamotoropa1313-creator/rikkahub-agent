@@ -28,6 +28,28 @@ class CodexAppServerTurnApiTest {
     private val codec = CodexAppServerJsonRpc()
 
     @Test
+    fun `stage 8 notifications remain simultaneously raw and typed while deprecated output stays raw only`() = runBlocking {
+        fixture().use { f ->
+            val raw = mutableListOf<CodexAppServerEvent.UnknownNotification>()
+            val typed = mutableListOf<CodexAppServerTurnEvent>()
+            val rawReady = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val typedReady = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val rawCollector = launch(start = CoroutineStart.UNDISPATCHED) { f.connection.events.collect { event -> if (event is CodexAppServerEvent.UnknownNotification) { raw += event; if (raw.size == 4) rawReady.complete(Unit) } } }
+            val typedCollector = launch(start = CoroutineStart.UNDISPATCHED) { f.api.events.collect { event -> typed += event; if (typed.size == 3) typedReady.complete(Unit) } }
+            val common = { itemId: String -> buildJsonObject { put("threadId", "thread"); put("turnId", "turn"); put("itemId", itemId) } }
+            f.transport.injectServerLine(codec.encode(JsonRpcNotification("item/fileChange/outputDelta", JsonObject(common("legacy") + ("delta" to JsonPrimitive("legacy"))))))
+            f.transport.injectServerLine(codec.encode(JsonRpcNotification("item/commandExecution/outputDelta", JsonObject(common("command") + ("delta" to JsonPrimitive("out"))))))
+            val change = buildJsonObject { put("path", "a"); put("kind", buildJsonObject { put("type", "add") }); put("diff", "+a\n") }
+            f.transport.injectServerLine(codec.encode(JsonRpcNotification("item/fileChange/patchUpdated", JsonObject(common("file") + ("changes" to JsonArray(listOf(change)))))))
+            f.transport.injectServerLine(codec.encode(JsonRpcNotification("turn/diff/updated", buildJsonObject { put("threadId", "thread"); put("turnId", "turn"); put("diff", "+a\n") })))
+            withTimeout(1_000) { rawReady.await(); typedReady.await() }
+            assertEquals(listOf("item/fileChange/outputDelta", "item/commandExecution/outputDelta", "item/fileChange/patchUpdated", "turn/diff/updated"), raw.map { it.method })
+            assertEquals(listOf(CodexAppServerTurnEvent.CommandExecutionOutputDelta::class, CodexAppServerTurnEvent.FileChangePatchUpdated::class, CodexAppServerTurnEvent.TurnDiffUpdated::class), typed.map { it::class })
+            rawCollector.cancelAndJoin(); typedCollector.cancelAndJoin()
+        }
+    }
+
+    @Test
     fun `interrupt emits exact wire contract and preserves future result fields`() {
         runBlocking {
             fixture().use { f ->

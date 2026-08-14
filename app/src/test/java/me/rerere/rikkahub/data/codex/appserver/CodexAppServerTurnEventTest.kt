@@ -22,7 +22,7 @@ class CodexAppServerTurnEventTest {
     @Test
     fun `command and file snapshots preserve typed and authoritative wire data`() {
         val diff = "--- a/ü\n+++ b/ü\n@@ -1 +1 @@\n- old\n+\tnew  \n"
-        val action = buildJsonObject { put("type", "futureAction"); put("command", "future"); put("future", 1) }
+        val action = buildJsonObject { put("type", "futureAction"); put("future", 1) }
         val command = buildJsonObject { put("type", "commandExecution"); put("id", "c"); put("command", "printf x"); put("cwd", "/opaque"); put("processId", "42"); put("source", "futureSource"); put("status", "futureStatus"); put("commandActions", JsonArray(listOf(action))); put("aggregatedOutput", "final authoritative output"); put("exitCode", -1); put("durationMs", Long.MAX_VALUE) }
         val projected = decodeItemSnapshot(command) as CodexAppServerItemSnapshot.CommandExecution
         assertEquals(Long.MAX_VALUE, projected.durationMs); assertEquals("final authoritative output", projected.aggregatedOutput)
@@ -48,6 +48,28 @@ class CodexAppServerTurnEventTest {
         emit(source, "item/commandExecution/terminalInteraction", buildJsonObject { put("threadId", "thread"); put("turnId", "turn"); put("itemId", "item"); put("processId", "p"); put("stdin", "secret") })
         assertTrue(events[0] is CodexAppServerTurnEvent.CommandExecutionOutputDelta); assertTrue(events[1] is CodexAppServerTurnEvent.MalformedNotification)
         assertEquals("+ exact\n", (events[2] as CodexAppServerTurnEvent.TurnDiffUpdated).diff); assertTrue(events[3] is CodexAppServerTurnEvent.TerminalInteraction)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `progress events do not replace authoritative completed command and file items`() = runBlocking {
+        val source = MutableSharedFlow<CodexAppServerEvent>()
+        val events = mutableListOf<CodexAppServerTurnEvent>()
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { source.toCodexAppServerTurnEvents().collect { events += it } }
+        val provisional = buildJsonObject { put("path", "draft"); put("kind", buildJsonObject { put("type", "add") }); put("diff", "+draft\n") }
+        val final = buildJsonObject { put("path", "final"); put("kind", buildJsonObject { put("type", "delete") }); put("diff", "-final\n") }
+        val patchParams = buildJsonObject { put("threadId", "thread"); put("turnId", "turn"); put("itemId", "file"); put("changes", JsonArray(listOf(provisional, final))) }
+        emit(source, "item/commandExecution/outputDelta", delta("draft output"))
+        emit(source, "item/completed", itemParams(command("final authoritative output"), "completedAtMs", 1))
+        emit(source, "item/fileChange/patchUpdated", patchParams)
+        emit(source, "item/completed", itemParams(fileChange(final), "completedAtMs", 2))
+
+        assertEquals("final authoritative output", ((events[1] as CodexAppServerTurnEvent.ItemCompleted).item as CodexAppServerItemSnapshot.CommandExecution).aggregatedOutput)
+        val patch = events[2] as CodexAppServerTurnEvent.FileChangePatchUpdated
+        assertEquals("thread", patch.threadId); assertEquals("turn", patch.turnId); assertEquals("file", patch.itemId)
+        assertEquals(listOf("draft", "final"), patch.changes.map { it.path }); assertEquals("+draft\n", patch.changes[0].diff); assertSame(patchParams, patch.rawParams)
+        val completed = (events[3] as CodexAppServerTurnEvent.ItemCompleted).item as CodexAppServerItemSnapshot.FileChange
+        assertEquals(listOf("final"), completed.changes.map { it.path }); assertEquals("-final\n", completed.changes.single().diff)
         job.cancelAndJoin()
     }
     @Test
@@ -133,6 +155,8 @@ class CodexAppServerTurnEventTest {
     private fun turnParams(status: String) = buildJsonObject { put("threadId", "thread"); put("turn", turn(status)) }
     private fun agent(text: String) = buildJsonObject { put("type", "agentMessage"); put("id", "item"); put("text", text) }
     private fun reasoning(summary: List<String>, content: List<String>) = buildJsonObject { put("type", "reasoning"); put("id", "item"); put("summary", JsonArray(summary.map(::JsonPrimitive))); put("content", JsonArray(content.map(::JsonPrimitive))) }
+    private fun command(output: String) = buildJsonObject { put("type", "commandExecution"); put("id", "item"); put("command", "echo"); put("cwd", "/tmp"); put("status", "completed"); put("commandActions", JsonArray(emptyList())); put("aggregatedOutput", output) }
+    private fun fileChange(change: JsonObject) = buildJsonObject { put("type", "fileChange"); put("id", "item"); put("status", "completed"); put("changes", JsonArray(listOf(change))) }
     private fun itemParams(item: JsonObject, timestamp: String, value: Any) = buildJsonObject { put("threadId", "thread"); put("turnId", "turn"); put("item", item); when (value) { is Long -> put(timestamp, value); is Int -> put(timestamp, value); is String -> put(timestamp, value) } }
     private fun delta(value: String) = buildJsonObject { put("threadId", "thread"); put("turnId", "turn"); put("itemId", "item"); put("delta", value) }
     private fun streamIndex(key: String, index: Any, delta: String? = null) = buildJsonObject { put("threadId", "thread"); put("turnId", "turn"); put("itemId", "item"); when (index) { is Long -> put(key, index); is Int -> put(key, index); is String -> put(key, index) }; delta?.let { put("delta", it) } }
