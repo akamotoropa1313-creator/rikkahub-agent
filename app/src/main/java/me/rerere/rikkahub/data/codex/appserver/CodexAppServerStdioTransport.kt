@@ -18,6 +18,9 @@ class CodexAppServerProcessExitedException(
 ) : IOException("Codex App Server exited with code $exitCode" +
     if (stderrTail.isBlank()) "" else ": ${stderrTail.takeLast(512)}")
 
+class CodexAppServerUnexpectedStdoutEofException :
+    IOException("Codex App Server stdout reached EOF while the process was still running")
+
 /** Production JSONL transport. Blocking process IO is owned by dedicated daemon threads. */
 class CodexAppServerStdioTransport(
     private val process: WorkspaceInteractiveProcess,
@@ -26,6 +29,7 @@ class CodexAppServerStdioTransport(
     override val events: Flow<CodexAppServerTransportEvent> = channel.receiveAsFlow()
     private val writerMutex = Mutex()
     private val terminal = AtomicBoolean()
+    private val exitObserved = AtomicBoolean()
     private val emissionLock = Any()
     private val stderrLock = Any()
     private val stderr = StringBuilder()
@@ -34,14 +38,18 @@ class CodexAppServerStdioTransport(
         try {
             process.stdout.bufferedReader(StandardCharsets.UTF_8).use { reader ->
                 while (true) {
-                    val line = reader.readLine() ?: break
+                    val line = reader.readLine()
+                    if (line == null) {
+                        handleStdoutEof()
+                        break
+                    }
                     synchronized(emissionLock) {
                         if (!terminal.get()) channel.trySend(CodexAppServerTransportEvent.Line(line))
                     }
                 }
             }
         } catch (error: IOException) {
-            if (!terminal.get()) fail(error)
+            if (!terminal.get() && !exitObserved.get()) fail(error)
         }
     }
     private val stderrThread = daemon("codex-app-server-stderr") {
@@ -61,15 +69,20 @@ class CodexAppServerStdioTransport(
     private val watcherThread = daemon("codex-app-server-watcher") {
         try {
             val code = process.waitFor()
-            stderrThread.join(1_000)
-            if (code == 0) finish(CodexAppServerTransportEvent.Closed)
-            else finish(CodexAppServerTransportEvent.Failure(
-                CodexAppServerProcessExitedException(code, stderrTail())
-            ))
+            exitObserved.set(true)
+            awaitDrain(stdoutThread) { process.stdout.close() }
+            awaitDrain(stderrThread) { process.stderr.close() }
+            classifyExit(code)
         } catch (error: InterruptedException) {
             Thread.currentThread().interrupt()
             if (!terminal.get()) fail(error)
         }
+    }
+
+    init {
+        stdoutThread.start()
+        stderrThread.start()
+        watcherThread.start()
     }
 
     override suspend fun sendLine(line: String) {
@@ -94,6 +107,34 @@ class CodexAppServerStdioTransport(
 
     private fun fail(error: Throwable) = finish(CodexAppServerTransportEvent.Failure(error))
 
+    private fun handleStdoutEof() {
+        if (terminal.get() || exitObserved.get()) return
+        val exited = runCatching { process.waitFor(EXIT_GRACE_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS) }
+            .getOrDefault(false)
+        if (exited) {
+            exitObserved.set(true)
+            awaitDrain(stderrThread) { process.stderr.close() }
+            classifyExit(process.exitValue())
+        } else if (!exitObserved.get()) {
+            fail(CodexAppServerUnexpectedStdoutEofException())
+        }
+    }
+
+    private fun classifyExit(code: Int) {
+        if (code == 0) finish(CodexAppServerTransportEvent.Closed)
+        else finish(CodexAppServerTransportEvent.Failure(
+            CodexAppServerProcessExitedException(code, stderrTail())
+        ))
+    }
+
+    private fun awaitDrain(thread: Thread, unblock: () -> Unit) {
+        thread.join(DRAIN_TIMEOUT_MILLIS)
+        if (thread.isAlive) {
+            runCatching(unblock)
+            thread.join(DRAIN_TIMEOUT_MILLIS)
+        }
+    }
+
     private fun finish(event: CodexAppServerTransportEvent) {
         synchronized(emissionLock) {
             if (!terminal.compareAndSet(false, true)) return
@@ -113,6 +154,10 @@ class CodexAppServerStdioTransport(
 
     private fun daemon(name: String, block: () -> Unit): Thread = Thread(block, name).apply {
         isDaemon = true
-        start()
+    }
+
+    private companion object {
+        const val EXIT_GRACE_MILLIS = 100L
+        const val DRAIN_TIMEOUT_MILLIS = 1_000L
     }
 }

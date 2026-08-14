@@ -4,7 +4,6 @@ import java.io.Closeable
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** A live process whose streams belong to the caller and whose lifetime is tracked by WorkspaceManager. */
 class WorkspaceInteractiveProcess internal constructor(
@@ -12,7 +11,7 @@ class WorkspaceInteractiveProcess internal constructor(
     private val onClose: (WorkspaceInteractiveProcess) -> Unit,
     private val closeTimeoutMillis: Long = 1_000,
 ) : Closeable {
-    private val closed = AtomicBoolean()
+    private var closed = false
     val stdin: OutputStream get() = process.outputStream
     val stdout: InputStream get() = process.inputStream
     val stderr: InputStream get() = process.errorStream
@@ -23,17 +22,26 @@ class WorkspaceInteractiveProcess internal constructor(
     fun destroy() = process.destroy()
     fun destroyForcibly(): Process = process.destroyForcibly()
 
+    @Synchronized
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
-        try {
-            runCatching { stdin.close() }
-            if (process.isAlive) process.destroy()
-            val stopped = runCatching {
-                !process.isAlive || process.waitFor(closeTimeoutMillis, TimeUnit.MILLISECONDS)
-            }.getOrDefault(false)
-            if (!stopped && process.isAlive) process.destroyForcibly()
-        } finally {
-            onClose(this)
+        if (closed) return
+        runCatching { stdin.close() }
+        if (process.isAlive) process.destroy()
+        var stopped = awaitStopped()
+        if (!stopped && process.isAlive) {
+            process.destroyForcibly()
+            stopped = awaitStopped()
         }
+        if (!stopped && process.isAlive) {
+            throw WorkspaceProcessCleanupException("Process remained alive after forceful shutdown")
+        }
+        closed = true
+        onClose(this)
     }
+
+    private fun awaitStopped(): Boolean = runCatching {
+        process.waitFor(closeTimeoutMillis, TimeUnit.MILLISECONDS)
+    }.getOrElse { !process.isAlive }
 }
+
+class WorkspaceProcessCleanupException(message: String) : IllegalStateException(message)
