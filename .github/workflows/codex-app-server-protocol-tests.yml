@@ -21,12 +21,16 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install Android build dependencies
-        run: >-
-          sdkmanager
-          "platforms;android-37"
-          "build-tools;37.0.0"
-          "ndk;28.2.13676358"
-          "cmake;3.22.1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --list --channel=3 | tee "$RUNNER_TEMP/sdk-packages.txt"
+          grep -Fq 'platforms;android-37' "$RUNNER_TEMP/sdk-packages.txt"
+          sdkmanager --channel=3 \
+            "platforms;android-37" \
+            "build-tools;37.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.22.1"
 
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
