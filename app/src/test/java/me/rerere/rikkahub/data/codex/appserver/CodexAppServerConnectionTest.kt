@@ -1,9 +1,14 @@
 package me.rerere.rikkahub.data.codex.appserver
 
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
@@ -18,6 +23,64 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class CodexAppServerConnectionTest {
+    @Test fun `Initializing observer can close synchronously without deadlock`() {
+        runOnBoundedDaemonThread {
+            fixture().use { f ->
+                val observer = launch(Dispatchers.Unconfined) {
+                    f.connection.state.first { it == CodexAppServerConnectionState.Initializing }
+                    f.connection.close()
+                }
+                val initialize = async(start = CoroutineStart.UNDISPATCHED) {
+                    runCatching { f.connection.initialize() }
+                }
+                assertTrue(initialize.await().isFailure)
+                observer.join()
+                assertEquals(CodexAppServerConnectionState.Closed, f.connection.state.value)
+                assertEquals(0, f.transport.successfulWriteCount())
+                assertEquals(0, f.dispatcher.pendingRequestCount())
+            }
+        }
+    }
+
+    @Test fun `Ready observer can close synchronously without deadlock`() {
+        runOnBoundedDaemonThread {
+            fixture().use { f ->
+                val observer = launch(Dispatchers.Unconfined) {
+                    f.connection.state.first { it is CodexAppServerConnectionState.Ready }
+                    f.connection.close()
+                }
+                val initialize = async(start = CoroutineStart.UNDISPATCHED) { f.connection.initialize() }
+                f.transport.takeClientLine()
+                f.success()
+                assertEquals("codex/0.144", initialize.await().userAgent)
+                observer.join()
+                assertEquals(CodexAppServerConnectionState.Closed, f.connection.state.value)
+                assertEquals("{\"method\":\"initialized\"}", f.transport.takeClientLine())
+                assertEquals(2, f.transport.successfulWriteCount())
+                assertEquals(0, f.dispatcher.pendingRequestCount())
+            }
+        }
+    }
+
+    @Test fun `close cancels a paused initialized write without releasing its gate`() = runBlocking {
+        fixture().use { f ->
+            val initialize = async(start = CoroutineStart.UNDISPATCHED) {
+                runCatching { f.connection.initialize() }
+            }
+            f.transport.takeClientLine()
+            val initializedGate = f.transport.pauseWrites()
+            f.success()
+            initializedGate.awaitWriteAttempt()
+
+            closeOnBoundedDaemonThread(f.connection)
+
+            assertTrue(initialize.await().isFailure)
+            assertEquals(CodexAppServerConnectionState.Closed, f.connection.state.value)
+            assertEquals(1, f.transport.successfulWriteCount())
+            assertEquals(0, f.dispatcher.pendingRequestCount())
+        }
+    }
+
     @Test fun `initialize uses exact contract and decodes current response`() = runBlocking {
         fixture().use { f ->
             val call = async(start = CoroutineStart.UNDISPATCHED) { f.connection.initialize() }
@@ -64,6 +127,7 @@ class CodexAppServerConnectionTest {
             val cached = f.connection.initialize()
             assertSame(results.first(), cached)
             assertEquals(CodexAppServerConnectionState.Ready(cached), f.connection.state.value)
+            assertEquals(2, f.transport.successfulWriteCount())
         }
     }
 
@@ -185,6 +249,28 @@ class CodexAppServerConnectionTest {
                 initializeTimeout = timeoutMs.milliseconds,
             )
         )
+    }
+
+    private fun runOnBoundedDaemonThread(block: suspend () -> Unit) {
+        val executor = daemonExecutor()
+        try {
+            executor.submit { runBlocking { block() } }.get(2, TimeUnit.SECONDS)
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    private fun closeOnBoundedDaemonThread(connection: CodexAppServerConnection) {
+        val executor = daemonExecutor()
+        try {
+            executor.submit { connection.close() }.get(2, TimeUnit.SECONDS)
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    private fun daemonExecutor() = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "connection-deadlock-regression").apply { isDaemon = true }
     }
 
     private fun json(line: String): JsonObject =

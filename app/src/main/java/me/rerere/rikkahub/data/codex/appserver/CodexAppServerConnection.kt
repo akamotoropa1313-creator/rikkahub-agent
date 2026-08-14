@@ -1,8 +1,11 @@
 package me.rerere.rikkahub.data.codex.appserver
 
 import java.io.Closeable
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -12,9 +15,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonElement
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -35,10 +35,11 @@ class CodexAppServerConnection(
     private val initializeTimeout: Duration = 30.seconds,
 ) : Closeable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val lifecycle = Mutex()
+    private val handshakeRegistration = Any()
     private val mutableState = MutableStateFlow<CodexAppServerConnectionState>(CodexAppServerConnectionState.Created)
-    private var handshake: CompletableDeferred<CodexAppServerInitializeResponse>? = null
-    private var handshakeJob: Job? = null
+    @Volatile
+    private var handshake: Handshake? = null
+    private val terminalCause = AtomicReference<Throwable?>(null)
 
     val state: StateFlow<CodexAppServerConnectionState> = mutableState.asStateFlow()
     val events: Flow<CodexAppServerEvent> = dispatcher.events
@@ -46,39 +47,47 @@ class CodexAppServerConnection(
     init {
         scope.launch {
             val cause = dispatcher.awaitTerminal()
-            lifecycle.withLock {
-                when (mutableState.value) {
-                    CodexAppServerConnectionState.Closing,
-                    CodexAppServerConnectionState.Closed,
-                    is CodexAppServerConnectionState.Failed -> Unit
-                    else -> failLocked(cause)
-                }
-            }
+            val transition = failConnection(cause)
+            transition?.deferred?.completeExceptionally(CodexAppServerConnectionFailedException(transition.cause))
         }
     }
 
     suspend fun initialize(): CodexAppServerInitializeResponse {
-        val shared = lifecycle.withLock {
+        var toStart: Job? = null
+        val shared = synchronized(handshakeRegistration) {
             when (val current = mutableState.value) {
                 is CodexAppServerConnectionState.Ready -> return current.response
                 is CodexAppServerConnectionState.Failed -> throw CodexAppServerConnectionFailedException(current.cause)
                 CodexAppServerConnectionState.Closing,
                 CodexAppServerConnectionState.Closed -> throw CodexAppServerConnectionClosedException()
+                CodexAppServerConnectionState.Initializing -> checkNotNull(handshake).deferred
                 CodexAppServerConnectionState.Created -> {
-                    mutableState.value = CodexAppServerConnectionState.Initializing
-                    CompletableDeferred<CodexAppServerInitializeResponse>().also {
-                        handshake = it
-                        handshakeJob = scope.launch { performHandshake(it) }
-                    }
+                    val deferred = CompletableDeferred<CodexAppServerInitializeResponse>()
+                    lateinit var current: Handshake
+                    val job = scope.launch(start = CoroutineStart.LAZY) { performHandshake(current) }
+                    current = Handshake(deferred, job)
+                    // Register everything close() needs before Initializing becomes observable.
+                    handshake = current
+                    toStart = job
+                    check(mutableState.compareAndSet(
+                        CodexAppServerConnectionState.Created,
+                        CodexAppServerConnectionState.Initializing,
+                    ))
+                    deferred
                 }
-                CodexAppServerConnectionState.Initializing -> checkNotNull(handshake)
             }
         }
-        // Awaiting a Deferred does not propagate caller cancellation into the shared handshake.
+        // A synchronous Initializing observer may already have closed the connection.
+        if (mutableState.value == CodexAppServerConnectionState.Initializing &&
+            handshake?.job === toStart
+        ) {
+            toStart?.start()
+        }
+        // Awaiting this Deferred never propagates caller cancellation to the shared handshake Job.
         return shared.await()
     }
 
-    private suspend fun performHandshake(result: CompletableDeferred<CodexAppServerInitializeResponse>) {
+    private suspend fun performHandshake(current: Handshake) {
         try {
             val params = CodexAppServerInitializeParams(clientInfo, capabilities)
             val raw = dispatcher.sendRequest(
@@ -91,24 +100,33 @@ class CodexAppServerConnection(
             val response = CodexAppServerJsonRpc().json.decodeFromJsonElement(
                 CodexAppServerInitializeResponse.serializer(), raw
             )
-            lifecycle.withLock {
-                check(mutableState.value == CodexAppServerConnectionState.Initializing) {
-                    "Connection stopped during initialize"
-                }
-                // Holding the lifecycle mutex linearizes this write with close(): once close has
-                // established its terminal transition, initialized can never be written afterward.
-                dispatcher.sendNotification("initialized")
-                check(mutableState.value == CodexAppServerConnectionState.Initializing)
-                mutableState.value = CodexAppServerConnectionState.Ready(response)
-                result.complete(response)
+
+            val claimedInitializedWrite = handshake === current &&
+                current.initializedWriteClaimed.compareAndSet(false, true) &&
+                mutableState.value == CodexAppServerConnectionState.Initializing
+            if (!claimedInitializedWrite) throw CodexAppServerConnectionClosedException()
+
+            // No lifecycle guard is held: close() can cancel this suspended write and close the
+            // dispatcher. Claiming the write first defines the close-vs-initialized linearization.
+            dispatcher.sendNotification("initialized")
+
+            if (handshake !== current || !mutableState.compareAndSet(
+                    CodexAppServerConnectionState.Initializing,
+                    CodexAppServerConnectionState.Ready(response),
+                )
+            ) {
+                throw CodexAppServerConnectionClosedException()
+            } else {
+                current.deferred.complete(response)
             }
         } catch (error: Throwable) {
-            lifecycle.withLock {
-                if (mutableState.value == CodexAppServerConnectionState.Initializing) {
-                    failLocked(error)
-                    dispatcher.close()
-                }
-                result.completeExceptionally(terminalException(error))
+            val transition = failHandshake(current, error)
+            if (transition != null) {
+                transition.deferred.completeExceptionally(
+                    CodexAppServerConnectionFailedException(transition.cause)
+                )
+                // Resource cleanup never executes in state arbitration.
+                dispatcher.close()
             }
         }
     }
@@ -118,42 +136,81 @@ class CodexAppServerConnection(
         params: JsonElement? = null,
         timeout: Duration = 30.seconds,
     ): JsonElement {
-        lifecycle.withLock {
-            if (mutableState.value !is CodexAppServerConnectionState.Ready) {
-                throw CodexAppServerNotReadyException(mutableState.value)
-            }
+        val current = mutableState.value
+        if (current !is CodexAppServerConnectionState.Ready) {
+            throw CodexAppServerNotReadyException(current)
         }
         return dispatcher.sendRequest(method, params, timeout)
     }
 
-    private fun failLocked(cause: Throwable) {
-        mutableState.value = CodexAppServerConnectionState.Failed(cause)
-        handshake?.completeExceptionally(CodexAppServerConnectionFailedException(cause))
+    /** Returns a transition only for the first, still-current handshake failure. */
+    private fun failHandshake(current: Handshake, cause: Throwable): FailureTransition? {
+        if (handshake !== current) return null
+        val canonical = canonicalCause(cause)
+        return if (mutableState.compareAndSet(
+                CodexAppServerConnectionState.Initializing,
+                CodexAppServerConnectionState.Failed(canonical),
+            )
+        ) FailureTransition(current.deferred, canonical) else null
     }
 
-    private fun terminalException(error: Throwable): Throwable = when (mutableState.value) {
-        CodexAppServerConnectionState.Closed,
-        CodexAppServerConnectionState.Closing -> CodexAppServerConnectionClosedException()
-        is CodexAppServerConnectionState.Failed -> CodexAppServerConnectionFailedException(error)
-        else -> error
-    }
-
-    override fun close() = runBlocking {
-        lifecycle.withLock {
-            when (mutableState.value) {
-                CodexAppServerConnectionState.Closed,
-                CodexAppServerConnectionState.Closing -> return@withLock
-                else -> {
-                    mutableState.value = CodexAppServerConnectionState.Closing
-                    handshake?.completeExceptionally(CodexAppServerConnectionClosedException())
-                    handshakeJob?.cancel()
-                    dispatcher.close()
-                    mutableState.value = CodexAppServerConnectionState.Closed
-                }
+    private fun failConnection(cause: Throwable): FailureTransition? {
+        val canonical = canonicalCause(cause)
+        while (true) {
+            val current = mutableState.value
+            if (current == CodexAppServerConnectionState.Closing ||
+                current == CodexAppServerConnectionState.Closed ||
+                current is CodexAppServerConnectionState.Failed
+            ) return null
+            if (mutableState.compareAndSet(current, CodexAppServerConnectionState.Failed(canonical))) {
+                return if (current == CodexAppServerConnectionState.Initializing) {
+                    handshake?.deferred?.let { FailureTransition(it, canonical) }
+                } else null
             }
         }
+    }
+
+    private fun canonicalCause(candidate: Throwable): Throwable {
+        terminalCause.compareAndSet(null, candidate)
+        return checkNotNull(terminalCause.get())
+    }
+
+    override fun close() {
+        while (true) {
+            val current = mutableState.value
+            if (current == CodexAppServerConnectionState.Closing ||
+                current == CodexAppServerConnectionState.Closed
+            ) return
+            if (mutableState.compareAndSet(current, CodexAppServerConnectionState.Closing)) break
+        }
+        val cleanup = CloseCleanup(handshake?.deferred, handshake?.job)
+
+        cleanup.deferred?.completeExceptionally(CodexAppServerConnectionClosedException())
+        cleanup.job?.cancel()
+        dispatcher.close()
+
+        mutableState.compareAndSet(
+            CodexAppServerConnectionState.Closing,
+            CodexAppServerConnectionState.Closed,
+        )
         scope.cancel()
     }
+
+    private class Handshake(
+        val deferred: CompletableDeferred<CodexAppServerInitializeResponse>,
+        val job: Job,
+        val initializedWriteClaimed: AtomicBoolean = AtomicBoolean(false),
+    )
+
+    private data class FailureTransition(
+        val deferred: CompletableDeferred<CodexAppServerInitializeResponse>,
+        val cause: Throwable,
+    )
+
+    private data class CloseCleanup(
+        val deferred: CompletableDeferred<CodexAppServerInitializeResponse>?,
+        val job: Job?,
+    )
 }
 
 class CodexAppServerConnectionFailedException(cause: Throwable) :

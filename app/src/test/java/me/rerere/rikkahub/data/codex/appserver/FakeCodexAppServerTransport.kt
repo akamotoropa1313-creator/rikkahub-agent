@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.codex.appserver
 
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -11,6 +12,7 @@ class FakeCodexAppServerTransport : CodexAppServerTransport {
     private val outbound = Channel<String>(Channel.UNLIMITED)
     private val nextWriteFailure = AtomicReference<Throwable?>(null)
     private val writeGate = AtomicReference<WriteGate?>(null)
+    private val successfulWrites = AtomicInteger()
     override val events: Flow<CodexAppServerTransportEvent> = inbound.receiveAsFlow()
 
     override suspend fun sendLine(line: String) {
@@ -20,6 +22,7 @@ class FakeCodexAppServerTransport : CodexAppServerTransport {
         }
         nextWriteFailure.getAndSet(null)?.let { throw it }
         outbound.send(line)
+        successfulWrites.incrementAndGet()
     }
 
     suspend fun takeClientLine(): String = outbound.receive()
@@ -29,6 +32,7 @@ class FakeCodexAppServerTransport : CodexAppServerTransport {
     fun completeInbound() = inbound.close()
     fun failInbound(cause: Throwable) = inbound.close(cause)
     fun failNextWrite(cause: Throwable) = nextWriteFailure.set(cause)
+    fun successfulWriteCount(): Int = successfulWrites.get()
 
     fun pauseWrites(): WriteGate = WriteGate().also { check(writeGate.compareAndSet(null, it)) }
     fun resumeWrites(gate: WriteGate) {
