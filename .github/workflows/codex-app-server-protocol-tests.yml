@@ -1,0 +1,37 @@
+name: Codex App Server protocol tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  protocol-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build dependencies
+        run: >-
+          sdkmanager
+          "platforms;android-37"
+          "build-tools;37.0.0"
+          "ndk;28.2.13676358"
+          "cmake;3.22.1"
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run Codex App Server protocol unit tests
+        run: >-
+          ./gradlew :app:testDebugUnitTest
+          --tests 'me.rerere.rikkahub.data.codex.appserver.CodexAppServerJsonRpcTest'
