@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalRequest
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandAction
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalRequest
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerItemSnapshot
@@ -36,11 +37,10 @@ fun CodexCommandApprovalCard(
             Text("Network access requested", style = MaterialTheme.typography.titleMedium)
             LabeledPlainText("Host", it.host)
             LabeledPlainText("Protocol", it.protocol.toString())
-        } ?: run {
-            request.command?.let { LabeledPlainText("Command", it, true) }
-            request.cwd?.let { LabeledPlainText("Working directory", it) }
-            request.commandActions?.forEach { LabeledPlainText("Action", it.toString()) }
         }
+        request.command?.let { LabeledPlainText("Command", it, true) }
+        request.cwd?.let { LabeledPlainText("Working directory", it) }
+        request.commandActions?.forEach { LabeledPlainText("Action", commandActionPresentation(it)) }
         request.environmentId?.let { LabeledPlainText("Environment", it) }
         ApprovalActions(enabled && !submitting && !resolved,
             approve = { onDecision(CodexAppServerCommandApprovalDecision.Accept) },
@@ -64,7 +64,9 @@ fun CodexFileChangeApprovalCard(
         request.reason?.let { LabeledPlainText("Reason", it) }
         request.grantRoot?.let { LabeledPlainText("Requested grant root", it) }
         fileChange?.let { CodexFileChangeCard(it) }
-        ApprovalActions(enabled && !submitting && !resolved,
+            ?: Text("Change preview unavailable. Approval is disabled for your safety.", color = MaterialTheme.colorScheme.error)
+        val availability = approvalActionAvailability(enabled, submitting, resolved, fileChange != null)
+        ApprovalActions(availability.approveEnabled, availability.rejectEnabled,
             approve = { onDecision(CodexAppServerFileChangeApprovalDecision.Accept) },
             session = { onDecision(CodexAppServerFileChangeApprovalDecision.AcceptForSession) },
             decline = { onDecision(CodexAppServerFileChangeApprovalDecision.Decline) },
@@ -74,8 +76,27 @@ fun CodexFileChangeApprovalCard(
 
 @Composable private fun ApprovalSurface(title:String, modifier:Modifier, content:@Composable ()->Unit) = Card(modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) { Text(title, style=MaterialTheme.typography.titleLarge); content() } }
 @Composable private fun LabeledPlainText(label:String, value:String, monospace:Boolean=false) { Text(label, style=MaterialTheme.typography.labelMedium); Text(value, fontFamily=if(monospace) FontFamily.Monospace else FontFamily.Default) }
-@Composable private fun ApprovalActions(enabled:Boolean, approve:()->Unit, session:()->Unit, decline:()->Unit, cancel:()->Unit) {
-    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { Button(approve, enabled=enabled) { Text("Approve once") }; OutlinedButton(session, enabled=enabled) { Text("Approve for session") } }
+@Composable private fun ApprovalActions(approveEnabled:Boolean, rejectEnabled:Boolean = approveEnabled, approve:()->Unit, session:()->Unit, decline:()->Unit, cancel:()->Unit) {
+    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { Button(approve, enabled=approveEnabled) { Text("Approve once") }; OutlinedButton(session, enabled=approveEnabled) { Text("Approve for session") } }
     Text("Decline rejects this action and lets the turn continue. Cancel turn rejects it and stops the turn.", style=MaterialTheme.typography.bodySmall)
-    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { OutlinedButton(decline, enabled=enabled) { Text("Decline") }; OutlinedButton(cancel, enabled=enabled) { Text("Cancel turn") } }
+    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { OutlinedButton(decline, enabled=rejectEnabled) { Text("Decline") }; OutlinedButton(cancel, enabled=rejectEnabled) { Text("Cancel turn") } }
+}
+
+internal data class ApprovalActionAvailability(val approveEnabled: Boolean, val rejectEnabled: Boolean)
+internal fun approvalActionAvailability(enabled: Boolean, submitting: Boolean, resolved: Boolean, hasPreview: Boolean): ApprovalActionAvailability {
+    val interactive = enabled && !submitting && !resolved
+    return ApprovalActionAvailability(interactive && hasPreview, interactive)
+}
+
+internal fun commandActionPresentation(action: CodexAppServerCommandAction): String = when (action) {
+    is CodexAppServerCommandAction.Read -> "Read: ${action.path}"
+    is CodexAppServerCommandAction.ListFiles -> action.path?.let { "List files: $it" } ?: "List files"
+    is CodexAppServerCommandAction.Search -> when {
+        action.query != null && action.path != null -> "Search: ${action.query} in ${action.path}"
+        action.query != null -> "Search: ${action.query}"
+        action.path != null -> "Search in: ${action.path}"
+        else -> "Search"
+    }
+    is CodexAppServerCommandAction.UnknownCommand -> "Command: ${action.command}"
+    is CodexAppServerCommandAction.Other -> "Unknown command action"
 }
