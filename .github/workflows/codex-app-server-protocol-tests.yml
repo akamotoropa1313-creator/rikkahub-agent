@@ -17,10 +17,17 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+          log-accepted-android-sdk-licenses: false
+
       - name: Install Android build dependencies
         shell: bash
         run: |
           set -euo pipefail
+          command -v sdkmanager
           available_packages="$(sdkmanager --list --channel=3)"
           if ! printf '%s\n' "$available_packages" | awk -F '|' '
             {
