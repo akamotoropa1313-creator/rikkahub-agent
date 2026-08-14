@@ -2,8 +2,12 @@ package me.rerere.rikkahub.data.codex.appserver
 
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -81,7 +85,10 @@ class CodexAppServerTurnApiTest {
                 assertEquals(writes, f.transport.successfulWriteCount()); assertEquals(0, f.dispatcher.pendingRequestCount())
             }
             val t = FakeCodexAppServerTransport(); val d = CodexAppServerRequestDispatcher(t)
-            val c = CodexAppServerConnection(d, CodexAppServerClientInfo("test", "1"))
+            val c = CodexAppServerConnection(
+                d,
+                CodexAppServerClientInfo(name = "test", version = "1"),
+            )
             expect<CodexAppServerNotReadyException> { CodexAppServerTurnApi(c).startTurn("t", emptyList()) }
             c.close()
         }
@@ -129,8 +136,73 @@ class CodexAppServerTurnApiTest {
         } } }
     }
 
+    @Test
+    fun `response completes before a later typed turn started notification`() {
+        runBlocking {
+            fixture().use { f ->
+                val events = mutableListOf<CodexAppServerTurnEvent>()
+                val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+                    f.api.events.collect { events += it }
+                }
+                val call = async { f.api.startTurn("thread", emptyList()) }
+                val request = decodeRequest(f.transport.takeClientLine())
+                f.respond(request, turnResult("turn", "inProgress"))
+                assertEquals("turn", call.await().turn.id)
+                assertTrue(events.isEmpty())
+
+                f.transport.injectServerLine(codec.encode(JsonRpcNotification(
+                    "turn/started",
+                    buildJsonObject {
+                        put("threadId", "thread")
+                        put("turn", buildJsonObject { put("id", "turn"); put("status", "inProgress") })
+                    },
+                )))
+                withTimeout(1_000) { while (events.isEmpty()) yield() }
+                assertTrue(events.single() is CodexAppServerTurnEvent.TurnStarted)
+                collector.cancelAndJoin()
+            }
+        }
+    }
+
+    @Test
+    fun `raw connection events remain observable beside typed turn events`() {
+        runBlocking {
+            fixture().use { f ->
+                val rawEvents = mutableListOf<CodexAppServerEvent>()
+                val typedEvents = mutableListOf<CodexAppServerTurnEvent>()
+                val rawCollector = launch(start = CoroutineStart.UNDISPATCHED) {
+                    f.connection.events.collect { rawEvents += it }
+                }
+                val typedCollector = launch(start = CoroutineStart.UNDISPATCHED) {
+                    f.api.events.collect { typedEvents += it }
+                }
+                val unrelated = buildJsonObject { put("x", 1) }
+                f.transport.injectServerLine(codec.encode(JsonRpcNotification("future/event", unrelated)))
+                val delta = buildJsonObject {
+                    put("threadId", "thread"); put("turnId", "turn")
+                    put("itemId", "item"); put("delta", "hello")
+                }
+                f.transport.injectServerLine(codec.encode(JsonRpcNotification("item/agentMessage/delta", delta)))
+                withTimeout(1_000) { while (rawEvents.size < 2 || typedEvents.isEmpty()) yield() }
+
+                val future = rawEvents[0] as CodexAppServerEvent.UnknownNotification
+                assertEquals("future/event", future.method); assertEquals(unrelated, future.params)
+                assertEquals(
+                    "item/agentMessage/delta",
+                    (rawEvents[1] as CodexAppServerEvent.UnknownNotification).method,
+                )
+                assertEquals("hello", (typedEvents.single() as CodexAppServerTurnEvent.AgentMessageDelta).delta)
+                rawCollector.cancelAndJoin(); typedCollector.cancelAndJoin()
+            }
+        }
+    }
+
     private suspend fun fixture(): Fixture {
-        val t = FakeCodexAppServerTransport(); val d = CodexAppServerRequestDispatcher(t); val c = CodexAppServerConnection(d, CodexAppServerClientInfo("test", "1"))
+        val t = FakeCodexAppServerTransport(); val d = CodexAppServerRequestDispatcher(t)
+        val c = CodexAppServerConnection(
+            d,
+            CodexAppServerClientInfo(name = "test", version = "1"),
+        )
         val init = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.currentCoroutineContext()).async { c.initialize() }; val request = decodeRequest(t.takeClientLine())
         t.injectServerLine(codec.encode(JsonRpcResponse(request.id, buildJsonObject { put("userAgent", "fake"); put("codexHome", "/tmp"); put("platformFamily", "unix"); put("platformOs", "linux") })))
         init.await(); t.takeClientLine(); return Fixture(t, d, c, CodexAppServerTurnApi(c))

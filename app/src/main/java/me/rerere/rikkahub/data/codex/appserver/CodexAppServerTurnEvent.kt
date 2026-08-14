@@ -60,7 +60,7 @@ fun Flow<CodexAppServerEvent>.toCodexAppServerTurnEvents(): Flow<CodexAppServerT
         if (notification.method !in turnEventMethods) return@mapNotNull null
         try {
             decodeTurnEvent(notification.method, notification.params)
-        } catch (cause: Throwable) {
+        } catch (cause: CodexAppServerTurnProtocolException) {
             CodexAppServerTurnEvent.MalformedNotification(notification.method, notification.params, cause)
         }
     }

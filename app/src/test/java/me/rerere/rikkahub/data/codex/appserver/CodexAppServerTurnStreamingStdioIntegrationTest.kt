@@ -2,11 +2,10 @@ package me.rerere.rikkahub.data.codex.appserver
 
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
-import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -41,8 +40,8 @@ class CodexAppServerTurnStreamingStdioIntegrationTest {
             process.writeStdout(response(threadRequest, buildJsonObject { put("thread", buildJsonObject { put("id", "thread-1") }); put("model", "gpt"); put("modelProvider", "openai"); put("cwd", "/workspace") }))
             assertEquals("thread-1", startingThread.await().thread.id)
 
-            val api = CodexAppServerTurnApi(connection); val ready = CompletableDeferred<Unit>(); val events = mutableListOf<CodexAppServerTurnEvent>()
-            val collector = launch { api.events.onStart { ready.complete(Unit) }.collect { events += it } }; ready.await()
+            val api = CodexAppServerTurnApi(connection); val events = mutableListOf<CodexAppServerTurnEvent>()
+            val collector = launch(start = CoroutineStart.UNDISPATCHED) { api.events.collect { events += it } }
             val startingTurn = async(Dispatchers.Default) { api.startTurn("thread-1", listOf(CodexAppServerTurnInput.Text("Hello Codex"))) }
             awaitFlushes(process, 4); val request = line(process, 3); assertEquals("turn/start", request["method"]!!.jsonPrimitive.content)
             assertEquals("Hello Codex", request["params"]!!.jsonObject["input"]!!.let { it as JsonArray }[0].jsonObject["text"]!!.jsonPrimitive.content)

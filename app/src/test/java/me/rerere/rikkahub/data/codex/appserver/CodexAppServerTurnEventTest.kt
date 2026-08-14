@@ -1,9 +1,8 @@
 package me.rerere.rikkahub.data.codex.appserver
 
-import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
@@ -23,8 +22,8 @@ class CodexAppServerTurnEventTest {
     @Test
     fun `all lifecycle and streaming notifications map in arrival order`() {
         runBlocking {
-            val source = MutableSharedFlow<CodexAppServerEvent>(); val ready = CompletableDeferred<Unit>(); val events = mutableListOf<CodexAppServerTurnEvent>()
-            val job = launch { source.toCodexAppServerTurnEvents().onStart { ready.complete(Unit) }.collect { events += it } }; ready.await()
+            val source = MutableSharedFlow<CodexAppServerEvent>(); val events = mutableListOf<CodexAppServerTurnEvent>()
+            val job = launch(start = CoroutineStart.UNDISPATCHED) { source.toCodexAppServerTurnEvents().collect { events += it } }
             emit(source, "turn/started", turnParams("inProgress")); emit(source, "item/started", itemParams(agent(""), "startedAtMs", 10))
             emit(source, "item/agentMessage/delta", delta("Hel")); emit(source, "item/agentMessage/delta", delta("lo!"))
             emit(source, "item/completed", itemParams(agent("Hello, final!"), "completedAtMs", 11))
@@ -46,8 +45,8 @@ class CodexAppServerTurnEventTest {
     @Test
     fun `completed interrupted failed and unknown items preserve raw data`() {
         runBlocking {
-            val source = MutableSharedFlow<CodexAppServerEvent>(); val ready = CompletableDeferred<Unit>(); val events = mutableListOf<CodexAppServerTurnEvent>()
-            val job = launch { source.toCodexAppServerTurnEvents().onStart { ready.complete(Unit) }.collect { events += it } }; ready.await()
+            val source = MutableSharedFlow<CodexAppServerEvent>(); val events = mutableListOf<CodexAppServerTurnEvent>()
+            val job = launch(start = CoroutineStart.UNDISPATCHED) { source.toCodexAppServerTurnEvents().collect { events += it } }
             listOf("interrupted", "failed").forEach { emit(source, "turn/completed", turnParams(it)) }
             val future = buildJsonObject { put("type", "futureItem"); put("id", "future-1"); put("futureField", buildJsonObject { put("x", 1) }) }
             emit(source, "item/started", itemParams(future, "startedAtMs", Long.MAX_VALUE)); emit(source, "item/completed", itemParams(future, "completedAtMs", 4))
@@ -64,8 +63,8 @@ class CodexAppServerTurnEventTest {
     @Test
     fun `malformed known notification becomes diagnostic and stream survives`() {
         runBlocking {
-            val source = MutableSharedFlow<CodexAppServerEvent>(); val ready = CompletableDeferred<Unit>(); val events = mutableListOf<CodexAppServerTurnEvent>()
-            val job = launch { source.toCodexAppServerTurnEvents().onStart { ready.complete(Unit) }.collect { events += it } }; ready.await()
+            val source = MutableSharedFlow<CodexAppServerEvent>(); val events = mutableListOf<CodexAppServerTurnEvent>()
+            val job = launch(start = CoroutineStart.UNDISPATCHED) { source.toCodexAppServerTurnEvents().collect { events += it } }
             emit(source, "item/agentMessage/delta", delta("first"))
             val malformed = buildJsonObject { put("threadId", "thread"); put("turnId", "turn"); put("itemId", "item"); put("delta", "bad"); put("summaryIndex", "zero") }
             emit(source, "item/reasoning/summaryTextDelta", malformed)
@@ -91,8 +90,8 @@ class CodexAppServerTurnEventTest {
                 "item/reasoning/summaryPartAdded" to streamIndex("summaryIndex", "bad"),
                 "item/reasoning/textDelta" to streamIndex("contentIndex", 0, null),
             )
-            val source = MutableSharedFlow<CodexAppServerEvent>(); val ready = CompletableDeferred<Unit>(); val events = mutableListOf<CodexAppServerTurnEvent>()
-            val job = launch { source.toCodexAppServerTurnEvents().onStart { ready.complete(Unit) }.collect { events += it } }; ready.await()
+            val source = MutableSharedFlow<CodexAppServerEvent>(); val events = mutableListOf<CodexAppServerTurnEvent>()
+            val job = launch(start = CoroutineStart.UNDISPATCHED) { source.toCodexAppServerTurnEvents().collect { events += it } }
             cases.forEach { emit(source, it.first, it.second) }
             assertEquals(cases.size, events.size); assertTrue(events.all { it is CodexAppServerTurnEvent.MalformedNotification }); job.cancelAndJoin()
         }
