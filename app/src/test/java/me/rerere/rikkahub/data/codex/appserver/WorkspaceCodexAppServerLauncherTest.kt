@@ -10,6 +10,42 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WorkspaceCodexAppServerLauncherTest {
+    @Test fun `controlled stdio stack completes initialize handshake`() = runBlocking {
+        val process = AppServerTestProcess()
+        val runner = AppServerRecordingRunner(process)
+        val base = createTempDirectory("connection-factory").toFile()
+        val manager = WorkspaceManager(base, shellRunner = runner)
+        manager.ensureWorkspace("workspace")
+        val connection = WorkspaceCodexAppServerConnectionFactory(manager, "0.1.0")
+            .create("workspace")
+
+        val initialize = async(Dispatchers.Default) { connection.initialize() }
+        assertTrue(withContext(Dispatchers.IO) {
+            process.stdin.flushed.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        })
+        val request = CodexAppServerJsonRpc().json.parseToJsonElement(
+            process.stdin.text().lineSequence().first()
+        ).jsonObject
+        assertEquals("initialize", request["method"]!!.jsonPrimitive.content)
+        assertEquals("rikkahub_agent", request["params"]!!.jsonObject["clientInfo"]!!
+            .jsonObject["name"]!!.jsonPrimitive.content)
+        val id = request["id"]!!.jsonPrimitive.content
+        process.writeStdout(
+            """{"id":$id,"result":{"userAgent":"codex/test","codexHome":"/tmp/.codex","platformFamily":"unix","platformOs":"linux"}}""" + "\n"
+        )
+        assertEquals("codex/test", withTimeout(2_000) { initialize.await() }.userAgent)
+        withTimeout(2_000) { while (process.stdin.flushes < 2) yield() }
+        val initializedLine = process.stdin.text().lineSequence().filter { it.isNotEmpty() }.toList()[1]
+        assertEquals("{\"method\":\"initialized\"}", initializedLine)
+        assertEquals(
+            CodexAppServerConnectionState.Ready(
+                CodexAppServerInitializeResponse("codex/test", "/tmp/.codex", "unix", "linux")
+            ),
+            connection.state.value,
+        )
+        connection.close()
+    }
+
     @Test fun `launcher forwards exact command root and cwd through manager`() {
         val process = AppServerTestProcess()
         val runner = AppServerRecordingRunner(process)
