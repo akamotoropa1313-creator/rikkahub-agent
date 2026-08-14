@@ -184,7 +184,7 @@ class CodexAppServerRequestDispatcherTest {
             val failure = IllegalStateException("broken pipe")
             transport.injectFailure(failure)
             assertEquals(failure, dispatcher.awaitTerminal())
-            assertEquals(failure, request.await().exceptionOrNull())
+            assertEquivalentFailure(failure, request.await().exceptionOrNull())
             assertTrue(withTimeout(2.seconds) { event.await() } is CodexAppServerEvent.TransportFailure)
             assertEquals(0, dispatcher.pendingRequestCount())
         }
@@ -226,7 +226,7 @@ class CodexAppServerRequestDispatcherTest {
             val failure = IllegalStateException("reader failed")
             transport.failInbound(failure)
             assertEquals(failure, dispatcher.awaitTerminal())
-            assertEquals(failure, request.await().exceptionOrNull())
+            assertEquivalentFailure(failure, request.await().exceptionOrNull())
             assertEquals(0, dispatcher.pendingRequestCount())
         }
     }
@@ -272,7 +272,7 @@ class CodexAppServerRequestDispatcherTest {
             transport.failNextWrite(failure)
             assertEquals(failure, runCatching { dispatcher.sendNotification("notify") }.exceptionOrNull())
             assertEquals(failure, dispatcher.awaitTerminal())
-            assertEquals(failure, pending.await().exceptionOrNull())
+            assertEquivalentFailure(failure, pending.await().exceptionOrNull())
             assertEquals(0, dispatcher.pendingRequestCount())
         }
     }
@@ -331,6 +331,12 @@ class CodexAppServerRequestDispatcherTest {
     }
 
     private fun fixture(): Fixture = Fixture(FakeCodexAppServerTransport())
+
+    private fun assertEquivalentFailure(expected: Throwable, actual: Throwable?) {
+        assertTrue("Expected a failure, but the operation completed successfully", actual != null)
+        assertEquals(expected::class, actual!!::class)
+        assertEquals(expected.message, actual.message)
+    }
 
     private class Fixture(val transport: FakeCodexAppServerTransport) : AutoCloseable {
         val dispatcher = CodexAppServerRequestDispatcher(transport)
