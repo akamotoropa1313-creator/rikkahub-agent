@@ -2,6 +2,7 @@ package me.rerere.rikkahub.data.codex.appserver
 
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -238,6 +239,47 @@ class CodexAppServerConnectionTest {
         }
     }
 
+    @Test fun `close after initialize failure preserves canonical Failed state`() = runBlocking {
+        fixture().use { f ->
+            val initialize = async(start = CoroutineStart.UNDISPATCHED) {
+                runCatching { f.connection.initialize() }
+            }
+            f.transport.takeClientLine()
+            f.transport.injectServerLine("""{"id":1,"error":{"code":-1,"message":"bad"}}""")
+            assertTrue(initialize.await().isFailure)
+            val failed = f.connection.state.value as CodexAppServerConnectionState.Failed
+
+            f.connection.close()
+            f.connection.close()
+
+            val afterClose = f.connection.state.value as CodexAppServerConnectionState.Failed
+            assertSame(failed.cause, afterClose.cause)
+            assertTrue(runCatching { f.connection.initialize() }.isFailure)
+            assertEquals(0, f.dispatcher.pendingRequestCount())
+        }
+    }
+
+    @Test fun `close after Ready transport failure preserves canonical Failed state`() = runBlocking {
+        fixture().use { f ->
+            val initialize = async(start = CoroutineStart.UNDISPATCHED) { f.connection.initialize() }
+            f.transport.takeClientLine(); f.success(); initialize.await(); f.transport.takeClientLine()
+            val transportCause = IllegalStateException("lost after ready")
+            f.transport.injectFailure(transportCause)
+            val failed = withTimeout(2.seconds) {
+                f.connection.state.first { it is CodexAppServerConnectionState.Failed }
+                    as CodexAppServerConnectionState.Failed
+            }
+
+            f.connection.close()
+            f.connection.close()
+
+            val afterClose = f.connection.state.value as CodexAppServerConnectionState.Failed
+            assertSame(transportCause, failed.cause)
+            assertSame(failed.cause, afterClose.cause)
+            assertEquals(0, f.dispatcher.pendingRequestCount())
+        }
+    }
+
     private fun fixture(timeoutMs: Long = 2_000): Fixture {
         val transport = FakeCodexAppServerTransport()
         val dispatcher = CodexAppServerRequestDispatcher(transport)
@@ -251,7 +293,7 @@ class CodexAppServerConnectionTest {
         )
     }
 
-    private fun runOnBoundedDaemonThread(block: suspend () -> Unit) {
+    private fun runOnBoundedDaemonThread(block: suspend CoroutineScope.() -> Unit) {
         val executor = daemonExecutor()
         try {
             executor.submit { runBlocking { block() } }.get(2, TimeUnit.SECONDS)

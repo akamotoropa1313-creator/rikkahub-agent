@@ -40,6 +40,7 @@ class CodexAppServerConnection(
     @Volatile
     private var handshake: Handshake? = null
     private val terminalCause = AtomicReference<Throwable?>(null)
+    private val closeStarted = AtomicBoolean(false)
 
     val state: StateFlow<CodexAppServerConnectionState> = mutableState.asStateFlow()
     val events: Flow<CodexAppServerEvent> = dispatcher.events
@@ -69,10 +70,14 @@ class CodexAppServerConnection(
                     // Register everything close() needs before Initializing becomes observable.
                     handshake = current
                     toStart = job
-                    check(mutableState.compareAndSet(
-                        CodexAppServerConnectionState.Created,
-                        CodexAppServerConnectionState.Initializing,
-                    ))
+                    if (!mutableState.compareAndSet(
+                            CodexAppServerConnectionState.Created,
+                            CodexAppServerConnectionState.Initializing,
+                        )
+                    ) {
+                        deferred.completeExceptionally(CodexAppServerConnectionClosedException())
+                        job.cancel()
+                    }
                     deferred
                 }
             }
@@ -176,23 +181,44 @@ class CodexAppServerConnection(
     }
 
     override fun close() {
+        if (!closeStarted.compareAndSet(false, true)) return
+
+        var explicitClosePath = false
+        var cancelHandshake = false
         while (true) {
             val current = mutableState.value
-            if (current == CodexAppServerConnectionState.Closing ||
-                current == CodexAppServerConnectionState.Closed
-            ) return
-            if (mutableState.compareAndSet(current, CodexAppServerConnectionState.Closing)) break
+            when (current) {
+                CodexAppServerConnectionState.Closing,
+                CodexAppServerConnectionState.Closed -> break
+                is CodexAppServerConnectionState.Failed -> break
+                else -> if (mutableState.compareAndSet(
+                        current,
+                        CodexAppServerConnectionState.Closing,
+                    )
+                ) {
+                    explicitClosePath = true
+                    cancelHandshake = current == CodexAppServerConnectionState.Created ||
+                        current == CodexAppServerConnectionState.Initializing
+                    break
+                }
+            }
         }
-        val cleanup = CloseCleanup(handshake?.deferred, handshake?.job)
+        val currentHandshake = handshake
+        val cleanup = CloseCleanup(
+            deferred = currentHandshake?.deferred?.takeIf { cancelHandshake },
+            job = currentHandshake?.job?.takeIf { cancelHandshake },
+        )
 
         cleanup.deferred?.completeExceptionally(CodexAppServerConnectionClosedException())
         cleanup.job?.cancel()
         dispatcher.close()
 
-        mutableState.compareAndSet(
-            CodexAppServerConnectionState.Closing,
-            CodexAppServerConnectionState.Closed,
-        )
+        if (explicitClosePath) {
+            mutableState.compareAndSet(
+                CodexAppServerConnectionState.Closing,
+                CodexAppServerConnectionState.Closed,
+            )
+        }
         scope.cancel()
     }
 
