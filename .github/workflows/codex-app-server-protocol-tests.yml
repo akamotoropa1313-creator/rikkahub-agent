@@ -17,17 +17,24 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android build dependencies
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager --list --channel=3 | tee "$RUNNER_TEMP/sdk-packages.txt"
-          grep -Fq 'platforms;android-37' "$RUNNER_TEMP/sdk-packages.txt"
+          available_packages="$(sdkmanager --list --channel=3)"
+          if ! printf '%s\n' "$available_packages" | awk -F '|' '
+            {
+              gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1)
+              if ($1 == "platforms;android-37.0") found = 1
+            }
+            END { exit(found ? 0 : 1) }
+          '; then
+            echo "Required SDK package platforms;android-37.0 is unavailable." >&2
+            printf '%s\n' "$available_packages" | grep -E 'platforms;android-37([.]|[[:space:]]|$)' || true
+            exit 1
+          fi
           sdkmanager --channel=3 \
-            "platforms;android-37" \
+            "platforms;android-37.0" \
             "build-tools;37.0.0" \
             "ndk;28.2.13676358" \
             "cmake;3.22.1"
