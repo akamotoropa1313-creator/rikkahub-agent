@@ -116,15 +116,17 @@ class CodexAppServerSessionRecoveryTest {
     }
 
     @Test fun `mark resumed conditional failure closes without ownership handoff`() = runBlocking {
-        val transport = FakeCodexAppServerTransport(); val connection = connection(transport)
-        val f = Fixture(creator = CodexAppServerConnectionCreator { _, _ -> connection }); f.bind(); f.dao.failResumeUpdate = true
-        val call = async { f.recovery.recover("a") }; respondInitialize(transport)
-        val resume = Json.parseToJsonElement(transport.takeClientLine()).jsonObject
-        transport.injectServerLine("""{"id":${resume["id"]},"result":{"thread":{"id":"thread-1"},"model":"m","modelProvider":"p","cwd":"src"}}""")
-        val error = captureFailure { call.await() }
-        assertTrue(error is CodexAppServerBindingChangedException)
-        assertEquals(CodexAppServerConnectionState.Closed, connection.state.value)
-        assertNull(f.repo.getBinding("a")?.lastResumedAtMs)
+        supervisorScope {
+            val transport = FakeCodexAppServerTransport(); val connection = connection(transport)
+            val f = Fixture(creator = CodexAppServerConnectionCreator { _, _ -> connection }); f.bind(); f.dao.failResumeUpdate = true
+            val call = async { f.recovery.recover("a") }; respondInitialize(transport)
+            val resume = Json.parseToJsonElement(transport.takeClientLine()).jsonObject
+            transport.injectServerLine("""{"id":${resume["id"]},"result":{"thread":{"id":"thread-1"},"model":"m","modelProvider":"p","cwd":"src"}}""")
+            val error = captureFailure { call.await() }
+            assertTrue(error is CodexAppServerBindingChangedException)
+            assertEquals(CodexAppServerConnectionState.Closed, connection.state.value)
+            assertNull(f.repo.getBinding("a")?.lastResumedAtMs)
+        }
     }
 
     private suspend fun respondInitialize(transport: FakeCodexAppServerTransport) {
