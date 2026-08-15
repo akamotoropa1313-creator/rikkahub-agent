@@ -13,6 +13,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
+import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnEvent
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnStatus
 
@@ -38,6 +42,7 @@ class CodexChatRuntime(
     private val recentTerminalTurns = ConcurrentLinkedQueue<String>()
     private val closed = AtomicBoolean(false)
     private val stopController = CodexTurnStopController()
+    private val approvalResponses = ConcurrentHashMap.newKeySet<JsonRpcId>()
     @Volatile private var activeTurnId: String? = null
 
     private fun record(turnId: String) = turns.computeIfAbsent(turnId) { TurnRecord() }
@@ -87,6 +92,18 @@ class CodexChatRuntime(
         }
     }
 
+    private val approvalCollector: Job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+        session.approvalApi.events.collect { event ->
+            when (event) {
+                is CodexAppServerApprovalEvent.CommandExecutionRequest,
+                is CodexAppServerApprovalEvent.FileChangeRequest -> _state.value = CodexConversationUiState.WaitingForApproval(event)
+                is CodexAppServerApprovalEvent.Resolved -> approvalResponses.add(event.requestId)
+                is CodexAppServerApprovalEvent.MalformedRequest -> _state.value = CodexConversationUiState.Failed(event.cause.message ?: "Malformed approval")
+                is CodexAppServerApprovalEvent.MalformedNotification -> _state.value = CodexConversationUiState.Failed(event.cause.message ?: "Malformed approval")
+            }
+        }
+    }
+
     private val failureCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.failure.collect { failure ->
             failure ?: return@collect
@@ -100,6 +117,16 @@ class CodexChatRuntime(
     fun activeTurnId(): String? = activeTurnId
 
     /** Records Stop even while turn/start is outstanding; exact ID may arrive by event or response. */
+    suspend fun respondCommandApproval(id: JsonRpcId, decision: CodexAppServerCommandApprovalDecision): Boolean {
+        if (!approvalResponses.add(id)) return false
+        return runCatching { session.approvalApi.respondCommandApproval(id, decision) }.onFailure { approvalResponses.remove(id) }.isSuccess
+    }
+
+    suspend fun respondFileApproval(id: JsonRpcId, decision: CodexAppServerFileChangeApprovalDecision): Boolean {
+        if (!approvalResponses.add(id)) return false
+        return runCatching { session.approvalApi.respondFileChangeApproval(id, decision) }.onFailure { approvalResponses.remove(id) }.isSuccess
+    }
+
     fun requestStop() {
         stopController.requestStop()
         activeTurnId?.let(::interruptWhenKnown)
@@ -130,6 +157,7 @@ class CodexChatRuntime(
         if (!closed.compareAndSet(false, true)) return
         collector.cancel()
         failureCollector.cancel()
+        approvalCollector.cancel()
         session.close()
     }
 }
@@ -159,6 +187,7 @@ sealed interface CodexConversationUiState {
     data class Ready(val threadId: String) : CodexConversationUiState
     data class Running(val threadId: String, val turnId: String) : CodexConversationUiState
     data class Terminal(val threadId: String, val turnId: String, val status: CodexAppServerTurnStatus) : CodexConversationUiState
+    data class WaitingForApproval(val event: CodexAppServerApprovalEvent) : CodexConversationUiState
     data class StaleBinding(val reason: String) : CodexConversationUiState
     data class WorkspaceMismatch(val boundWorkspaceId: String, val requestedWorkspaceId: String) : CodexConversationUiState
     data class Failed(val message: String) : CodexConversationUiState

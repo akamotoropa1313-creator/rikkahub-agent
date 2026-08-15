@@ -94,6 +94,7 @@ import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.service.ChatError
+import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.ui.components.message.ChatMessage
 import me.rerere.rikkahub.ui.components.ui.ErrorCardsDisplay
 import me.rerere.rikkahub.ui.components.ui.ListSelectableItem
@@ -116,6 +117,7 @@ fun ChatList(
     state: LazyListState,
     loading: Boolean,
     processingStatus: String? = null,
+    codexState: CodexConversationUiState = CodexConversationUiState.Disabled,
     previewMode: Boolean,
     settings: Settings,
     hazeState: HazeState,
@@ -159,6 +161,7 @@ fun ChatList(
                 state = state,
                 loading = loading,
                 processingStatus = processingStatus,
+                codexState = codexState,
                 settings = settings,
                 hazeState = hazeState,
                 errors = errors,
@@ -189,6 +192,7 @@ private fun ChatListNormal(
     state: LazyListState,
     loading: Boolean,
     processingStatus: String? = null,
+    codexState: CodexConversationUiState,
     settings: Settings,
     hazeState: HazeState,
     errors: List<ChatError>,
@@ -383,6 +387,12 @@ private fun ChatListNormal(
                         customSystemPrompt = conversation.customSystemPrompt,
                         onSystemPromptChange = onConversationSystemPromptChange,
                     )
+                }
+            }
+
+            if (codexState !is CodexConversationUiState.Disabled && codexState !is CodexConversationUiState.Disconnected) {
+                item(key = "CodexLiveActivity") {
+                    CodexLiveActivity(codexState)
                 }
             }
 
@@ -598,6 +608,29 @@ private fun buildHighlightedText(
         if (startIndex < text.length) {
             append(text.substring(startIndex))
         }
+    }
+}
+
+@Composable
+private fun CodexLiveActivity(state: CodexConversationUiState) {
+    val text = when (state) {
+        CodexConversationUiState.Disabled -> "Codex disabled"
+        CodexConversationUiState.Disconnected -> "Codex disconnected"
+        CodexConversationUiState.Opening -> "Opening Codex App Server…"
+        is CodexConversationUiState.Ready -> "Codex ready · ${state.threadId}"
+        is CodexConversationUiState.Running -> "Codex running · ${state.turnId}"
+        is CodexConversationUiState.Terminal -> "Codex ${state.status.wireValue}"
+        is CodexConversationUiState.WaitingForApproval -> "Codex is waiting for your approval"
+        is CodexConversationUiState.StaleBinding -> "Codex binding is stale: ${state.reason}"
+        is CodexConversationUiState.WorkspaceMismatch -> "Codex workspace mismatch"
+        is CodexConversationUiState.Failed -> "Codex failed: ${state.message}"
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Text(text, modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.labelMedium)
     }
 }
 

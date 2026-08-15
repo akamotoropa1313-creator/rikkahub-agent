@@ -117,6 +117,9 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnInput
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
+import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
 import me.rerere.rikkahub.utils.applyPlaceholders
@@ -745,6 +748,12 @@ class ChatService(
             persistStreamingStateIfDue(conversationId)
         }
     }
+
+    suspend fun respondCodexCommandApproval(conversationId: Uuid, requestId: JsonRpcId, decision: CodexAppServerCommandApprovalDecision): Boolean =
+        sessions[conversationId]?.codexRuntime?.respondCommandApproval(requestId, decision) ?: false
+
+    suspend fun respondCodexFileApproval(conversationId: Uuid, requestId: JsonRpcId, decision: CodexAppServerFileChangeApprovalDecision): Boolean =
+        sessions[conversationId]?.codexRuntime?.respondFileApproval(requestId, decision) ?: false
 
     suspend fun resetCodexSession(conversationId: Uuid) {
         codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {

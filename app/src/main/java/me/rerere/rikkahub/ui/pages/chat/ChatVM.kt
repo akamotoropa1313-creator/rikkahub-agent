@@ -29,6 +29,9 @@ import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
+import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Avatar
 import me.rerere.rikkahub.data.model.Conversation
@@ -82,6 +85,12 @@ class ChatVM(
 
     fun resetCodexSession() { viewModelScope.launch { chatService.resetCodexSession(_conversationId) } }
     fun interruptCodexTurn() { viewModelScope.launch { chatService.stopGeneration(_conversationId) } }
+    fun respondCodexCommandApproval(id: JsonRpcId, decision: CodexAppServerCommandApprovalDecision) {
+        viewModelScope.launch { chatService.respondCodexCommandApproval(_conversationId, id, decision) }
+    }
+    fun respondCodexFileApproval(id: JsonRpcId, decision: CodexAppServerFileChangeApprovalDecision) {
+        viewModelScope.launch { chatService.respondCodexFileApproval(_conversationId, id, decision) }
+    }
 
     val conversationJobs = chatService
         .getConversationJobs()

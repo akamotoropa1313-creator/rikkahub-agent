@@ -112,6 +112,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val conversation by vm.conversation.collectAsStateWithLifecycle()
     val loadingJob by vm.conversationJob.collectAsStateWithLifecycle()
     val processingStatus by vm.processingStatus.collectAsStateWithLifecycle()
+    val codexState by vm.codexState.collectAsStateWithLifecycle()
     val currentChatModel by vm.currentChatModel.collectAsStateWithLifecycle()
     val enableWebSearch by vm.enableWebSearch.collectAsStateWithLifecycle()
     val errors by vm.errors.collectAsStateWithLifecycle()
@@ -421,6 +422,7 @@ private fun ChatPageContent(
                 state = chatListState,
                 loading = loadingJob != null,
                 processingStatus = processingStatus,
+                codexState = codexState,
                 previewMode = previewMode,
                 settings = setting,
                 hazeState = hazeState,

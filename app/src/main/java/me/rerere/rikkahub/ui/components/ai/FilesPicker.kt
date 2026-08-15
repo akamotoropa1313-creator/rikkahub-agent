@@ -29,6 +29,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.rememberBottomSheetState
@@ -161,6 +162,28 @@ internal fun FilesPicker(
                 },
             )
         }
+
+        val selectedWorkspace = assistant.workspaceId?.let { id -> workspaces.firstOrNull { it.id == id.toString() } }
+        val codexPrerequisite = when {
+            assistant.workspaceId == null -> "Select a workspace before enabling Codex App Server"
+            selectedWorkspace == null -> "The selected workspace is unavailable"
+            selectedWorkspace.shellStatus != WorkspaceShellStatus.READY.name -> "The workspace shell must be READY"
+            else -> "Uses an App Server-managed thread; the normal provider model is not used"
+        }
+        ListItem(
+            headlineContent = { Text("Codex App Server") },
+            supportingContent = { Text(codexPrerequisite) },
+            trailingContent = {
+                Switch(
+                    checked = assistant.codexAppServerEnabled,
+                    enabled = assistant.codexAppServerEnabled || (selectedWorkspace?.shellStatus == WorkspaceShellStatus.READY.name),
+                    onCheckedChange = { enabled ->
+                        onUpdateAssistant(assistant.copy(codexAppServerEnabled = enabled))
+                    },
+                )
+            },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        )
 
         if (settings.mcpServers.isNotEmpty()) {
             McpPickerListItem(
