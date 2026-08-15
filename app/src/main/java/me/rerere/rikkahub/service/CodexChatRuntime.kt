@@ -2,6 +2,7 @@ package me.rerere.rikkahub.service
 
 import java.io.Closeable
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +34,7 @@ class CodexChatRuntime(
     private val turns = ConcurrentHashMap<String, TurnRecord>()
     private val text = ConcurrentHashMap<Pair<String, String>, String>()
     private val terminalClaimed = ConcurrentHashMap.newKeySet<String>()
+    private val recentTerminalTurns = ConcurrentLinkedQueue<String>()
     private val closed = AtomicBoolean(false)
     @Volatile private var activeTurnId: String? = null
 
@@ -41,6 +43,8 @@ class CodexChatRuntime(
     private suspend fun terminal(turnId: String, status: CodexAppServerTurnStatus) {
         val turn = record(turnId)
         if (!terminalClaimed.add(turnId)) return
+        recentTerminalTurns.add(turnId)
+        while (recentTerminalTurns.size > 32) terminalClaimed.remove(recentTerminalTurns.poll())
         turn.status = status
         val isCurrent = activeTurnId == null || activeTurnId == turnId
         if (activeTurnId == turnId) activeTurnId = null
@@ -96,6 +100,13 @@ class CodexChatRuntime(
     }
 
     suspend fun awaitTurnTerminal(turnId: String): CodexAppServerTurnStatus = record(turnId).terminal.await()
+
+    /** Called only after start response processing and terminal waiting are both complete. */
+    fun finishTurn(turnId: String) {
+        turns.remove(turnId)
+        text.keys.removeAll { it.first == turnId }
+        // Keep a small terminal-id window so delayed duplicate notifications remain idempotent.
+    }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return

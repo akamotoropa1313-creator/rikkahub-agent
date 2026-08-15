@@ -541,8 +541,12 @@ class ChatService(
         if (content.isEmptyInputMessage()) return
 
         val session = getOrCreateSession(conversationId)
-        if (session.codexRuntime?.activeTurnId() != null) {
-            addError(IllegalStateException("A Codex turn is already running. Stop it before sending again."), conversationId)
+        val initialSettings = settingsStore.settingsFlow.value
+        val initialAssistant = initialSettings.getAssistantById(session.state.value.assistantId)
+            ?: initialSettings.getCurrentAssistant()
+        val codexOperation = initialAssistant.codexAppServerEnabled
+        if (codexOperation && !session.tryBeginCodexOperation()) {
+            addError(IllegalStateException("A Codex operation is already opening, starting, or running. Stop it before sending again."), conversationId)
             return
         }
         val previousJob = session.getJob()
@@ -608,6 +612,7 @@ class ChatService(
                 e.printStackTrace()
                 addError(e, conversationId, title = context.getString(R.string.error_title_send_message))
             } finally {
+                if (codexOperation) session.endCodexOperation()
                 releaseForegroundWork()
             }
         }
@@ -664,7 +669,8 @@ class ChatService(
                         appScope.launch {
                             owner.publishCodexState(CodexConversationUiState.Failed(cause.message ?: cause.toString()))
                             if (owner.detachCodexRuntime(failed)) failed.close()
-                            addError(cause, conversationId, title = "Codex App Server")
+                            // The active send coroutine owns the single user-facing ChatError.
+                            // Idle failures remain visible through CodexConversationUiState.Failed.
                         }
                     },
                 )
@@ -676,7 +682,11 @@ class ChatService(
             parts.map { CodexAppServerTurnInput.Text((it as UIMessagePart.Text).text) }
         )
         runtime.acceptStartResponse(result.turn.id, result.turn.status)
-        runtime.awaitTurnTerminal(result.turn.id)
+        try {
+            runtime.awaitTurnTerminal(result.turn.id)
+        } finally {
+            runtime.finishTurn(result.turn.id)
+        }
     }
 
     private suspend fun persistCodexAgentText(conversationId: Uuid, turnId: String, itemId: String, text: String) {

@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.launch
 import me.rerere.rikkahub.data.model.Conversation
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.uuid.Uuid
 
@@ -36,6 +37,10 @@ class ConversationSession(
     val generationJob: StateFlow<Job?> = _generationJob.asStateFlow()
     val isGenerating: Boolean get() = _generationJob.value?.isActive == true
     val isInUse: Boolean get() = refCount.get() > 0 || isGenerating
+    private val codexOperationActive = AtomicBoolean(false)
+    fun tryBeginCodexOperation(): Boolean = codexOperationActive.compareAndSet(false, true)
+    fun endCodexOperation() { codexOperationActive.set(false) }
+    val isCodexOperationActive: Boolean get() = codexOperationActive.get()
 
     // 空闲检查任务
     private var idleCheckJob: Job? = null
@@ -148,5 +153,6 @@ class ConversationSession(
         idleCheckJob?.cancel()
         idleCheckJob = null
         replaceCodexRuntime(null)
+        endCodexOperation()
     }
 }
