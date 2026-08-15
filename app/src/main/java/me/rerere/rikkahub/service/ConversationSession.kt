@@ -40,6 +40,15 @@ class ConversationSession(
     // 空闲检查任务
     private var idleCheckJob: Job? = null
 
+    @Volatile var codexRuntime: CodexChatRuntime? = null
+        private set
+
+    fun replaceCodexRuntime(runtime: CodexChatRuntime?) {
+        val previous = codexRuntime
+        codexRuntime = runtime
+        if (previous !== runtime) previous?.close()
+    }
+
     fun acquire(): Int = refCount.incrementAndGet().also {
         cancelIdleCheck()
         Log.d(TAG, "acquire $id (refs=$it)")
@@ -117,5 +126,6 @@ class ConversationSession(
         job?.cancel()
         idleCheckJob?.cancel()
         idleCheckJob = null
+        replaceCodexRuntime(null)
     }
 }

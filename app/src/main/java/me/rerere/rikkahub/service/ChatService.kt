@@ -109,6 +109,11 @@ import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FolderRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSessionOpener
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSessionOpenResult
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnInput
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
 import me.rerere.rikkahub.utils.applyPlaceholders
@@ -228,6 +233,8 @@ class ChatService(
     private val toolApprovalPreferences: me.rerere.rikkahub.data.preferences.ToolApprovalPreferences,
     private val workspaceRepository: WorkspaceRepository,
     private val folderRepository: FolderRepository,
+    private val codexSessionOpener: CodexAppServerConversationSessionOpener? = null,
+    private val codexBindingRepository: CodexAppServerSessionBindingRepository? = null,
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
@@ -235,6 +242,12 @@ class ChatService(
     // 统一会话管理
     private val sessions = ConcurrentHashMap<Uuid, ConversationSession>()
     private val _sessionsVersion = MutableStateFlow(0L)
+    private val codexOpenMutexes = ConcurrentHashMap<Uuid, Mutex>()
+    private val codexUiStates = ConcurrentHashMap<Uuid, MutableStateFlow<CodexConversationUiState>>()
+    private val codexMessageIds = ConcurrentHashMap<String, Uuid>()
+
+    fun getCodexStateFlow(conversationId: Uuid): StateFlow<CodexConversationUiState> =
+        codexUiStates.getOrPut(conversationId) { MutableStateFlow(CodexConversationUiState.Disconnected) }.asStateFlow()
 
     /**
      * Per-conversation mutex serialising state-mutating operations: handleToolApproval,
@@ -520,6 +533,10 @@ class ChatService(
         if (content.isEmptyInputMessage()) return
 
         val session = getOrCreateSession(conversationId)
+        if (session.codexRuntime?.activeTurnId() != null) {
+            addError(IllegalStateException("A Codex turn is already running. Stop it before sending again."), conversationId)
+            return
+        }
         val previousJob = session.getJob()
         val previousGenerationWasActive = previousJob?.isActive == true
         previousJob?.cancel()
@@ -549,6 +566,9 @@ class ChatService(
                 val settings = settingsStore.settingsFlow.first()
                 val assistant = settings.getAssistantById(currentConversation.assistantId)
                     ?: settings.getCurrentAssistant()
+                if (assistant.codexAppServerEnabled && content.any { it !is UIMessagePart.Text }) {
+                    throw IllegalArgumentException("This input type is not supported by the Codex App Server chat integration")
+                }
                 val processedContent = preprocessUserInputParts(content, assistant)
 
                 // 添加消息到列表
@@ -565,12 +585,13 @@ class ChatService(
                 // result as a synthetic assistant message — skipping the LLM entirely.
                 // Conservative: any match failure (tool throws, no result) falls back to the
                 // normal LLM path. Headless conversations and non-text messages are skipped.
-                val routedHandled = if (answer)
+                val routedHandled = if (answer && !assistant.codexAppServerEnabled)
                     tryFastPathRoute(conversationId, processedContent, withUser, assistant)
                 else false
 
-                // 开始补全 — only if router didn't handle the turn
-                if (answer && !routedHandled) {
+                if (answer && assistant.codexAppServerEnabled) {
+                    sendCodexTurn(conversationId, session, withUser, assistant, processedContent)
+                } else if (answer && !routedHandled) {
                     handleMessageComplete(conversationId)
                 }
 
@@ -583,6 +604,83 @@ class ChatService(
             }
         }
         session.setJob(job)
+    }
+
+    private suspend fun sendCodexTurn(
+        conversationId: Uuid,
+        owner: ConversationSession,
+        conversation: Conversation,
+        assistant: Assistant,
+        parts: List<UIMessagePart>,
+    ) = codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {
+        val workspaceId = assistant.workspaceId?.toString()
+            ?: throw IllegalStateException("Codex App Server requires a workspace")
+        val workspace = workspaceRepository.getById(workspaceId)
+            ?: throw IllegalStateException("Codex workspace does not exist")
+        check(workspace.shellStatus == WorkspaceShellStatus.READY.name) { "Codex workspace shell is not ready" }
+        val cwd = conversation.workspaceCwd.orEmpty()
+        require(!cwd.startsWith('/') && !cwd.startsWith('\\') && cwd.split('/', '\\').none { it == ".." }) {
+            "Codex CWD must stay inside the workspace"
+        }
+        codexBindingRepository?.getBinding(conversationId.toString())?.let { binding ->
+            if (binding.workspaceId != workspaceId || binding.workspaceCwd != cwd) {
+                codexUiStates.getOrPut(conversationId) { MutableStateFlow(CodexConversationUiState.Disconnected) }.value =
+                    CodexConversationUiState.WorkspaceMismatch(binding.workspaceId, workspaceId)
+                throw IllegalStateException("Existing Codex thread is bound to another workspace/CWD. Reset the Codex session first.")
+            }
+        }
+        val runtime = owner.codexRuntime ?: run {
+            val opener = checkNotNull(codexSessionOpener) { "Codex App Server is unavailable" }
+            codexUiStates.getOrPut(conversationId) { MutableStateFlow(CodexConversationUiState.Disconnected) }.value = CodexConversationUiState.Opening
+            val instructions = buildString {
+                append(assistant.systemPrompt)
+                if (assistant.allowConversationSystemPrompt && !conversation.customSystemPrompt.isNullOrBlank()) {
+                    append("\n\n--- Conversation instructions ---\n").append(conversation.customSystemPrompt)
+                }
+            }.ifBlank { null }
+            when (val opened = opener.open(conversationId.toString(), workspaceId, cwd,
+                CodexAppServerThreadStartParams(developerInstructions = instructions))) {
+                is CodexAppServerConversationSessionOpenResult.Started -> opened.session
+                is CodexAppServerConversationSessionOpenResult.Recovered -> opened.session
+                is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
+                    codexUiStates.getOrPut(conversationId) { MutableStateFlow(CodexConversationUiState.Disconnected) }.value =
+                        CodexConversationUiState.StaleBinding(opened.reason.toString())
+                    throw IllegalStateException("The existing Codex binding is stale; reset is required")
+                }
+            }.let { protocolSession ->
+                CodexChatRuntime(protocolSession, appScope) { turnId, itemId, text ->
+                    persistCodexAgentText(conversationId, turnId, itemId, text)
+                }.also { owner.replaceCodexRuntime(it) }
+            }
+        }
+        check(runtime.activeTurnId() == null) { "A Codex turn is already running" }
+        codexUiStates[conversationId]?.value = runtime.state.value
+        val result = runtime.session.startTurn(
+            parts.map { CodexAppServerTurnInput.Text((it as UIMessagePart.Text).text) }
+        )
+        runtime.acceptStartResponse(result.turn.id, result.turn.status)
+        codexUiStates[conversationId]?.value = runtime.state.value
+    }
+
+    private suspend fun persistCodexAgentText(conversationId: Uuid, turnId: String, itemId: String, text: String) {
+        mutexFor(conversationId).withLock {
+            val conversation = getConversationFlow(conversationId).value
+            val key = "$conversationId:$turnId:$itemId"
+            val messageId = codexMessageIds.getOrPut(key) { Uuid.random() }
+            val message = UIMessage(id = messageId, role = MessageRole.ASSISTANT, parts = listOf(UIMessagePart.Text(text)))
+            val existing = conversation.getMessageNodeByMessageId(messageId)
+            val updated = if (existing == null) conversation.copy(messageNodes = conversation.messageNodes + message.toMessageNode())
+                else conversation.updateCurrentMessages(conversation.currentMessages.map { if (it.id == messageId) message else it })
+            saveConversation(conversationId, updated)
+        }
+    }
+
+    suspend fun resetCodexSession(conversationId: Uuid) {
+        codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {
+            sessions[conversationId]?.replaceCodexRuntime(null)
+            checkNotNull(codexBindingRepository) { "Codex binding repository is unavailable" }.clearBinding(conversationId.toString())
+            codexUiStates.getOrPut(conversationId) { MutableStateFlow(CodexConversationUiState.Disconnected) }.value = CodexConversationUiState.Disconnected
+        }
     }
 
     /**
@@ -2705,6 +2803,9 @@ class ChatService(
     // 停止当前会话生成任务（不清理会话缓存）
     suspend fun stopGeneration(conversationId: Uuid) {
         val convMutex = mutexFor(conversationId)
+        sessions[conversationId]?.codexRuntime?.let { runtime ->
+            runtime.activeTurnId()?.let { runtime.session.interruptTurn(it) }
+        }
         // cancelAndJoin BEFORE the mutex so the cancelled coroutine can drain its own
         // writes (which may try to acquire the same mutex via their save path).
         sessions[conversationId]?.getJob()?.let { runCatching { it.cancelAndJoin() } }
