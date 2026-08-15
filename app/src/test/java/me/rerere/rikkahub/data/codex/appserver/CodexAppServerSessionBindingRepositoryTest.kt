@@ -103,6 +103,10 @@ class CodexAppServerSessionBindingRepositoryTest {
         override fun observeByConversationId(conversationId: String): Flow<CodexAppServerSessionBindingEntity?> = MutableStateFlow(rows[conversationId])
         override suspend fun getByThreadId(threadId: String) = rows.values.singleOrNull { it.threadId == threadId }
         override suspend fun upsert(binding: CodexAppServerSessionBindingEntity) { check(rows.values.none { it.threadId == binding.threadId && it.conversationId != binding.conversationId }); rows[binding.conversationId] = binding }
+        override suspend fun insertIfAbsent(binding: CodexAppServerSessionBindingEntity): Long {
+            if (binding.conversationId in rows || rows.values.any { it.threadId == binding.threadId }) return -1
+            upsert(binding); return rows.size.toLong()
+        }
         override suspend fun updateLastObservedTurn(conversationId: String, expectedThreadId: String, turnId: String, status: String, updatedAtMs: Long): Int = update(conversationId, expectedThreadId) { it.copy(lastObservedTurnId = turnId, lastObservedTurnStatus = status, updatedAtMs = updatedAtMs) }
         override suspend fun updateLastResumed(conversationId: String, expectedThreadId: String, resumedAtMs: Long): Int = update(conversationId, expectedThreadId) { it.copy(lastResumedAtMs = resumedAtMs, updatedAtMs = resumedAtMs) }
         override suspend fun deleteByConversationId(conversationId: String) = if (rows.remove(conversationId) != null) 1 else 0

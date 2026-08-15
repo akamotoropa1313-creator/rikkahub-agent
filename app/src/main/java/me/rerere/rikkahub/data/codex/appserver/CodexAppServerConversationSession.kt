@@ -4,8 +4,8 @@ import java.io.Closeable
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,7 +38,7 @@ open class CodexAppServerConversationSession internal constructor(
     val mcpApi = CodexAppServerMcpApi(connection)
     val accountApi = CodexAppServerAccountApi(connection)
 
-    private val closed = AtomicBoolean(false)
+    private val terminated = AtomicBoolean(false)
     private val job = SupervisorJob()
     private val scope = CoroutineScope(job + Dispatchers.IO)
     private val mutableFailure = MutableStateFlow<Throwable?>(null)
@@ -55,8 +55,10 @@ open class CodexAppServerConversationSession internal constructor(
                         bindingRepository.recordTurnCompleted(
                             conversationId, threadId, event.turn.id, event.turn.status,
                         )
-                    } catch (changed: CodexAppServerBindingChangedException) {
-                        loseOwnership(changed)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        terminate(failure)
                     }
                 }
             }
@@ -64,8 +66,7 @@ open class CodexAppServerConversationSession internal constructor(
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             connection.state.collect { state ->
                 if (state is CodexAppServerConnectionState.Failed) {
-                    mutableFailure.compareAndSet(null, state.cause)
-                    job.cancel()
+                    terminate(state.cause)
                 }
             }
         }
@@ -85,9 +86,11 @@ open class CodexAppServerConversationSession internal constructor(
                     conversationId, threadId, result.turn.id, result.turn.status,
                 )
             }
-        } catch (changed: CodexAppServerBindingChangedException) {
-            loseOwnership(changed)
-            throw changed
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            terminate(failure)
+            throw failure
         }
         return result
     }
@@ -101,17 +104,20 @@ open class CodexAppServerConversationSession internal constructor(
     }
 
     protected fun checkOpen() {
-        check(!closed.get() && job.isActive) { "Codex App Server conversation session is closed" }
+        check(!terminated.get() && job.isActive) { "Codex App Server conversation session is closed" }
     }
 
-    private fun loseOwnership(cause: CodexAppServerBindingChangedException) {
-        if (mutableFailure.compareAndSet(null, cause)) close()
+    private fun terminate(cause: Throwable?) {
+        if (!terminated.compareAndSet(false, true)) return
+        // Publication is deliberately last: observing failure is proof that all owned work and
+        // the process connection have already crossed their deterministic cleanup boundary.
+        job.cancel()
+        connection.close()
+        if (cause != null) mutableFailure.value = cause
     }
 
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
-        job.cancel()
-        connection.close()
+        terminate(null)
     }
 }
 
@@ -169,7 +175,7 @@ class CodexAppServerConversationSessionOpener(
             val started = CodexAppServerThreadApi(connection).startThread(
                 overrides.copy(ephemeral = false),
             )
-            val binding = repository.bindPersistentThread(
+            val binding = repository.createPersistentThreadBinding(
                 conversationId, workspaceId, workspaceCwd, started.thread,
             )
             val session = CodexAppServerConversationSession(binding, connection, repository)

@@ -22,6 +22,35 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class CodexAppServerSessionRecoveryTest {
+    @Test fun `concurrent openers atomically create binding and loser closes`() = runBlocking {
+        val firstTransport = FakeCodexAppServerTransport(); val secondTransport = FakeCodexAppServerTransport()
+        val firstConnection = connection(firstTransport); val secondConnection = connection(secondTransport)
+        var created = 0
+        val creator = CodexAppServerConnectionCreator { _, _ ->
+            if (created++ == 0) firstConnection else secondConnection
+        }
+        val f = Fixture(creator = creator)
+        val opener = CodexAppServerConversationSessionOpener(f.repo, f.local, creator, f.recovery)
+        val first = async { opener.open("a", "w", "src") }
+        respondInitialize(firstTransport)
+        val firstStart = Json.parseToJsonElement(firstTransport.takeClientLine()).jsonObject
+        val second = async { opener.open("a", "w", "src") }
+        respondInitialize(secondTransport)
+        val secondStart = Json.parseToJsonElement(secondTransport.takeClientLine()).jsonObject
+        assertEquals("thread/start", firstStart["method"]?.jsonPrimitive?.content)
+        assertEquals("thread/start", secondStart["method"]?.jsonPrimitive?.content)
+
+        firstTransport.injectServerLine("""{"id":${firstStart["id"]},"result":{"thread":{"id":"winner","ephemeral":false},"model":"m","modelProvider":"p","cwd":"src"}}""")
+        val winner = (first.await() as CodexAppServerConversationSessionOpenResult.Started).session
+        secondTransport.injectServerLine("""{"id":${secondStart["id"]},"result":{"thread":{"id":"loser","ephemeral":false},"model":"m","modelProvider":"p","cwd":"src"}}""")
+        val conflict = captureFailure { second.await() }
+        assertTrue(conflict is CodexAppServerBindingConflictException)
+        assertEquals("winner", f.repo.getBinding("a")?.threadId)
+        assertEquals(CodexAppServerConnectionState.Closed, secondConnection.state.value)
+        assertTrue(firstConnection.state.value is CodexAppServerConnectionState.Ready)
+        winner.close()
+    }
+
     @Test fun `conversation opener starts explicit persistent thread and tracks terminal turn`() = runBlocking {
         val transport = FakeCodexAppServerTransport()
         val connection = connection(transport)
@@ -40,9 +69,13 @@ class CodexAppServerSessionRecoveryTest {
         val session = (opening.await() as CodexAppServerConversationSessionOpenResult.Started).session
         assertEquals("thread-1", f.repo.getBinding("a")?.threadId)
 
-        val turn = async { session.startTurn(listOf(CodexAppServerTurnInput.Text("hello"))) }
+        val turn = async { session.startTurn(explicitSkillInvocation("demo", "/skills/demo", "work").input) }
         val startTurn = Json.parseToJsonElement(transport.takeClientLine()).jsonObject
         assertEquals("turn/start", startTurn["method"]?.jsonPrimitive?.content)
+        assertEquals(
+            Json.parseToJsonElement("""[{"type":"text","text":"${'$'}demo work"},{"type":"skill","name":"demo","path":"/skills/demo"}]"""),
+            startTurn["params"]?.jsonObject?.get("input"),
+        )
         transport.injectServerLine("""{"id":${startTurn["id"]},"result":{"turn":{"id":"turn-1","status":"inProgress"}}}""")
         turn.await()
         assertEquals("inProgress", f.repo.getBinding("a")?.lastObservedTurnStatus)
@@ -80,6 +113,19 @@ class CodexAppServerSessionRecoveryTest {
         assertTrue(failure is CodexAppServerBindingChangedException)
         assertEquals("thread-2", f.repo.getBinding("a")?.threadId)
         assertNull(f.repo.getBinding("a")?.lastObservedTurnStatus)
+        assertEquals(CodexAppServerConnectionState.Closed, connection.state.value)
+    }
+
+    @Test fun `unexpected durable collector failure terminates before publication`() = runBlocking {
+        val transport = FakeCodexAppServerTransport(); val connection = connection(transport)
+        val f = Fixture(creator = CodexAppServerConnectionCreator { _, _ -> connection }); f.bind()
+        val recovering = async { f.recovery.recover("a") }; respondInitialize(transport)
+        val resume = Json.parseToJsonElement(transport.takeClientLine()).jsonObject
+        transport.injectServerLine("""{"id":${resume["id"]},"result":{"thread":{"id":"thread-1"},"model":"m","modelProvider":"p","cwd":"src"}}""")
+        val session = (recovering.await() as CodexAppServerSessionRecoveryResult.Recovered).session
+        f.dao.turnUpdateFailure = IllegalStateException("database unavailable")
+        transport.injectServerLine("""{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn","status":"failed"}}}""")
+        assertEquals("database unavailable", session.failure.first { it != null }?.message)
         assertEquals(CodexAppServerConnectionState.Closed, connection.state.value)
     }
 
@@ -217,11 +263,19 @@ class CodexAppServerSessionRecoveryTest {
         val rows = linkedMapOf<String, CodexAppServerSessionBindingEntity>()
         val states = linkedMapOf<String, MutableStateFlow<CodexAppServerSessionBindingEntity?>>()
         var failResumeUpdate = false
+        var turnUpdateFailure: Throwable? = null
         override suspend fun getByConversationId(conversationId: String) = rows[conversationId]
         override fun observeByConversationId(conversationId: String): Flow<CodexAppServerSessionBindingEntity?> = states.getOrPut(conversationId) { MutableStateFlow(rows[conversationId]) }
         override suspend fun getByThreadId(threadId: String) = rows.values.singleOrNull { it.threadId == threadId }
         override suspend fun upsert(binding: CodexAppServerSessionBindingEntity) { rows[binding.conversationId] = binding; states[binding.conversationId]?.value = binding }
-        override suspend fun updateLastObservedTurn(conversationId: String, expectedThreadId: String, turnId: String, status: String, updatedAtMs: Long) = update(conversationId, expectedThreadId) { it.copy(lastObservedTurnId = turnId, lastObservedTurnStatus = status, updatedAtMs = updatedAtMs) }
+        override suspend fun insertIfAbsent(binding: CodexAppServerSessionBindingEntity): Long {
+            if (binding.conversationId in rows || rows.values.any { it.threadId == binding.threadId }) return -1
+            upsert(binding); return rows.size.toLong()
+        }
+        override suspend fun updateLastObservedTurn(conversationId: String, expectedThreadId: String, turnId: String, status: String, updatedAtMs: Long): Int {
+            turnUpdateFailure?.let { throw it }
+            return update(conversationId, expectedThreadId) { it.copy(lastObservedTurnId = turnId, lastObservedTurnStatus = status, updatedAtMs = updatedAtMs) }
+        }
         override suspend fun updateLastResumed(conversationId: String, expectedThreadId: String, resumedAtMs: Long) = if (failResumeUpdate) 0 else update(conversationId, expectedThreadId) { it.copy(lastResumedAtMs = resumedAtMs, updatedAtMs = resumedAtMs) }
         override suspend fun deleteByConversationId(conversationId: String) = if (rows.remove(conversationId) != null) { states[conversationId]?.value = null; 1 } else 0
         private fun update(id: String, thread: String, block: (CodexAppServerSessionBindingEntity) -> CodexAppServerSessionBindingEntity): Int { val row = rows[id]?.takeIf { it.threadId == thread } ?: return 0; rows[id] = block(row); states[id]?.value = rows[id]; return 1 }

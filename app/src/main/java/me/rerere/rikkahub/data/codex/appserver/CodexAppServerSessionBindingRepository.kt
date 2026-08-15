@@ -13,6 +13,19 @@ class CodexAppServerSessionBindingRepository(
     private val localState: CodexAppServerLocalState,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
+    suspend fun createPersistentThreadBinding(
+        conversationId: String,
+        workspaceId: String,
+        workspaceCwd: String,
+        thread: CodexAppServerThreadSnapshot,
+    ): CodexAppServerSessionBindingEntity {
+        val binding = persistentBinding(conversationId, workspaceId, workspaceCwd, thread, null)
+        if (bindingDao.insertIfAbsent(binding) == -1L) {
+            throw CodexAppServerBindingConflictException(conversationId, thread.id)
+        }
+        return binding
+    }
+
     suspend fun getBinding(conversationId: String): CodexAppServerSessionBindingEntity? {
         require(conversationId.isNotBlank()) { "conversationId must not be blank" }
         return bindingDao.getByConversationId(conversationId)
@@ -24,27 +37,36 @@ class CodexAppServerSessionBindingRepository(
         workspaceCwd: String,
         thread: CodexAppServerThreadSnapshot,
     ): CodexAppServerSessionBindingEntity {
-        require(conversationId.isNotBlank()) { "conversationId must not be blank" }
-        require(workspaceId.isNotBlank()) { "workspaceId must not be blank" }
-        require(thread.id.isNotBlank()) { "threadId must not be blank" }
-        validateRelativeCwd(workspaceCwd)
-        check(localState.conversationExists(conversationId)) {
-            "Conversation $conversationId does not exist"
-        }
-        check(localState.getWorkspace(workspaceId) != null) { "Workspace $workspaceId does not exist" }
-
-        val ephemeral = thread.raw["ephemeral"] as? JsonPrimitive
-        require(ephemeral != null && !ephemeral.isString && ephemeral.booleanOrNull == false) {
-            "Only an explicitly boolean false ephemeral field can be persisted"
-        }
+        val existing = bindingDao.getByConversationId(conversationId)
+        val binding = persistentBinding(conversationId, workspaceId, workspaceCwd, thread, existing)
         val owner = bindingDao.getByThreadId(thread.id)
         check(owner == null || owner.conversationId == conversationId) {
             "Codex thread ${thread.id} is already bound to conversation ${owner?.conversationId}"
         }
 
-        val existing = bindingDao.getByConversationId(conversationId)
+        bindingDao.upsert(binding)
+        return binding
+    }
+
+    private suspend fun persistentBinding(
+        conversationId: String,
+        workspaceId: String,
+        workspaceCwd: String,
+        thread: CodexAppServerThreadSnapshot,
+        existing: CodexAppServerSessionBindingEntity?,
+    ): CodexAppServerSessionBindingEntity {
+        require(conversationId.isNotBlank()) { "conversationId must not be blank" }
+        require(workspaceId.isNotBlank()) { "workspaceId must not be blank" }
+        require(thread.id.isNotBlank()) { "threadId must not be blank" }
+        validateRelativeCwd(workspaceCwd)
+        check(localState.conversationExists(conversationId)) { "Conversation $conversationId does not exist" }
+        check(localState.getWorkspace(workspaceId) != null) { "Workspace $workspaceId does not exist" }
+        val ephemeral = thread.raw["ephemeral"] as? JsonPrimitive
+        require(ephemeral != null && !ephemeral.isString && ephemeral.booleanOrNull == false) {
+            "Only an explicitly boolean false ephemeral field can be persisted"
+        }
         val now = nowMs()
-        val binding = CodexAppServerSessionBindingEntity(
+        return CodexAppServerSessionBindingEntity(
             conversationId = conversationId,
             workspaceId = workspaceId,
             threadId = thread.id,
@@ -56,8 +78,6 @@ class CodexAppServerSessionBindingRepository(
             lastObservedTurnStatus = null,
             lastResumedAtMs = null,
         )
-        bindingDao.upsert(binding)
-        return binding
     }
 
     suspend fun clearBinding(conversationId: String) {
@@ -106,6 +126,9 @@ class CodexAppServerSessionBindingRepository(
 
 class CodexAppServerBindingChangedException(conversationId: String, expectedThreadId: String) :
     IllegalStateException("Binding for conversation $conversationId no longer owns thread $expectedThreadId")
+
+class CodexAppServerBindingConflictException(conversationId: String, threadId: String) :
+    IllegalStateException("Conversation $conversationId or thread $threadId was bound concurrently")
 
 interface CodexAppServerLocalState {
     suspend fun conversationExists(id: String): Boolean
