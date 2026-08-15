@@ -4,6 +4,7 @@ import android.content.Context
 import me.rerere.rikkahub.BuildConfig
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionRecovery
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSessionOpener
 import me.rerere.rikkahub.data.codex.appserver.WorkspaceCodexAppServerConnectionFactory
 import me.rerere.rikkahub.data.codex.appserver.RoomCodexAppServerLocalState
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConnectionCreator
@@ -31,6 +32,7 @@ val repositoryModule = module {
         WorkspaceCodexAppServerConnectionFactory(get(), BuildConfig.VERSION_NAME)
     }
     single { CodexAppServerSessionRecovery(get(), get(), get()) }
+    single { CodexAppServerConversationSessionOpener(get(), get(), get(), get()) }
 
     single {
         ConversationRepository(get(), get(), get(), get(), get(), get(), get())
