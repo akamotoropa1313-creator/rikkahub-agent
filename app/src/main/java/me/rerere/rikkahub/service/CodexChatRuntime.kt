@@ -19,7 +19,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnStatus
 /** Conversation-owned application adapter around the single Stage 13 protocol session. */
 class CodexChatRuntime(
     val session: CodexAppServerConversationSession,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     private val onAgentText: suspend (turnId: String, itemId: String, text: String) -> Unit,
     private val onTurnTerminal: suspend (turnId: String) -> Unit = {},
     private val onFailure: (CodexChatRuntime, Throwable) -> Unit = { _, _ -> },
@@ -37,8 +37,7 @@ class CodexChatRuntime(
     private val terminalClaimed = ConcurrentHashMap.newKeySet<String>()
     private val recentTerminalTurns = ConcurrentLinkedQueue<String>()
     private val closed = AtomicBoolean(false)
-    private val stopRequested = AtomicBoolean(false)
-    private val interruptSent = AtomicBoolean(false)
+    private val stopController = CodexTurnStopController()
     @Volatile private var activeTurnId: String? = null
 
     private fun record(turnId: String) = turns.computeIfAbsent(turnId) { TurnRecord() }
@@ -57,7 +56,7 @@ class CodexChatRuntime(
     }
 
     private fun interruptWhenKnown(turnId: String) {
-        if (!stopRequested.get() || !interruptSent.compareAndSet(false, true)) return
+        if (!stopController.onTurnKnown(turnId)) return
         scope.launch {
             runCatching { session.interruptTurn(turnId) }.onFailure(onInterruptFailure)
         }
@@ -102,7 +101,7 @@ class CodexChatRuntime(
 
     /** Records Stop even while turn/start is outstanding; exact ID may arrive by event or response. */
     fun requestStop() {
-        stopRequested.set(true)
+        stopController.requestStop()
         activeTurnId?.let(::interruptWhenKnown)
     }
 
@@ -123,6 +122,7 @@ class CodexChatRuntime(
     fun finishTurn(turnId: String) {
         turns.remove(turnId)
         text.keys.removeAll { it.first == turnId }
+        stopController.finishTurn(turnId)
         // Keep a small terminal-id window so delayed duplicate notifications remain idempotent.
     }
 
@@ -131,6 +131,24 @@ class CodexChatRuntime(
         collector.cancel()
         failureCollector.cancel()
         session.close()
+    }
+}
+
+internal class CodexTurnStopController {
+    private val stopRequested = AtomicBoolean(false)
+    private val interruptSent = AtomicBoolean(false)
+    @Volatile private var turnId: String? = null
+
+    fun requestStop() { stopRequested.set(true) }
+    fun onTurnKnown(id: String): Boolean {
+        turnId = id
+        return stopRequested.get() && interruptSent.compareAndSet(false, true)
+    }
+    fun finishTurn(id: String) {
+        if (turnId != null && turnId != id) return
+        turnId = null
+        stopRequested.set(false)
+        interruptSent.set(false)
     }
 }
 
