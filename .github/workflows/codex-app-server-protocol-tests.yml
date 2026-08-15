@@ -70,6 +70,14 @@ jobs:
       - name: Compile app and generate Room schemas
         run: ./gradlew :app:compileDebugKotlin
 
+      - name: Upload generated Room v31 schema
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-stage10-room-schema-v31
+          path: app/schemas/me.rerere.rikkahub.data.db.AppDatabase/31.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Verify committed Room schemas are clean
         shell: bash
         run: |
