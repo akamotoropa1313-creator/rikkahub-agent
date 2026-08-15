@@ -510,6 +510,7 @@ private fun ChatPageContent(
                 setting = setting,
                 conversation = conversation,
                 assistant = assistant,
+                hasCodexBinding = hasCodexBinding,
                 vm = vm,
                 onDismiss = { showFilesSheet = false },
             )
@@ -523,6 +524,7 @@ private fun ChatFilesPickerSheet(
     setting: Settings,
     conversation: Conversation,
     assistant: Assistant,
+    hasCodexBinding: Boolean,
     vm: ChatVM,
     onDismiss: () -> Unit,
 ) {

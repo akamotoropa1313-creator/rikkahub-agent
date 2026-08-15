@@ -138,7 +138,9 @@ class CodexChatRuntime(
                     publishActivity(event.turnId)
                 }
                 is CodexAppServerTurnEvent.TerminalInteraction -> {
-                    terminalInteractions += "${event.processId}: ${event.stdin}"
+                    synchronized(terminalInteractions) {
+                        terminalInteractions += "${event.processId}: ${event.stdin}"
+                    }
                     publishActivity(event.turnId)
                 }
                 is CodexAppServerTurnEvent.FileChangePatchUpdated -> {
