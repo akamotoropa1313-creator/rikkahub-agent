@@ -22,7 +22,7 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class CodexAppServerSessionRecoveryTest {
-    @Test fun `concurrent openers atomically create binding and loser closes`() = runBlocking {
+    @Test fun `concurrent openers atomically create binding and loser closes`() = runBlocking { supervisorScope {
         val firstTransport = FakeCodexAppServerTransport(); val secondTransport = FakeCodexAppServerTransport()
         val firstConnection = connection(firstTransport); val secondConnection = connection(secondTransport)
         var created = 0
@@ -49,7 +49,7 @@ class CodexAppServerSessionRecoveryTest {
         assertEquals(CodexAppServerConnectionState.Closed, secondConnection.state.value)
         assertTrue(firstConnection.state.value is CodexAppServerConnectionState.Ready)
         winner.close()
-    }
+    } }
 
     @Test fun `conversation opener starts explicit persistent thread and tracks terminal turn`() = runBlocking {
         val transport = FakeCodexAppServerTransport()
