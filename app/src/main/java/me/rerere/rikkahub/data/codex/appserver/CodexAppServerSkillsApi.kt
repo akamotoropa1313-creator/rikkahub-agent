@@ -33,15 +33,15 @@ data class CodexSkillsConfigWriteResult(val effectiveEnabled: Boolean, val raw: 
 
 class CodexAppServerSkillsApi(private val connection: CodexAppServerConnection) {
     suspend fun list(
-        cwds: List<String>,
-        forceReload: Boolean,
+        cwds: List<String> = emptyList(),
+        forceReload: Boolean = false,
         timeout: Duration = 30.seconds,
     ): CodexSkillsListResult {
         require(cwds.all { it.isNotBlank() }) { "cwds must not contain blank paths" }
-        val params = JsonObject(mapOf(
-            "cwds" to JsonArray(cwds.map(::JsonPrimitive)),
-            "forceReload" to JsonPrimitive(forceReload),
-        ))
+        val params = buildMap<String, JsonElement> {
+            if (cwds.isNotEmpty()) put("cwds", JsonArray(cwds.map(::JsonPrimitive)))
+            if (forceReload) put("forceReload", JsonPrimitive(true))
+        }.let(::JsonObject)
         return decodeSkillsList(connection.sendRequestAfterReady("skills/list", params, timeout))
     }
 
@@ -59,30 +59,30 @@ class CodexAppServerSkillsApi(private val connection: CodexAppServerConnection) 
             name?.let { put("name", JsonPrimitive(it)) }
             put("enabled", JsonPrimitive(enabled))
         }.let(::JsonObject)
-        val raw = connection.sendRequestAfterReady("skills/config/write", params, timeout).objectValue("skills/config/write result")
-        return CodexSkillsConfigWriteResult(raw.boolean("effectiveEnabled"), raw)
+        val raw = connection.sendRequestAfterReady("skills/config/write", params, timeout).skillObject("skills/config/write result")
+        return CodexSkillsConfigWriteResult(raw.skillBoolean("effectiveEnabled"), raw)
     }
 }
 
 private fun decodeSkillsList(value: JsonElement): CodexSkillsListResult {
-    val raw = value.objectValue("skills/list result")
-    val data = raw.array("data").mapIndexed { index, value ->
-        val entry = value.objectValue("data[$index]")
+    val raw = value.skillObject("skills/list result")
+    val data = raw.skillArray("data").mapIndexed { index, value ->
+        val entry = value.skillObject("data[$index]")
         CodexSkillsListEntry(
-            cwd = entry.string("cwd"),
-            skills = entry.array("skills").mapIndexed { skillIndex, skillValue ->
-                val skill = skillValue.objectValue("data[$index].skills[$skillIndex]")
+            cwd = entry.skillString("cwd"),
+            skills = entry.skillArray("skills").mapIndexed { skillIndex, skillValue ->
+                val skill = skillValue.skillObject("data[$index].skills[$skillIndex]")
                 CodexSkillMetadata(
-                    name = skill.string("name"), description = skill.string("description"),
-                    shortDescription = skill.optionalString("shortDescription"), path = skill.string("path"),
-                    scope = skill.string("scope"), enabled = skill.boolean("enabled"),
+                    name = skill.skillString("name"), description = skill.skillString("description"),
+                    shortDescription = skill.skillOptionalString("shortDescription"), path = skill.skillString("path"),
+                    scope = skill.skillString("scope"), enabled = skill.skillBoolean("enabled"),
                     interfaceMetadata = skill["interface"] as? JsonObject,
                     dependencies = skill["dependencies"] as? JsonObject, raw = skill,
                 )
             },
-            errors = entry.array("errors").mapIndexed { errorIndex, errorValue ->
-                val error = errorValue.objectValue("data[$index].errors[$errorIndex]")
-                CodexSkillErrorInfo(error.string("path"), error.string("message"), error)
+            errors = entry.skillArray("errors").mapIndexed { errorIndex, errorValue ->
+                val error = errorValue.skillObject("data[$index].errors[$errorIndex]")
+                CodexSkillErrorInfo(error.skillString("path"), error.skillString("message"), error)
             },
             raw = entry,
         )
@@ -90,18 +90,18 @@ private fun decodeSkillsList(value: JsonElement): CodexSkillsListResult {
     return CodexSkillsListResult(data, raw)
 }
 
-internal fun JsonElement.objectValue(label: String): JsonObject = this as? JsonObject
+private fun JsonElement.skillObject(label: String): JsonObject = this as? JsonObject
     ?: throw CodexAppServerSkillsProtocolException("$label must be an object")
-internal fun JsonObject.array(name: String): JsonArray = this[name] as? JsonArray
+private fun JsonObject.skillArray(name: String): JsonArray = this[name] as? JsonArray
     ?: throw CodexAppServerSkillsProtocolException("$name must be an array")
-internal fun JsonObject.string(name: String): String = (this[name] as? JsonPrimitive)
+private fun JsonObject.skillString(name: String): String = (this[name] as? JsonPrimitive)
     ?.takeIf { it.isString }?.contentOrNull
     ?: throw CodexAppServerSkillsProtocolException("$name must be a string")
-internal fun JsonObject.optionalString(name: String): String? = this[name]?.let {
+private fun JsonObject.skillOptionalString(name: String): String? = this[name]?.let {
     (it as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
         ?: throw CodexAppServerSkillsProtocolException("$name must be a string when present")
 }
-internal fun JsonObject.boolean(name: String): Boolean = (this[name] as? JsonPrimitive)
+private fun JsonObject.skillBoolean(name: String): Boolean = (this[name] as? JsonPrimitive)
     ?.takeUnless { it.isString }?.booleanOrNull
     ?: throw CodexAppServerSkillsProtocolException("$name must be a boolean")
 class CodexAppServerSkillsProtocolException(message: String) : SerializationException(message)
