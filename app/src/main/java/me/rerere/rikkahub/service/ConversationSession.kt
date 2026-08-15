@@ -34,6 +34,14 @@ class ConversationSession(
 
     // 生成任务（内聚在 session 中）
     private val _generationJob = MutableStateFlow<Job?>(null)
+    private val pendingSendJobs = java.util.concurrent.ConcurrentHashMap.newKeySet<Job>()
+    fun registerPendingSend(job: Job) { pendingSendJobs.add(job) }
+    fun promotePendingSend(job: Job) { pendingSendJobs.remove(job) }
+    fun cancelPendingSends() {
+        pendingSendJobs.toList().forEach { job ->
+            if (pendingSendJobs.remove(job)) job.cancel()
+        }
+    }
     val generationJob: StateFlow<Job?> = _generationJob.asStateFlow()
     val isGenerating: Boolean get() = _generationJob.value?.isActive == true
     val isInUse: Boolean get() = refCount.get() > 0 || isGenerating
@@ -150,6 +158,7 @@ class ConversationSession(
         // cleanup() is only called after removal, but correctness still matters.
         val job = _generationJob.getAndUpdate { null }
         job?.cancel()
+        cancelPendingSends()
         idleCheckJob?.cancel()
         idleCheckJob = null
         replaceCodexRuntime(null)

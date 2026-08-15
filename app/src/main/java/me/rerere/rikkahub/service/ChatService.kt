@@ -546,7 +546,7 @@ class ChatService(
         if (content.isEmptyInputMessage()) return
         val session = getOrCreateSession(conversationId)
         val releaseForegroundWork = foregroundWorkTracker.acquire()
-        val job = appScope.launch {
+        val job = appScope.launch(start = CoroutineStart.LAZY) {
             var ownsCodexLease = false
             try {
                 awaitForegroundWorkReady()
@@ -568,6 +568,7 @@ class ChatService(
                         previousJob = session.getJob()
                         previousWasActive = previousJob?.isActive == true
                         previousJob?.cancel()
+                        session.promotePendingSend(currentCoroutineContext().job)
                         session.setJob(currentCoroutineContext().job)
                         true
                     }
@@ -601,10 +602,13 @@ class ChatService(
                 e.printStackTrace()
                 addError(e, conversationId, title = context.getString(R.string.error_title_send_message))
             } finally {
+                session.promotePendingSend(currentCoroutineContext().job)
                 if (ownsCodexLease) session.endCodexOperation()
                 releaseForegroundWork()
             }
         }
+        session.registerPendingSend(job)
+        job.start()
     }
 
     private suspend fun validateCodexPreflight(
@@ -2864,6 +2868,7 @@ class ChatService(
     // 停止当前会话生成任务（不清理会话缓存）
     suspend fun stopGeneration(conversationId: Uuid) {
         val convMutex = mutexFor(conversationId)
+        sessions[conversationId]?.cancelPendingSends()
         sessions[conversationId]?.let { session ->
             if (session.isCodexOperationActive) {
                 session.codexRuntime?.let { runtime ->
