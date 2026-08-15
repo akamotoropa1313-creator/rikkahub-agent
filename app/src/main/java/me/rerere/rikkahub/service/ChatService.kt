@@ -665,6 +665,7 @@ class ChatService(
                     scope = appScope,
                     onAgentText = { turnId, itemId, text -> persistCodexAgentText(conversationId, turnId, itemId, text) },
                     onTurnTerminal = { persistStreamingStateNow(conversationId, updateSearchIndex = true) },
+                    onInterruptFailure = { cause -> addError(cause, conversationId, title = "Codex interrupt failed") },
                     onFailure = { failed, cause ->
                         appScope.launch {
                             owner.publishCodexState(CodexConversationUiState.Failed(cause.message ?: cause.toString()))
@@ -2845,16 +2846,16 @@ class ChatService(
     // 停止当前会话生成任务（不清理会话缓存）
     suspend fun stopGeneration(conversationId: Uuid) {
         val convMutex = mutexFor(conversationId)
-        sessions[conversationId]?.codexRuntime?.let { runtime ->
-            runtime.activeTurnId()?.let { turnId ->
-                try {
-                    runtime.session.interruptTurn(turnId)
-                } catch (failure: Throwable) {
-                    addError(failure, conversationId, title = "Codex interrupt failed")
+        sessions[conversationId]?.let { session ->
+            if (session.isCodexOperationActive) {
+                session.codexRuntime?.let { runtime ->
+                    // This also covers turn/start-outstanding: the intent is retained until the
+                    // exact ID arrives from TurnStarted or the start response, then sent once.
+                    runtime.requestStop()
+                    return
                 }
-                // The runtime-owned collector remains alive and the generation waiter completes
-                // only when turn/completed(interrupted) (or runtime failure) is observed.
-                return
+                // Still Opening and no turn/start can have been written: local cancellation is
+                // safe; the Stage 13 opener closes any partially-created connection in finally.
             }
         }
         // cancelAndJoin BEFORE the mutex so the cancelled coroutine can drain its own

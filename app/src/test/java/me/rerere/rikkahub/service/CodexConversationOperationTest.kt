@@ -1,11 +1,13 @@
 package me.rerere.rikkahub.service
 
-import com.google.common.truth.Truth.assertThat
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.Dispatchers
 import me.rerere.rikkahub.data.model.Conversation
 import org.junit.Test
 import kotlin.uuid.Uuid
@@ -17,7 +19,7 @@ class CodexConversationOperationTest {
         val session = ConversationSession(
             id = id,
             initial = Conversation.ofId(id, Uuid.random()),
-            scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher()),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
             onIdle = {},
         )
         val start = CountDownLatch(1)
@@ -30,14 +32,14 @@ class CodexConversationOperationTest {
         }
         start.countDown()
 
-        assertThat(claims.count { it.get() }).isEqualTo(1)
-        assertThat(session.isCodexOperationActive).isTrue()
-        assertThat(session.tryBeginCodexOperation()).isFalse()
+        assertEquals(1, claims.count { it.get() })
+        assertTrue(session.isCodexOperationActive)
+        assertFalse(session.tryBeginCodexOperation())
 
         session.endCodexOperation()
-        assertThat(session.tryBeginCodexOperation()).isTrue()
+        assertTrue(session.tryBeginCodexOperation())
         session.cleanup()
-        assertThat(session.isCodexOperationActive).isFalse()
+        assertFalse(session.isCodexOperationActive)
         pool.shutdownNow()
     }
 }

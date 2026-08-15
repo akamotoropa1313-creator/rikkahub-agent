@@ -23,6 +23,7 @@ class CodexChatRuntime(
     private val onAgentText: suspend (turnId: String, itemId: String, text: String) -> Unit,
     private val onTurnTerminal: suspend (turnId: String) -> Unit = {},
     private val onFailure: (CodexChatRuntime, Throwable) -> Unit = { _, _ -> },
+    private val onInterruptFailure: (Throwable) -> Unit = {},
 ) : Closeable {
     private data class TurnRecord(
         val terminal: CompletableDeferred<CodexAppServerTurnStatus> = CompletableDeferred(),
@@ -36,6 +37,8 @@ class CodexChatRuntime(
     private val terminalClaimed = ConcurrentHashMap.newKeySet<String>()
     private val recentTerminalTurns = ConcurrentLinkedQueue<String>()
     private val closed = AtomicBoolean(false)
+    private val stopRequested = AtomicBoolean(false)
+    private val interruptSent = AtomicBoolean(false)
     @Volatile private var activeTurnId: String? = null
 
     private fun record(turnId: String) = turns.computeIfAbsent(turnId) { TurnRecord() }
@@ -53,6 +56,13 @@ class CodexChatRuntime(
         turn.terminal.complete(status)
     }
 
+    private fun interruptWhenKnown(turnId: String) {
+        if (!stopRequested.get() || !interruptSent.compareAndSet(false, true)) return
+        scope.launch {
+            runCatching { session.interruptTurn(turnId) }.onFailure(onInterruptFailure)
+        }
+    }
+
     private val collector: Job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.turnApi.events.collect { event ->
             if (event.threadIdOrNull() != session.threadId) return@collect
@@ -61,6 +71,7 @@ class CodexChatRuntime(
                     val turn = record(event.turn.id)
                     if (!terminalClaimed.contains(event.turn.id) && (activeTurnId == null || activeTurnId == event.turn.id)) {
                         activeTurnId = event.turn.id
+                        interruptWhenKnown(event.turn.id)
                         _state.value = CodexConversationUiState.Running(session.threadId, event.turn.id)
                     }
                 }
@@ -89,12 +100,19 @@ class CodexChatRuntime(
 
     fun activeTurnId(): String? = activeTurnId
 
+    /** Records Stop even while turn/start is outstanding; exact ID may arrive by event or response. */
+    fun requestStop() {
+        stopRequested.set(true)
+        activeTurnId?.let(::interruptWhenKnown)
+    }
+
     /** Monotonic: an early terminal notification always wins over a later inProgress response. */
     suspend fun acceptStartResponse(turnId: String, status: CodexAppServerTurnStatus) {
         val turn = record(turnId)
         if (terminalClaimed.contains(turnId)) return
         if (status is CodexAppServerTurnStatus.InProgress) {
             activeTurnId = turnId
+            interruptWhenKnown(turnId)
             _state.value = CodexConversationUiState.Running(session.threadId, turnId)
         } else terminal(turnId, status)
     }
