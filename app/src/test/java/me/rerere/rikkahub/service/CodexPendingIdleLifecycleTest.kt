@@ -29,10 +29,11 @@ class CodexPendingIdleLifecycleTest {
         val calls = AtomicInteger()
         val id = Uuid.random()
         val session = ConversationSession(id, Conversation.ofId(id), scope, { calls.incrementAndGet() }, 0)
-        session.acquire()
-        session.release()
+        val first = scope.launch(start = CoroutineStart.LAZY) { }
+        session.registerPendingSend(first)
+        session.cancelPendingSends() // schedules idle; deliberately do not drain yet
         val pending = scope.launch(start = CoroutineStart.LAZY) { }
-        session.registerPendingSend(pending)
+        session.registerPendingSend(pending) // cancels the already-scheduled idle check
 
         dispatcher.drain()
         assertEquals(0, calls.get())

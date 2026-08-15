@@ -37,8 +37,11 @@ class ConversationSession(
     private val _generationJob = MutableStateFlow<Job?>(null)
     private val sendTrackingLock = Any()
     private val pendingSendJobs = linkedSetOf<Job>()
+    private var evictionClaimed = false
     fun registerPendingSend(job: Job): Boolean {
-        val added = synchronized(sendTrackingLock) { pendingSendJobs.add(job) }
+        val added = synchronized(sendTrackingLock) {
+            if (evictionClaimed) false else pendingSendJobs.add(job)
+        }
         if (added) cancelIdleCheck()
         return added
     }
@@ -65,6 +68,15 @@ class ConversationSession(
     val generationJob: StateFlow<Job?> = _generationJob.asStateFlow()
     val isGenerating: Boolean get() = _generationJob.value?.isActive == true
     val isInUse: Boolean get() = refCount.get() > 0 || isGenerating || hasPendingSends
+    fun tryClaimIdleEviction(): Boolean = synchronized(sendTrackingLock) {
+        if (evictionClaimed || refCount.get() > 0 || _generationJob.value?.isActive == true || pendingSendJobs.isNotEmpty()) {
+            false
+        } else {
+            evictionClaimed = true
+            true
+        }
+    }
+    fun releaseIdleEvictionClaim() = synchronized(sendTrackingLock) { evictionClaimed = false }
     private val codexOperationActive = AtomicBoolean(false)
     fun tryBeginCodexOperation(): Boolean = codexOperationActive.compareAndSet(false, true)
     fun endCodexOperation() { codexOperationActive.set(false) }

@@ -422,7 +422,7 @@ class ChatService(
 
     private fun removeSession(conversationId: Uuid) {
         val session = sessions[conversationId] ?: return
-        if (session.isInUse) {
+        if (!session.tryClaimIdleEviction()) {
             Log.d(TAG, "removeSession: skipped $conversationId (still in use)")
             return
         }
@@ -441,6 +441,8 @@ class ChatService(
             }
             _sessionsVersion.value++
             Log.i(TAG, "removeSession: $conversationId (remaining: ${sessions.size})")
+        } else {
+            session.releaseIdleEvictionClaim()
         }
     }
 
@@ -545,7 +547,7 @@ class ChatService(
 
     fun sendMessage(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean = true) {
         if (content.isEmptyInputMessage()) return
-        val session = getOrCreateSession(conversationId)
+        var session = getOrCreateSession(conversationId)
         val releaseForegroundWork = foregroundWorkTracker.acquire()
         val foregroundReleased = java.util.concurrent.atomic.AtomicBoolean(false)
         val releaseForegroundOnce = { if (foregroundReleased.compareAndSet(false, true)) releaseForegroundWork() }
@@ -614,7 +616,12 @@ class ChatService(
                 releaseForegroundOnce()
             }
         }
-        session.registerPendingSend(job)
+        var acceptingSession = session
+        while (!acceptingSession.registerPendingSend(job)) {
+            if (sessions.remove(conversationId, acceptingSession)) acceptingSession.cleanup()
+            acceptingSession = getOrCreateSession(conversationId)
+            session = acceptingSession
+        }
         job.invokeOnCompletion { releaseForegroundOnce() }
         job.start()
     }
