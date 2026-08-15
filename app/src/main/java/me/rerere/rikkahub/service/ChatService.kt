@@ -468,7 +468,11 @@ class ChatService(
     // ---- 引用管理 ----
 
     fun addConversationReference(conversationId: Uuid) {
-        getOrCreateSession(conversationId).acquire()
+        while (true) {
+            val session = getOrCreateSession(conversationId)
+            if (session.tryAcquire() != null) return
+            if (sessions.remove(conversationId, session)) session.cleanup()
+        }
     }
 
     fun removeConversationReference(conversationId: Uuid) {

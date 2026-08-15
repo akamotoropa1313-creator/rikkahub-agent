@@ -38,9 +38,10 @@ class ConversationSession(
     private val sendTrackingLock = Any()
     private val pendingSendJobs = linkedSetOf<Job>()
     private var evictionClaimed = false
+    private var closed = false
     fun registerPendingSend(job: Job): Boolean {
         val added = synchronized(sendTrackingLock) {
-            if (evictionClaimed) false else pendingSendJobs.add(job)
+            if (evictionClaimed || closed) false else pendingSendJobs.add(job)
         }
         if (added) cancelIdleCheck()
         return added
@@ -69,7 +70,7 @@ class ConversationSession(
     val isGenerating: Boolean get() = _generationJob.value?.isActive == true
     val isInUse: Boolean get() = refCount.get() > 0 || isGenerating || hasPendingSends
     fun tryClaimIdleEviction(): Boolean = synchronized(sendTrackingLock) {
-        if (evictionClaimed || refCount.get() > 0 || _generationJob.value?.isActive == true || pendingSendJobs.isNotEmpty()) {
+        if (closed || evictionClaimed || refCount.get() > 0 || _generationJob.value?.isActive == true || pendingSendJobs.isNotEmpty()) {
             false
         } else {
             evictionClaimed = true
@@ -113,14 +114,24 @@ class ConversationSession(
         return true
     }
 
-    fun acquire(): Int = refCount.incrementAndGet().also {
-        cancelIdleCheck()
-        Log.d(TAG, "acquire $id (refs=$it)")
+    internal fun tryAcquireLifecycle(): Int? = synchronized(sendTrackingLock) {
+        if (evictionClaimed || closed) null else refCount.incrementAndGet()
     }
 
-    fun release(): Int = refCount.decrementAndGet().also {
-        Log.d(TAG, "release $id (refs=$it)")
-        if (it <= 0) scheduleIdleCheck()
+    fun tryAcquire(): Int? {
+        val refs = tryAcquireLifecycle() ?: return null
+        cancelIdleCheck()
+        Log.d(TAG, "acquire $id (refs=$refs)")
+        return refs
+    }
+
+    fun acquire(): Int = checkNotNull(tryAcquire()) { "Conversation session is being evicted" }
+
+    fun release(): Int {
+        val refs = synchronized(sendTrackingLock) { refCount.decrementAndGet() }
+        Log.d(TAG, "release $id (refs=$refs)")
+        if (refs <= 0) scheduleIdleCheck()
+        return refs
     }
 
     // 作用域 API - 短请求（REST）
@@ -149,7 +160,13 @@ class ConversationSession(
         // each read the prior value, A cancels old, B reads old (already cancelled,
         // no-op), A writes newA, B writes newB → A's job is untracked but still running;
         // getJob() returns B; stopGeneration only cancels B; A leaks until completion.
-        val previous = _generationJob.getAndUpdate { job }
+        val previous = synchronized(sendTrackingLock) {
+            if (closed || evictionClaimed) {
+                job?.cancel()
+                return
+            }
+            _generationJob.getAndUpdate { job }
+        }
         previous?.cancel()
         job?.let(::installJobCompletion)
     }
@@ -179,6 +196,11 @@ class ConversationSession(
     }
 
     fun cleanup() {
+        synchronized(sendTrackingLock) {
+            if (closed) return
+            closed = true
+            evictionClaimed = true
+        }
         // Use getAndUpdate (same as setJob) so cleanup() is consistent with the atomic
         // swap used elsewhere. Direct .value = null would bypass the CAS and could
         // theoretically race with a concurrent setJob that's running post-removal
