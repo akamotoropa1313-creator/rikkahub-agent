@@ -164,7 +164,9 @@ private fun optionalParams(vararg values: Pair<String, Any?>): JsonObject = buil
 private fun JsonElement?.mcpObject(label: String) = this as? JsonObject ?: throw CodexAppServerMcpProtocolException("$label must be an object")
 private fun JsonObject.mcpArray(name: String) = this[name] as? JsonArray ?: throw CodexAppServerMcpProtocolException("$name must be an array")
 private fun JsonObject.mcpObjectField(name: String) = this[name] as? JsonObject ?: throw CodexAppServerMcpProtocolException("$name must be an object")
-private fun JsonObject.mcpString(name: String) = runCatching { string(name) }.getOrElse { throw CodexAppServerMcpProtocolException("$name must be a string") }
+private fun JsonObject.mcpString(name: String): String =
+    (this[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        ?: throw CodexAppServerMcpProtocolException("$name must be a string")
 private fun JsonObject.mcpOptionalString(name: String): String? = if (this[name] == null || this[name].toString() == "null") null else mcpString(name)
 private fun JsonObject.mcpBoolean(name: String) = (this[name] as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull
     ?: throw CodexAppServerMcpProtocolException("$name must be a boolean")
