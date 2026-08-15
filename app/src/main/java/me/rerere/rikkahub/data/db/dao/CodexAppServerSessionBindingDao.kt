@@ -20,11 +20,11 @@ interface CodexAppServerSessionBindingDao {
     @Upsert
     suspend fun upsert(binding: CodexAppServerSessionBindingEntity)
 
-    @Query("UPDATE codex_app_server_session_bindings SET last_observed_turn_id = :turnId, last_observed_turn_status = :status, updated_at_ms = :updatedAtMs WHERE conversation_id = :conversationId")
-    suspend fun updateLastObservedTurn(conversationId: String, turnId: String, status: String, updatedAtMs: Long): Int
+    @Query("UPDATE codex_app_server_session_bindings SET last_observed_turn_id = :turnId, last_observed_turn_status = :status, updated_at_ms = :updatedAtMs WHERE conversation_id = :conversationId AND thread_id = :expectedThreadId")
+    suspend fun updateLastObservedTurn(conversationId: String, expectedThreadId: String, turnId: String, status: String, updatedAtMs: Long): Int
 
-    @Query("UPDATE codex_app_server_session_bindings SET last_resumed_at_ms = :resumedAtMs, updated_at_ms = :resumedAtMs WHERE conversation_id = :conversationId")
-    suspend fun updateLastResumed(conversationId: String, resumedAtMs: Long): Int
+    @Query("UPDATE codex_app_server_session_bindings SET last_resumed_at_ms = :resumedAtMs, updated_at_ms = :resumedAtMs WHERE conversation_id = :conversationId AND thread_id = :expectedThreadId")
+    suspend fun updateLastResumed(conversationId: String, expectedThreadId: String, resumedAtMs: Long): Int
 
     @Query("DELETE FROM codex_app_server_session_bindings WHERE conversation_id = :conversationId")
     suspend fun deleteByConversationId(conversationId: String): Int

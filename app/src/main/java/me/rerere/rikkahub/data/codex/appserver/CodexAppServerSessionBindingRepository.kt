@@ -5,12 +5,12 @@ import kotlinx.serialization.json.booleanOrNull
 import me.rerere.rikkahub.data.db.dao.CodexAppServerSessionBindingDao
 import me.rerere.rikkahub.data.db.dao.ConversationDAO
 import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
+import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.db.entity.CodexAppServerSessionBindingEntity
 
 class CodexAppServerSessionBindingRepository(
     private val bindingDao: CodexAppServerSessionBindingDao,
-    private val conversationDao: ConversationDAO,
-    private val workspaceDao: WorkspaceDAO,
+    private val localState: CodexAppServerLocalState,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
     suspend fun getBinding(conversationId: String): CodexAppServerSessionBindingEntity? {
@@ -28,13 +28,15 @@ class CodexAppServerSessionBindingRepository(
         require(workspaceId.isNotBlank()) { "workspaceId must not be blank" }
         require(thread.id.isNotBlank()) { "threadId must not be blank" }
         validateRelativeCwd(workspaceCwd)
-        check(conversationDao.getConversationById(conversationId) != null) {
+        check(localState.conversationExists(conversationId)) {
             "Conversation $conversationId does not exist"
         }
-        check(workspaceDao.getById(workspaceId) != null) { "Workspace $workspaceId does not exist" }
+        check(localState.getWorkspace(workspaceId) != null) { "Workspace $workspaceId does not exist" }
 
-        val ephemeral = (thread.raw["ephemeral"] as? JsonPrimitive)?.booleanOrNull
-        require(ephemeral == false) { "Only explicitly non-ephemeral Codex threads can be persisted" }
+        val ephemeral = thread.raw["ephemeral"] as? JsonPrimitive
+        require(ephemeral != null && !ephemeral.isString && ephemeral.booleanOrNull == false) {
+            "Only an explicitly boolean false ephemeral field can be persisted"
+        }
         val owner = bindingDao.getByThreadId(thread.id)
         check(owner == null || owner.conversationId == conversationId) {
             "Codex thread ${thread.id} is already bound to conversation ${owner?.conversationId}"
@@ -63,31 +65,36 @@ class CodexAppServerSessionBindingRepository(
         bindingDao.deleteByConversationId(conversationId)
     }
 
-    suspend fun recordTurnStarted(conversationId: String, turnId: String) =
-        recordTurn(conversationId, turnId, "inProgress")
+    suspend fun recordTurnStarted(conversationId: String, expectedThreadId: String, turnId: String) =
+        recordTurn(conversationId, expectedThreadId, turnId, "inProgress")
 
-    suspend fun recordTurnCompleted(conversationId: String, turnId: String, status: String) =
-        recordTurn(conversationId, turnId, status)
+    suspend fun recordTurnCompleted(conversationId: String, expectedThreadId: String, turnId: String, status: String) =
+        recordTurn(conversationId, expectedThreadId, turnId, status)
 
     suspend fun recordTurnCompleted(
         conversationId: String,
+        expectedThreadId: String,
         turnId: String,
         status: CodexAppServerTurnStatus,
-    ) = recordTurn(conversationId, turnId, status.wireValue)
+    ) = recordTurn(conversationId, expectedThreadId, turnId, status.wireValue)
 
-    suspend fun markResumed(conversationId: String) {
+    suspend fun markResumed(conversationId: String, expectedThreadId: String): Long {
         require(conversationId.isNotBlank()) { "conversationId must not be blank" }
-        check(bindingDao.updateLastResumed(conversationId, nowMs()) == 1) {
-            "No Codex binding exists for conversation $conversationId"
+        require(expectedThreadId.isNotBlank()) { "expectedThreadId must not be blank" }
+        val resumedAtMs = nowMs()
+        if (bindingDao.updateLastResumed(conversationId, expectedThreadId, resumedAtMs) != 1) {
+            throw CodexAppServerBindingChangedException(conversationId, expectedThreadId)
         }
+        return resumedAtMs
     }
 
-    private suspend fun recordTurn(conversationId: String, turnId: String, status: String) {
+    private suspend fun recordTurn(conversationId: String, expectedThreadId: String, turnId: String, status: String) {
         require(conversationId.isNotBlank()) { "conversationId must not be blank" }
+        require(expectedThreadId.isNotBlank()) { "expectedThreadId must not be blank" }
         require(turnId.isNotBlank()) { "turnId must not be blank" }
         require(status.isNotBlank()) { "status must not be blank" }
-        check(bindingDao.updateLastObservedTurn(conversationId, turnId, status, nowMs()) == 1) {
-            "No Codex binding exists for conversation $conversationId"
+        if (bindingDao.updateLastObservedTurn(conversationId, expectedThreadId, turnId, status, nowMs()) != 1) {
+            throw CodexAppServerBindingChangedException(conversationId, expectedThreadId)
         }
     }
 
@@ -95,4 +102,20 @@ class CodexAppServerSessionBindingRepository(
         require(!cwd.startsWith('/') && !cwd.startsWith('\\')) { "workspaceCwd must be relative" }
         require(cwd.split('/', '\\').none { it == ".." }) { "workspaceCwd must stay inside the workspace" }
     }
+}
+
+class CodexAppServerBindingChangedException(conversationId: String, expectedThreadId: String) :
+    IllegalStateException("Binding for conversation $conversationId no longer owns thread $expectedThreadId")
+
+interface CodexAppServerLocalState {
+    suspend fun conversationExists(id: String): Boolean
+    suspend fun getWorkspace(id: String): WorkspaceEntity?
+}
+
+class RoomCodexAppServerLocalState(
+    private val conversationDao: ConversationDAO,
+    private val workspaceDao: WorkspaceDAO,
+) : CodexAppServerLocalState {
+    override suspend fun conversationExists(id: String) = conversationDao.existsById(id)
+    override suspend fun getWorkspace(id: String) = workspaceDao.getById(id)
 }
