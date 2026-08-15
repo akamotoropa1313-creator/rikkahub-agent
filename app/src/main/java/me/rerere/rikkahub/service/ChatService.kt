@@ -117,6 +117,8 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnInput
+import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
@@ -260,6 +262,9 @@ class ChatService(
 
     fun getCodexStateFlow(conversationId: Uuid): StateFlow<CodexConversationUiState> =
         getOrCreateSession(conversationId).codexState
+
+    fun getCodexCapabilitiesStateFlow(conversationId: Uuid): StateFlow<CodexCapabilitiesUiState> =
+        getOrCreateSession(conversationId).codexCapabilities
 
     /**
      * Per-conversation mutex serialising state-mutating operations: handleToolApproval,
@@ -552,8 +557,14 @@ class ChatService(
 
     // ---- 发送消息 ----
 
-    fun sendMessage(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean = true) {
-        if (content.isEmptyInputMessage()) return
+    fun sendMessage(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean = true) =
+        sendMessageInternal(conversationId, content, answer, null)
+
+    fun sendCodexSkillMessage(conversationId: Uuid, skill: CodexSkillMetadata, prompt: String) =
+        sendMessageInternal(conversationId, listOf(UIMessagePart.Text(codexSkillTranscript(skill, prompt))), true, skill)
+
+    private fun sendMessageInternal(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean, explicitSkill: CodexSkillMetadata?) {
+        if (content.isEmptyInputMessage() && explicitSkill == null) return
         var session = getOrCreateSession(conversationId)
         val releaseForegroundWork = foregroundWorkTracker.acquire()
         val foregroundReleased = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -609,7 +620,7 @@ class ChatService(
                     tryFastPathRoute(conversationId, processedContent, withUser, assistant)
                 else false
                 if (answer && assistant.codexAppServerEnabled) {
-                    sendCodexTurn(conversationId, session, withUser, assistant, processedContent)
+                    sendCodexTurn(conversationId, session, withUser, assistant, processedContent, explicitSkill)
                 } else if (answer && !routedHandled) {
                     handleMessageComplete(conversationId)
                 }
@@ -669,6 +680,7 @@ class ChatService(
         conversation: Conversation,
         assistant: Assistant,
         parts: List<UIMessagePart>,
+        explicitSkill: CodexSkillMetadata? = null,
     ) = codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {
         val workspaceId = assistant.workspaceId?.toString()
             ?: throw IllegalStateException("Codex App Server requires a workspace")
@@ -723,9 +735,12 @@ class ChatService(
             }
         }
         check(runtime.activeTurnId() == null) { "A Codex turn is already running" }
-        val result = runtime.session.startTurn(
-            parts.map { CodexAppServerTurnInput.Text((it as UIMessagePart.Text).text) }
-        )
+        val input = explicitSkill?.let { skill ->
+            val prompt = (parts.singleOrNull() as? UIMessagePart.Text)?.text.orEmpty()
+                .removePrefix("$${skill.name}").trimStart()
+            buildCodexSkillInvocation(skill, prompt)
+        } ?: parts.map { CodexAppServerTurnInput.Text((it as UIMessagePart.Text).text) }
+        val result = runtime.session.startTurn(input)
         runtime.acceptStartResponse(result.turn.id, result.turn.status)
         try {
             runtime.awaitTurnTerminal(result.turn.id)
@@ -757,6 +772,17 @@ class ChatService(
 
     suspend fun hasCodexBinding(conversationId: Uuid): Boolean =
         codexBindingRepository?.getBinding(conversationId.toString()) != null
+
+    private fun requireCodexRuntime(id: Uuid) = checkNotNull(sessions[id]?.codexRuntime) { "Reconnect Codex before using controls" }
+    suspend fun refreshCodexSkills(id: Uuid) = requireCodexRuntime(id).refreshSkills(true)
+    suspend fun setCodexSkillEnabled(id: Uuid, skill: CodexSkillMetadata, enabled: Boolean) = requireCodexRuntime(id).setSkillEnabled(skill, enabled)
+    suspend fun refreshCodexAccount(id: Uuid) = requireCodexRuntime(id).refreshAccount()
+    suspend fun beginCodexAccountLogin(id: Uuid, launcher: CodexAppServerAuthUrlLauncher) = requireCodexRuntime(id).beginAccountLogin(launcher)
+    suspend fun cancelCodexAccountLogin(id: Uuid) = requireCodexRuntime(id).cancelAccountLogin()
+    suspend fun logoutCodexAccount(id: Uuid) = requireCodexRuntime(id).logoutAccount()
+    suspend fun refreshCodexMcp(id: Uuid) = requireCodexRuntime(id).refreshMcp()
+    suspend fun reloadCodexMcp(id: Uuid) = requireCodexRuntime(id).reloadMcp()
+    suspend fun beginCodexMcpOAuth(id: Uuid, name: String, launcher: CodexAppServerAuthUrlLauncher) = requireCodexRuntime(id).beginMcpOAuth(name, launcher)
 
     suspend fun resetCodexSession(conversationId: Uuid) {
         codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {

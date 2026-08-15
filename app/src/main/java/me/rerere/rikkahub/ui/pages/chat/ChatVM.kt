@@ -80,6 +80,7 @@ class ChatVM(
             .getProcessingStatusFlow(_conversationId)
 
     val codexState: StateFlow<CodexConversationUiState> = chatService.getCodexStateFlow(_conversationId)
+    val codexCapabilities = chatService.getCodexCapabilitiesStateFlow(_conversationId)
     val codexEnabled: StateFlow<Boolean> = kotlinx.coroutines.flow.combine(conversation, settingsStore.settingsFlow) { conversation, settings ->
         (settings.getAssistantById(conversation.assistantId) ?: settings.getCurrentAssistant()).codexAppServerEnabled
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -91,6 +92,10 @@ class ChatVM(
         _hasCodexBinding.value = false
     } }
     fun interruptCodexTurn() { viewModelScope.launch { chatService.stopGeneration(_conversationId) } }
+    fun refreshCodexSkills() { viewModelScope.launch { runCatching { chatService.refreshCodexSkills(_conversationId) } } }
+    fun refreshCodexAccount() { viewModelScope.launch { runCatching { chatService.refreshCodexAccount(_conversationId) } } }
+    fun refreshCodexMcp() { viewModelScope.launch { runCatching { chatService.refreshCodexMcp(_conversationId) } } }
+    fun reloadCodexMcp() { viewModelScope.launch { runCatching { chatService.reloadCodexMcp(_conversationId) } } }
     fun respondCodexCommandApproval(id: JsonRpcId, decision: CodexAppServerCommandApprovalDecision) {
         viewModelScope.launch { chatService.respondCodexCommandApproval(_conversationId, id, decision) }
     }
