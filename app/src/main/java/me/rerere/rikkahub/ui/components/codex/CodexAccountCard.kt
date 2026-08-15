@@ -15,6 +15,33 @@ import androidx.compose.ui.unit.dp
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAccount
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAccountSnapshot
 
+internal data class CodexAccountPresentation(
+    val lines: List<String>, val showSignIn: Boolean, val showCancel: Boolean,
+    val showLogout: Boolean, val actionsEnabled: Boolean,
+)
+
+internal fun codexAccountPresentation(
+    snapshot: CodexAppServerAccountSnapshot?, loginPending: Boolean,
+    enabled: Boolean, submitting: Boolean,
+): CodexAccountPresentation {
+    val lines = when {
+        loginPending -> listOf("Waiting for ChatGPT sign-in")
+        snapshot == null -> listOf("Account status unavailable")
+        snapshot.account is CodexAppServerAccount.ChatGpt -> buildList {
+            add("Signed in with ChatGPT")
+            snapshot.account.email?.takeIf(String::isNotBlank)?.let(::add)
+            add(snapshot.account.planType.displayName)
+        }
+        snapshot.account != null -> listOf("Authenticated account")
+        snapshot.requiresOpenaiAuth -> listOf("ChatGPT sign-in required")
+        else -> listOf("No OpenAI sign-in required")
+    }
+    return CodexAccountPresentation(
+        lines, showSignIn = !loginPending && snapshot?.account == null && snapshot?.requiresOpenaiAuth == true,
+        showCancel = loginPending, showLogout = snapshot?.account != null, actionsEnabled = enabled && !submitting,
+    )
+}
+
 @Composable
 fun CodexAccountCard(
     snapshot: CodexAppServerAccountSnapshot?,
@@ -28,30 +55,19 @@ fun CodexAccountCard(
     submitting: Boolean = false,
     statusMessage: String? = null,
 ) {
-    val actionsEnabled = enabled && !submitting
+    val presentation = codexAccountPresentation(snapshot, loginPending, enabled, submitting)
     Card(modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Codex account")
-            when {
-                loginPending -> Text("Waiting for ChatGPT sign-in")
-                snapshot == null -> Text("Account status unavailable")
-                snapshot.account is CodexAppServerAccount.ChatGpt -> {
-                    Text("Signed in with ChatGPT")
-                    snapshot.account.email?.takeIf(String::isNotBlank)?.let { Text(it) }
-                    Text(snapshot.account.planType.displayName)
-                }
-                snapshot.account != null -> Text("Authenticated account")
-                snapshot.requiresOpenaiAuth -> Text("ChatGPT sign-in required")
-                else -> Text("No OpenAI sign-in required")
-            }
+            presentation.lines.forEach { Text(it) }
             statusMessage?.let { Text(it) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (loginPending) OutlinedButton(onCancelSignIn, enabled = actionsEnabled) { Text("Cancel") }
-                else if (snapshot?.account == null && snapshot?.requiresOpenaiAuth == true) {
-                    Button(onSignIn, enabled = actionsEnabled) { Text("Sign in with ChatGPT") }
+                if (presentation.showCancel) OutlinedButton(onCancelSignIn, enabled = presentation.actionsEnabled) { Text("Cancel") }
+                else if (presentation.showSignIn) {
+                    Button(onSignIn, enabled = presentation.actionsEnabled) { Text("Sign in with ChatGPT") }
                 }
-                OutlinedButton(onRefresh, enabled = actionsEnabled) { Text("Refresh") }
-                if (snapshot?.account != null) OutlinedButton(onLogout, enabled = actionsEnabled) { Text("Log out") }
+                OutlinedButton(onRefresh, enabled = presentation.actionsEnabled) { Text("Refresh") }
+                if (presentation.showLogout) OutlinedButton(onLogout, enabled = presentation.actionsEnabled) { Text("Log out") }
             }
         }
     }

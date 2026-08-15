@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.codex.appserver
 
 import java.net.URI
+import kotlinx.coroutines.CancellationException
 
 fun interface CodexAppServerAuthUrlLauncher { fun launch(authUrl: String) }
 
@@ -16,6 +17,8 @@ class CodexAppServerOAuthHandoff(
         validateAuthUrl(authUrl)
         try {
             launcher.launch(authUrl)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (cause: Throwable) {
             throw CodexAppServerBrowserLaunchException(started.loginId, cause)
         }

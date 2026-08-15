@@ -64,6 +64,43 @@ class CodexAppServerAccountApiTest {
         }
     }
 
+    @Test fun `null no-auth read and known ChatGPT plan decode independently`() = runBlocking {
+        fixture().use { f ->
+            val noAuth = async { f.api.readAccount() }; f.respond(f.takeRequest(), buildJsonObject { put("account", null); put("requiresOpenaiAuth", false) })
+            assertFalse(noAuth.await().requiresOpenaiAuth)
+            val chatCall = async { f.api.readAccount() }; f.respond(f.takeRequest(), account("chatgpt") { put("email", "a@example.test"); put("planType", "plus") })
+            val chat = chatCall.await().account as CodexAppServerAccount.ChatGpt
+            assertEquals("a@example.test", chat.email); assertEquals(CodexAppServerPlanType.Plus, chat.planType)
+        }
+    }
+
+    @Test fun `cancel statuses remain forward compatible`() = runBlocking {
+        fixture().use { f ->
+            listOf("notFound", "futureStatus").forEach { status ->
+                val call = async { f.api.cancelLogin("exact-id") }; val request = f.takeRequest()
+                assertEquals(buildJsonObject { put("loginId", "exact-id") }, request.params)
+                f.respond(request, buildJsonObject { put("status", status) })
+                if (status == "notFound") assertEquals(CodexAppServerCancelLoginResult.NotFound, call.await())
+                else assertEquals(CodexAppServerCancelLoginResult.Unknown(status), call.await())
+            }
+        }
+    }
+
+    @Test fun `missing and blank login fields fail protocol validation`() = runBlocking {
+        fixture().use { f ->
+            val results = listOf(
+                buildJsonObject { put("type", "chatgpt"); put("authUrl", "https://example.test") },
+                buildJsonObject { put("type", "chatgpt"); put("loginId", " "); put("authUrl", "https://example.test") },
+                buildJsonObject { put("type", "chatgpt"); put("loginId", "id") },
+                buildJsonObject { put("type", "chatgpt"); put("loginId", "id"); put("authUrl", " ") },
+            )
+            results.forEach { result ->
+                val call = async { f.api.startChatGptLogin() }; f.respond(f.takeRequest(), result)
+                expect<CodexAppServerAccountProtocolException> { call.await() }
+            }
+        }
+    }
+
     @Test fun `invalid login response and blank cancellation fail safely`() = runBlocking {
         fixture().use { f ->
             val wrong = async { f.api.startChatGptLogin() }; val request = f.takeRequest()
@@ -76,19 +113,22 @@ class CodexAppServerAccountApiTest {
     }
 
     @Test fun `operations require ready state`() = runBlocking {
-        val transport = FakeCodexAppServerTransport(); val connection = CodexAppServerConnection(CodexAppServerRequestDispatcher(transport), CodexAppServerClientInfo("test", "1")); val api = CodexAppServerAccountApi(connection)
+        val transport = FakeCodexAppServerTransport(); val connection = CodexAppServerConnection(CodexAppServerRequestDispatcher(transport), testClientInfo()); val api = CodexAppServerAccountApi(connection)
+        val writes = transport.successfulWriteCount()
         expect<CodexAppServerNotReadyException> { api.readAccount() }
         expect<CodexAppServerNotReadyException> { api.startChatGptLogin() }
         expect<CodexAppServerNotReadyException> { api.cancelLogin("id") }
-        expect<CodexAppServerNotReadyException> { api.logout() }; connection.close()
+        expect<CodexAppServerNotReadyException> { api.logout() }
+        assertEquals(writes, transport.successfulWriteCount()); connection.close()
     }
 
     private suspend fun fixture(): Fixture {
-        val transport = FakeCodexAppServerTransport(); val connection = CodexAppServerConnection(CodexAppServerRequestDispatcher(transport), CodexAppServerClientInfo("test", "1"))
+        val transport = FakeCodexAppServerTransport(); val connection = CodexAppServerConnection(CodexAppServerRequestDispatcher(transport), testClientInfo())
         val init = CoroutineScope(currentCoroutineContext()).async { connection.initialize() }; val request = takeRequest(transport)
         transport.injectServerLine(codec.encode(JsonRpcResponse(request.id, buildJsonObject { put("userAgent", "fake"); put("codexHome", "/tmp"); put("platformFamily", "unix"); put("platformOs", "linux") })))
         init.await(); transport.takeClientLine(); return Fixture(transport, connection, CodexAppServerAccountApi(connection))
     }
+    private fun testClientInfo() = CodexAppServerClientInfo(name = "test", title = "Test", version = "1")
     private fun account(type: String, fields: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) = buildJsonObject { put("account", buildJsonObject { put("type", type); fields() }); put("requiresOpenaiAuth", false) }
     private suspend fun takeRequest(t: FakeCodexAppServerTransport) = (codec.decode(t.takeClientLine()).getOrThrow() as JsonRpcMessage.Request).value
     private suspend inline fun <reified T: Throwable> expect(crossinline block: suspend () -> Unit): T = try { block(); fail("Expected ${T::class.java.simpleName}"); error("unreachable") } catch (e: Throwable) { if (e is T) e else if (e.cause is T) e.cause as T else throw e }

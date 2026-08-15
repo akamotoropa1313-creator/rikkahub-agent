@@ -31,4 +31,28 @@ class CodexAppServerAccountEventTest {
         assertTrue(updated.authMode is CodexAppServerAuthMode.Unknown); assertTrue(updated.planType is CodexAppServerPlanType.Unknown)
         typedJob.cancelAndJoin(); rawJob.cancelAndJoin()
     }
+
+    @Test fun `known nullable login and update values decode while api construction stays cold`() = runBlocking {
+        val source = MutableSharedFlow<CodexAppServerEvent>()
+        assertEquals(0, source.subscriptionCount.value)
+        // Building the projection is side-effect free; only collection subscribes.
+        val projection = source.toCodexAppServerAccountEvents()
+        assertEquals(0, source.subscriptionCount.value)
+        val events = mutableListOf<CodexAppServerAccountEvent>()
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { projection.collect { events += it } }
+        source.emit(CodexAppServerEvent.UnknownNotification("account/login/completed", buildJsonObject {
+            put("loginId", "login-1"); put("success", true); put("error", JsonNull); put("onboardingEntrypoint", JsonNull)
+        }))
+        source.emit(CodexAppServerEvent.UnknownNotification("account/updated", buildJsonObject { put("authMode", "chatgpt"); put("planType", "plus") }))
+        source.emit(CodexAppServerEvent.UnknownNotification("account/updated", buildJsonObject { put("authMode", JsonNull); put("planType", JsonNull) }))
+        source.emit(CodexAppServerEvent.UnknownNotification("account/updated", buildJsonObject { put("authMode", "headers"); put("planType", "team") }))
+        val completed = events[0] as CodexAppServerAccountEvent.LoginCompleted
+        assertTrue(completed.success); assertEquals(null, completed.error); assertEquals(null, completed.onboardingEntrypoint)
+        val chat = events[1] as CodexAppServerAccountEvent.Updated
+        assertEquals(CodexAppServerAuthMode.ChatGpt, chat.authMode); assertEquals(CodexAppServerPlanType.Plus, chat.planType)
+        val nullable = events[2] as CodexAppServerAccountEvent.Updated
+        assertEquals(null, nullable.authMode); assertEquals(null, nullable.planType)
+        assertEquals(CodexAppServerAuthMode.Headers, (events[3] as CodexAppServerAccountEvent.Updated).authMode)
+        job.cancelAndJoin(); assertEquals(0, source.subscriptionCount.value)
+    }
 }
