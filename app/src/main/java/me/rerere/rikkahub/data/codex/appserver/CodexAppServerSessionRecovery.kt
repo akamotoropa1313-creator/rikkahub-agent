@@ -1,7 +1,5 @@
 package me.rerere.rikkahub.data.codex.appserver
 
-import java.io.Closeable
-import java.util.concurrent.atomic.AtomicBoolean
 import me.rerere.rikkahub.data.db.entity.CodexAppServerSessionBindingEntity
 
 sealed interface CodexAppServerStaleBindingReason {
@@ -19,19 +17,11 @@ sealed interface CodexAppServerSessionRecoveryResult {
 }
 
 class CodexAppServerRecoveredSession internal constructor(
-    val binding: CodexAppServerSessionBindingEntity,
-    val connection: CodexAppServerConnection,
+    binding: CodexAppServerSessionBindingEntity,
+    connection: CodexAppServerConnection,
     val resumeResult: CodexAppServerThreadOpenResult,
-) : Closeable {
-    val threadApi = CodexAppServerThreadApi(connection)
-    val turnApi = CodexAppServerTurnApi(connection)
-    val approvalApi = CodexAppServerApprovalApi(connection)
-    private val closed = AtomicBoolean(false)
-
-    override fun close() {
-        if (closed.compareAndSet(false, true)) connection.close()
-    }
-}
+    repository: CodexAppServerSessionBindingRepository,
+) : CodexAppServerConversationSession(binding, connection, repository)
 
 class CodexAppServerSessionRecovery(
     private val repository: CodexAppServerSessionBindingRepository,
@@ -62,6 +52,7 @@ class CodexAppServerSessionRecovery(
                 binding.copy(lastResumedAtMs = resumedAtMs, updatedAtMs = resumedAtMs),
                 connection,
                 resumed,
+                repository,
             )
             ownershipTransferred = true
             return CodexAppServerSessionRecoveryResult.Recovered(session)
