@@ -97,7 +97,14 @@ class CodexChatRuntime(
             when (event) {
                 is CodexAppServerApprovalEvent.CommandExecutionRequest,
                 is CodexAppServerApprovalEvent.FileChangeRequest -> _state.value = CodexConversationUiState.WaitingForApproval(event)
-                is CodexAppServerApprovalEvent.Resolved -> approvalResponses.add(event.requestId)
+                is CodexAppServerApprovalEvent.Resolved -> {
+                    approvalResponses.add(event.requestId)
+                    val waiting = _state.value as? CodexConversationUiState.WaitingForApproval
+                    if (waiting?.requestId == event.requestId) {
+                        _state.value = activeTurnId?.let { CodexConversationUiState.Running(session.threadId, it) }
+                            ?: CodexConversationUiState.Ready(session.threadId)
+                    }
+                }
                 is CodexAppServerApprovalEvent.MalformedRequest -> _state.value = CodexConversationUiState.Failed(event.cause.message ?: "Malformed approval")
                 is CodexAppServerApprovalEvent.MalformedNotification -> _state.value = CodexConversationUiState.Failed(event.cause.message ?: "Malformed approval")
             }
@@ -119,12 +126,22 @@ class CodexChatRuntime(
     /** Records Stop even while turn/start is outstanding; exact ID may arrive by event or response. */
     suspend fun respondCommandApproval(id: JsonRpcId, decision: CodexAppServerCommandApprovalDecision): Boolean {
         if (!approvalResponses.add(id)) return false
-        return runCatching { session.approvalApi.respondCommandApproval(id, decision) }.onFailure { approvalResponses.remove(id) }.isSuccess
+        val waiting = _state.value as? CodexConversationUiState.WaitingForApproval
+        if (waiting?.requestId == id) _state.value = waiting.copy(submitting = true)
+        return runCatching { session.approvalApi.respondCommandApproval(id, decision) }.onFailure {
+            approvalResponses.remove(id)
+            if (waiting != null) _state.value = waiting.copy(submitting = false)
+        }.isSuccess
     }
 
     suspend fun respondFileApproval(id: JsonRpcId, decision: CodexAppServerFileChangeApprovalDecision): Boolean {
         if (!approvalResponses.add(id)) return false
-        return runCatching { session.approvalApi.respondFileChangeApproval(id, decision) }.onFailure { approvalResponses.remove(id) }.isSuccess
+        val waiting = _state.value as? CodexConversationUiState.WaitingForApproval
+        if (waiting?.requestId == id) _state.value = waiting.copy(submitting = true)
+        return runCatching { session.approvalApi.respondFileChangeApproval(id, decision) }.onFailure {
+            approvalResponses.remove(id)
+            if (waiting != null) _state.value = waiting.copy(submitting = false)
+        }.isSuccess
     }
 
     fun requestStop() {
@@ -187,7 +204,13 @@ sealed interface CodexConversationUiState {
     data class Ready(val threadId: String) : CodexConversationUiState
     data class Running(val threadId: String, val turnId: String) : CodexConversationUiState
     data class Terminal(val threadId: String, val turnId: String, val status: CodexAppServerTurnStatus) : CodexConversationUiState
-    data class WaitingForApproval(val event: CodexAppServerApprovalEvent) : CodexConversationUiState
+    data class WaitingForApproval(val event: CodexAppServerApprovalEvent, val submitting: Boolean = false) : CodexConversationUiState {
+        val requestId: JsonRpcId? get() = when (event) {
+            is CodexAppServerApprovalEvent.CommandExecutionRequest -> event.requestId
+            is CodexAppServerApprovalEvent.FileChangeRequest -> event.requestId
+            else -> null
+        }
+    }
     data class StaleBinding(val reason: String) : CodexConversationUiState
     data class WorkspaceMismatch(val boundWorkspaceId: String, val requestedWorkspaceId: String) : CodexConversationUiState
     data class Failed(val message: String) : CodexConversationUiState

@@ -74,6 +74,7 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
+import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
@@ -208,6 +209,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     inputState = inputState,
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
+                    codexState = codexState,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -240,6 +242,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     inputState = inputState,
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
+                    codexState = codexState,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -266,6 +269,7 @@ private fun ChatPageContent(
     inputState: ChatInputState,
     loadingJob: Job?,
     processingStatus: String? = null,
+    codexState: CodexConversationUiState,
     setting: Settings,
     bigScreen: Boolean,
     conversation: Conversation,
@@ -429,6 +433,8 @@ private fun ChatPageContent(
                 errors = errors,
                 onDismissError = onDismissError,
                 onClearAllErrors = onClearAllErrors,
+                onCodexCommandApproval = vm::respondCodexCommandApproval,
+                onCodexFileApproval = vm::respondCodexFileApproval,
                 onRegenerate = {
                     vm.regenerateAtMessage(it)
                 },
