@@ -22,6 +22,7 @@ class ConversationSession(
     initial: Conversation,
     private val scope: CoroutineScope,
     private val onIdle: (Uuid) -> Unit,
+    private val idleTimeoutMs: Long = IDLE_TIMEOUT_MS,
 ) {
     // 会话状态
     val state = MutableStateFlow(initial)
@@ -36,7 +37,11 @@ class ConversationSession(
     private val _generationJob = MutableStateFlow<Job?>(null)
     private val sendTrackingLock = Any()
     private val pendingSendJobs = linkedSetOf<Job>()
-    fun registerPendingSend(job: Job) = synchronized(sendTrackingLock) { pendingSendJobs.add(job) }
+    fun registerPendingSend(job: Job): Boolean {
+        val added = synchronized(sendTrackingLock) { pendingSendJobs.add(job) }
+        if (added) cancelIdleCheck()
+        return added
+    }
     data class SendPromotion(val promoted: Boolean, val previous: Job?)
     fun promotePendingSendToGeneration(job: Job): SendPromotion = synchronized(sendTrackingLock) {
         if (!pendingSendJobs.remove(job)) return@synchronized SendPromotion(false, null)
@@ -44,12 +49,17 @@ class ConversationSession(
         installJobCompletion(job)
         SendPromotion(true, previous)
     }
-    fun removePendingSend(job: Job) = synchronized(sendTrackingLock) { pendingSendJobs.remove(job) }
+    fun removePendingSend(job: Job): Boolean {
+        val removed = synchronized(sendTrackingLock) { pendingSendJobs.remove(job) }
+        if (removed && !isInUse) scheduleIdleCheck()
+        return removed
+    }
     fun cancelPendingSends() {
         val jobs = synchronized(sendTrackingLock) {
             pendingSendJobs.toList().also { pendingSendJobs.clear() }
         }
         jobs.forEach(Job::cancel)
+        if (jobs.isNotEmpty() && !isInUse) scheduleIdleCheck()
     }
     val hasPendingSends: Boolean get() = synchronized(sendTrackingLock) { pendingSendJobs.isNotEmpty() }
     val generationJob: StateFlow<Job?> = _generationJob.asStateFlow()
@@ -146,10 +156,8 @@ class ConversationSession(
     private fun scheduleIdleCheck() {
         idleCheckJob?.cancel()
         idleCheckJob = scope.launch {
-            delay(IDLE_TIMEOUT_MS)
-            if (refCount.get() <= 0 && !isGenerating) {
-                onIdle(id)
-            }
+            delay(idleTimeoutMs)
+            if (!isInUse) onIdle(id)
         }
     }
 
