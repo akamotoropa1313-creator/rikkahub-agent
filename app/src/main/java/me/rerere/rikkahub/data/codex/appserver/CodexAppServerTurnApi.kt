@@ -11,6 +11,29 @@ import kotlin.time.Duration.Companion.seconds
 
 sealed interface CodexAppServerTurnInput {
     data class Text(val text: String) : CodexAppServerTurnInput
+    data class Skill(val name: String, val path: String) : CodexAppServerTurnInput {
+        init {
+            require(name.isNotBlank()) { "skill name must not be blank" }
+            require(path.isNotBlank()) { "skill path must not be blank" }
+        }
+    }
+}
+
+data class CodexAppServerExplicitSkillInvocation(
+    val input: List<CodexAppServerTurnInput>,
+)
+
+/** Builds the two official explicit-invocation signals without sending or rewriting a turn. */
+fun explicitSkillInvocation(name: String, path: String, prompt: String = ""): CodexAppServerExplicitSkillInvocation {
+    require(name.isNotBlank()) { "skill name must not be blank" }
+    require(path.isNotBlank()) { "skill path must not be blank" }
+    val text = buildString {
+        append('$').append(name)
+        if (prompt.isNotBlank()) append(' ').append(prompt)
+    }
+    return CodexAppServerExplicitSkillInvocation(
+        listOf(CodexAppServerTurnInput.Text(text), CodexAppServerTurnInput.Skill(name, path)),
+    )
 }
 
 enum class CodexAppServerReasoningSummary(val wireValue: String) {
@@ -151,6 +174,13 @@ private fun CodexAppServerTurnStartParams.toJson(
 private fun CodexAppServerTurnInput.toJson(): JsonObject = when (this) {
     is CodexAppServerTurnInput.Text -> JsonObject(
         mapOf("type" to JsonPrimitive("text"), "text" to JsonPrimitive(text)),
+    )
+    is CodexAppServerTurnInput.Skill -> JsonObject(
+        mapOf(
+            "type" to JsonPrimitive("skill"),
+            "name" to JsonPrimitive(name),
+            "path" to JsonPrimitive(path),
+        ),
     )
 }
 

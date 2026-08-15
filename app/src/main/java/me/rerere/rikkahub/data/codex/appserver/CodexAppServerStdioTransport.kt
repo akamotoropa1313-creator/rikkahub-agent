@@ -138,12 +138,15 @@ class CodexAppServerStdioTransport(
     private fun finish(event: CodexAppServerTransportEvent) {
         synchronized(emissionLock) {
             if (!terminal.compareAndSet(false, true)) return
+            // Make cleanup part of terminal publication: once a consumer can observe the
+            // terminal event, the underlying process is no longer live. Setting terminal first
+            // prevents close-induced reader/watcher callbacks from recursively publishing.
+            runCatching { process.stdout.close() }
+            runCatching { process.stderr.close() }
+            runCatching { process.close() }
             channel.trySend(event)
             channel.close()
         }
-        runCatching { process.stdout.close() }
-        runCatching { process.stderr.close() }
-        runCatching { process.close() }
     }
 
     private fun appendStderr(text: String) = synchronized(stderrLock) {

@@ -327,6 +327,40 @@ class CodexAppServerTurnApiTest {
         }
     }
 
+    @Test
+    fun `explicit skill invocation uses one normal turn start request`() = runBlocking {
+        fixture().use { f ->
+            val invocation = explicitSkillInvocation("demo", "/skills/demo", "do work")
+            assertEquals(CodexAppServerTurnInput.Text("\$demo do work"), invocation.input[0])
+            assertEquals(CodexAppServerTurnInput.Skill("demo", "/skills/demo"), invocation.input[1])
+            val before = f.transport.successfulWriteCount()
+            val call = async { f.api.startTurn("thread", invocation.input) }
+            val raw = codec.json.parseToJsonElement(f.transport.takeClientLine()).jsonObject
+            assertEquals("turn/start", raw["method"]!!.jsonPrimitive.content)
+            assertEquals(
+                JsonArray(listOf(
+                    buildJsonObject { put("type", "text"); put("text", "\$demo do work") },
+                    buildJsonObject { put("type", "skill"); put("name", "demo"); put("path", "/skills/demo") },
+                )),
+                raw["params"]!!.jsonObject["input"],
+            )
+            f.respond(decodeRequest(raw.toString()), turnResult("turn", "inProgress"))
+            assertEquals("turn", call.await().turn.id)
+            assertEquals(before + 1, f.transport.successfulWriteCount())
+        }
+    }
+
+    @Test
+    fun `skill inputs reject blank identity without writing`() = runBlocking {
+        fixture().use { f ->
+            val writes = f.transport.successfulWriteCount()
+            expect<IllegalArgumentException> { explicitSkillInvocation(" ", "/skill") }
+            expect<IllegalArgumentException> { explicitSkillInvocation("demo", " ") }
+            expect<IllegalArgumentException> { CodexAppServerTurnInput.Skill(" ", "/skill") }
+            assertEquals(writes, f.transport.successfulWriteCount())
+        }
+    }
+
     private suspend fun fixture(): Fixture {
         val t = FakeCodexAppServerTransport(); val d = CodexAppServerRequestDispatcher(t)
         val c = CodexAppServerConnection(
