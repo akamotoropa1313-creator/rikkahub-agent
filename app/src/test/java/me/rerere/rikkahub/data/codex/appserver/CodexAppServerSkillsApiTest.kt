@@ -69,12 +69,12 @@ class CodexAppServerSkillsApiTest {
     }
 
     @Test fun `every operation is Ready gated`() = runBlocking {
-        val t = FakeCodexAppServerTransport(); val c = CodexAppServerConnection(CodexAppServerRequestDispatcher(t), CodexAppServerClientInfo("test", "1")); val api = CodexAppServerSkillsApi(c)
+        val t = FakeCodexAppServerTransport(); val c = CodexAppServerConnection(CodexAppServerRequestDispatcher(t), CodexAppServerClientInfo(name = "test", version = "1")); val api = CodexAppServerSkillsApi(c)
         assertFails<CodexAppServerNotReadyException> { api.list() }; assertFails<CodexAppServerNotReadyException> { api.writeConfig(true, name = "x") }
         assertEquals(0, t.successfulWriteCount()); c.close()
     }
 
     private suspend inline fun <reified T: Throwable> assertFails(crossinline block: suspend () -> Unit): T = try { block(); fail("expected ${T::class.java.simpleName}"); error("unreachable") } catch (e: Throwable) { if (e is T) e else if (e.cause is T) e.cause as T else throw e }
-    private suspend fun fixture(): Fixture { val t=FakeCodexAppServerTransport(); val d=CodexAppServerRequestDispatcher(t); val c=CodexAppServerConnection(d,CodexAppServerClientInfo("test","1")); val init=kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.currentCoroutineContext()).async{c.initialize()}; val r=(codec.decode(t.takeClientLine()).getOrThrow() as JsonRpcMessage.Request).value; t.injectServerLine(codec.encode(JsonRpcResponse(r.id, buildJsonObject { put("userAgent","fake");put("codexHome","/tmp");put("platformFamily","unix");put("platformOs","linux") })));init.await();t.takeClientLine();return Fixture(t,c,CodexAppServerSkillsApi(c)) }
+    private suspend fun fixture(): Fixture { val t=FakeCodexAppServerTransport(); val d=CodexAppServerRequestDispatcher(t); val c=CodexAppServerConnection(d,CodexAppServerClientInfo(name = "test", version = "1")); val init=kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.currentCoroutineContext()).async{c.initialize()}; val r=(codec.decode(t.takeClientLine()).getOrThrow() as JsonRpcMessage.Request).value; t.injectServerLine(codec.encode(JsonRpcResponse(r.id, buildJsonObject { put("userAgent","fake");put("codexHome","/tmp");put("platformFamily","unix");put("platformOs","linux") })));init.await();t.takeClientLine();return Fixture(t,c,CodexAppServerSkillsApi(c)) }
     private inner class Fixture(val transport:FakeCodexAppServerTransport,val connection:CodexAppServerConnection,val api:CodexAppServerSkillsApi):AutoCloseable { suspend fun request()=(codec.decode(transport.takeClientLine()).getOrThrow() as JsonRpcMessage.Request).value; fun respond(r:JsonRpcRequest,v:JsonElement)=transport.injectServerLine(codec.encode(JsonRpcResponse(r.id,v)));override fun close()=connection.close() }
 }
