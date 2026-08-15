@@ -4,9 +4,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   protocol-tests:
     runs-on: ubuntu-latest
@@ -72,41 +69,6 @@ jobs:
 
       - name: Compile app and generate Room schemas
         run: ./gradlew :app:compileDebugKotlin
-
-      - name: Upload generated Room v31 schema
-        uses: actions/upload-artifact@v4
-        with:
-          name: codex-stage10-room-schema-v31
-          path: app/schemas/me.rerere.rikkahub.data.db.AppDatabase/31.json
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Commit generated Room v31 schema to PR branch
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: |
-          set -euo pipefail
-          schema='app/schemas/me.rerere.rikkahub.data.db.AppDatabase/31.json'
-          test -f "$schema"
-          actual_sha256="$(sha256sum "$schema" | awk '{print $1}')"
-          if [[ "$actual_sha256" != '05267c5e9faadb9c66423f11b125b6a5797445eed326480d21305279a927a873' ]]; then
-            echo "Generated Room schema hash changed unexpectedly: $actual_sha256" >&2
-            exit 1
-          fi
-          content="$(base64 -w 0 "$schema")"
-          jq -n \
-            --arg message 'chore(db): commit Room schema v31' \
-            --arg content "$content" \
-            --arg branch "$PR_HEAD_REF" \
-            '{message:$message, content:$content, branch:$branch}' \
-            > /tmp/room-schema-create.json
-          gh api \
-            --method PUT \
-            "repos/${GITHUB_REPOSITORY}/contents/${schema}" \
-            --input /tmp/room-schema-create.json
 
       - name: Verify committed Room schemas are clean
         shell: bash
