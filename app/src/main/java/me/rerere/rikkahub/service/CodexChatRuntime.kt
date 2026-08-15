@@ -17,6 +17,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerItemSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnEvent
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnStatus
 
@@ -38,6 +39,11 @@ class CodexChatRuntime(
     val state: StateFlow<CodexConversationUiState> = _state.asStateFlow()
     private val turns = ConcurrentHashMap<String, TurnRecord>()
     private val text = ConcurrentHashMap<Pair<String, String>, String>()
+    private val reasoning = ConcurrentHashMap<Pair<String, String>, String>()
+    private val commands = ConcurrentHashMap<String, CodexAppServerItemSnapshot.CommandExecution>()
+    private val files = ConcurrentHashMap<String, CodexAppServerItemSnapshot.FileChange>()
+    @Volatile private var turnDiff: String? = null
+    private val terminalInteractions = mutableListOf<String>()
     private val terminalClaimed = ConcurrentHashMap.newKeySet<String>()
     private val recentTerminalTurns = ConcurrentLinkedQueue<String>()
     private val closed = AtomicBoolean(false)
@@ -67,6 +73,15 @@ class CodexChatRuntime(
         }
     }
 
+    private fun publishActivity(turnId: String) {
+        if (_state.value is CodexConversationUiState.WaitingForApproval) return
+        _state.value = CodexConversationUiState.Activity(
+            session.threadId, turnId,
+            reasoning.filterKeys { it.first == turnId }.values.joinToString("\n"),
+            commands.values.toList(), files.values.toList(), turnDiff, terminalInteractions.toList(),
+        )
+    }
+
     private val collector: Job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.turnApi.events.collect { event ->
             if (event.threadIdOrNull() != session.threadId) return@collect
@@ -87,7 +102,49 @@ class CodexChatRuntime(
                     onAgentText(event.turnId, event.itemId, accumulated)
                 }
                 is CodexAppServerTurnEvent.TurnCompleted -> terminal(event.turn.id, event.turn.status)
-                else -> Unit
+                is CodexAppServerTurnEvent.ReasoningSummaryTextDelta -> {
+                    reasoning.compute(event.turnId to event.itemId) { _, old -> old.orEmpty() + event.delta }
+                    publishActivity(event.turnId)
+                }
+                is CodexAppServerTurnEvent.ReasoningSummaryPartAdded -> publishActivity(event.turnId)
+                is CodexAppServerTurnEvent.ReasoningTextDelta -> {
+                    reasoning.compute(event.turnId to event.itemId) { _, old -> old.orEmpty() + event.delta }
+                    publishActivity(event.turnId)
+                }
+                is CodexAppServerTurnEvent.ItemStarted -> {
+                    when (val item = event.item) {
+                        is CodexAppServerItemSnapshot.CommandExecution -> commands[item.id] = item
+                        is CodexAppServerItemSnapshot.FileChange -> files[item.id] = item
+                        else -> Unit
+                    }
+                    publishActivity(event.turnId)
+                }
+                is CodexAppServerTurnEvent.ItemCompleted -> {
+                    when (val item = event.item) {
+                        is CodexAppServerItemSnapshot.CommandExecution -> commands[item.id] = item
+                        is CodexAppServerItemSnapshot.FileChange -> files[item.id] = item
+                        else -> Unit
+                    }
+                    publishActivity(event.turnId)
+                }
+                is CodexAppServerTurnEvent.CommandExecutionOutputDelta -> {
+                    commands.computeIfPresent(event.itemId) { _, item -> item.copy(aggregatedOutput = item.aggregatedOutput.orEmpty() + event.delta) }
+                    publishActivity(event.turnId)
+                }
+                is CodexAppServerTurnEvent.TerminalInteraction -> {
+                    terminalInteractions += "${event.processId}: ${event.stdin}"
+                    publishActivity(event.turnId)
+                }
+                is CodexAppServerTurnEvent.FileChangePatchUpdated -> {
+                    val updated = files.computeIfPresent(event.itemId) { _, item -> item.copy(changes = event.changes) }
+                    val waiting = _state.value as? CodexConversationUiState.WaitingForApproval
+                    if (waiting?.event is CodexAppServerApprovalEvent.FileChangeRequest &&
+                        waiting.event.request.itemId == event.itemId && waiting.event.request.turnId == event.turnId
+                    ) _state.value = waiting.copy(fileChange = updated)
+                    else publishActivity(event.turnId)
+                }
+                is CodexAppServerTurnEvent.TurnDiffUpdated -> { turnDiff = event.diff; publishActivity(event.turnId) }
+                is CodexAppServerTurnEvent.MalformedNotification -> _state.value = CodexConversationUiState.Failed(event.cause.message ?: "Malformed Codex event")
             }
         }
     }
@@ -95,8 +152,12 @@ class CodexChatRuntime(
     private val approvalCollector: Job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.approvalApi.events.collect { event ->
             when (event) {
-                is CodexAppServerApprovalEvent.CommandExecutionRequest,
-                is CodexAppServerApprovalEvent.FileChangeRequest -> _state.value = CodexConversationUiState.WaitingForApproval(event)
+                is CodexAppServerApprovalEvent.CommandExecutionRequest ->
+                    _state.value = CodexConversationUiState.WaitingForApproval(event)
+                is CodexAppServerApprovalEvent.FileChangeRequest ->
+                    _state.value = CodexConversationUiState.WaitingForApproval(
+                        event, fileChange = files[event.request.itemId]?.takeIf { event.request.turnId == activeTurnId }
+                    )
                 is CodexAppServerApprovalEvent.Resolved -> {
                     approvalResponses.add(event.requestId)
                     val waiting = _state.value as? CodexConversationUiState.WaitingForApproval
@@ -166,6 +227,8 @@ class CodexChatRuntime(
     fun finishTurn(turnId: String) {
         turns.remove(turnId)
         text.keys.removeAll { it.first == turnId }
+        reasoning.keys.removeAll { it.first == turnId }
+        commands.clear(); files.clear(); turnDiff = null; terminalInteractions.clear()
         stopController.finishTurn(turnId)
         // Keep a small terminal-id window so delayed duplicate notifications remain idempotent.
     }
@@ -204,7 +267,17 @@ sealed interface CodexConversationUiState {
     data class Ready(val threadId: String) : CodexConversationUiState
     data class Running(val threadId: String, val turnId: String) : CodexConversationUiState
     data class Terminal(val threadId: String, val turnId: String, val status: CodexAppServerTurnStatus) : CodexConversationUiState
-    data class WaitingForApproval(val event: CodexAppServerApprovalEvent, val submitting: Boolean = false) : CodexConversationUiState {
+    data class Activity(
+        val threadId: String, val turnId: String, val reasoning: String,
+        val commands: List<CodexAppServerItemSnapshot.CommandExecution>,
+        val files: List<CodexAppServerItemSnapshot.FileChange>, val diff: String?,
+        val terminalInteractions: List<String>,
+    ) : CodexConversationUiState
+    data class WaitingForApproval(
+        val event: CodexAppServerApprovalEvent,
+        val submitting: Boolean = false,
+        val fileChange: CodexAppServerItemSnapshot.FileChange? = null,
+    ) : CodexConversationUiState {
         val requestId: JsonRpcId? get() = when (event) {
             is CodexAppServerApprovalEvent.CommandExecutionRequest -> event.requestId
             is CodexAppServerApprovalEvent.FileChangeRequest -> event.requestId

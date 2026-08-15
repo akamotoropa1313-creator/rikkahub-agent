@@ -101,6 +101,9 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalD
 import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
 import me.rerere.rikkahub.ui.components.codex.CodexCommandApprovalCard
 import me.rerere.rikkahub.ui.components.codex.CodexFileChangeApprovalCard
+import me.rerere.rikkahub.ui.components.codex.CodexCommandExecutionCard
+import me.rerere.rikkahub.ui.components.codex.CodexFileChangeCard
+import me.rerere.rikkahub.ui.components.codex.CodexTurnDiffCard
 import me.rerere.rikkahub.ui.components.message.ChatMessage
 import me.rerere.rikkahub.ui.components.ui.ErrorCardsDisplay
 import me.rerere.rikkahub.ui.components.ui.ListSelectableItem
@@ -632,8 +635,19 @@ private fun CodexLiveActivity(
     if (state is CodexConversationUiState.WaitingForApproval) {
         when (val event = state.event) {
             is CodexAppServerApprovalEvent.CommandExecutionRequest -> CodexCommandApprovalCard(event.request, { onCommand(event.requestId, it) }, submitting = state.submitting)
-            is CodexAppServerApprovalEvent.FileChangeRequest -> CodexFileChangeApprovalCard(event.request, { onFile(event.requestId, it) }, fileChange = null, submitting = state.submitting)
+            is CodexAppServerApprovalEvent.FileChangeRequest -> CodexFileChangeApprovalCard(event.request, { onFile(event.requestId, it) }, fileChange = state.fileChange, submitting = state.submitting)
             else -> Text("Unsupported Codex approval event", color = MaterialTheme.colorScheme.error)
+        }
+        return
+    }
+    if (state is CodexConversationUiState.Activity) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Codex activity · ${state.turnId}", style = MaterialTheme.typography.titleSmall)
+            if (state.reasoning.isNotBlank()) Text(state.reasoning, style = MaterialTheme.typography.bodySmall)
+            state.commands.forEach { CodexCommandExecutionCard(it) }
+            state.files.forEach { CodexFileChangeCard(it) }
+            state.diff?.let { CodexTurnDiffCard(it) }
+            state.terminalInteractions.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
         return
     }
@@ -644,6 +658,7 @@ private fun CodexLiveActivity(
         is CodexConversationUiState.Ready -> "Codex ready · ${state.threadId}"
         is CodexConversationUiState.Running -> "Codex running · ${state.turnId}"
         is CodexConversationUiState.Terminal -> "Codex ${state.status.wireValue}"
+        is CodexConversationUiState.Activity -> "Codex activity"
         is CodexConversationUiState.WaitingForApproval -> "Codex is waiting for your approval"
         is CodexConversationUiState.StaleBinding -> "Codex binding is stale: ${state.reason}"
         is CodexConversationUiState.WorkspaceMismatch -> "Codex workspace mismatch"
