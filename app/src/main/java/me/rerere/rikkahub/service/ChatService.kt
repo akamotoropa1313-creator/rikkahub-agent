@@ -11,6 +11,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -243,9 +245,11 @@ class ChatService(
     private val sessions = ConcurrentHashMap<Uuid, ConversationSession>()
     private val _sessionsVersion = MutableStateFlow(0L)
     private val codexOpenMutexes = ConcurrentHashMap<Uuid, Mutex>()
+    private val sendAdmissionMutexes = ConcurrentHashMap<Uuid, Mutex>()
     private val codexMessageIds = ConcurrentHashMap<String, Uuid>()
     private fun clearCodexBookkeeping(conversationId: Uuid) {
         codexOpenMutexes.remove(conversationId)
+        sendAdmissionMutexes.remove(conversationId)
         val prefix = "$conversationId:"
         codexMessageIds.keys.removeAll { it.startsWith(prefix) }
     }
@@ -387,6 +391,7 @@ class ChatService(
         pendingStreamingPersistence.clear()
         lastStreamingPersistAt.clear()
         codexOpenMutexes.clear()
+        sendAdmissionMutexes.clear()
         codexMessageIds.clear()
     }.onFailure {
         // Don't let a teardown hiccup escape, but don't swallow it silently either —
@@ -539,84 +544,97 @@ class ChatService(
 
     fun sendMessage(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean = true) {
         if (content.isEmptyInputMessage()) return
-
         val session = getOrCreateSession(conversationId)
-        val initialSettings = settingsStore.settingsFlow.value
-        val initialAssistant = initialSettings.getAssistantById(session.state.value.assistantId)
-            ?: initialSettings.getCurrentAssistant()
-        val codexOperation = initialAssistant.codexAppServerEnabled
-        if (codexOperation && !session.tryBeginCodexOperation()) {
-            addError(IllegalStateException("A Codex operation is already opening, starting, or running. Stop it before sending again."), conversationId)
-            return
-        }
-        val previousJob = session.getJob()
-        val previousGenerationWasActive = previousJob?.isActive == true
-        previousJob?.cancel()
-
         val releaseForegroundWork = foregroundWorkTracker.acquire()
         val job = appScope.launch {
+            var ownsCodexLease = false
             try {
                 awaitForegroundWorkReady()
-                runCatching { previousJob?.join() }
-                // Only a still-running generation was interrupted by this send. A completed
-                // failed turn may leave an old pending tool in history, but relabelling every
-                // such node as "Generation cancelled by user" corrupts the original failure
-                // and makes several earlier context-overflow attempts look user-cancelled.
-                if (previousGenerationWasActive) {
-                    finishInterruptedPendingTools(conversationId)
+                lateinit var conversation: Conversation
+                lateinit var assistant: Assistant
+                var previousJob: Job? = null
+                var previousWasActive = false
+                val admitted = sendAdmissionMutexes.getOrPut(conversationId) { Mutex() }.withLock {
+                    ensureHydrated(conversationId)
+                    conversation = session.state.value
+                    val settings = settingsStore.settingsFlow.first()
+                    assistant = settings.getAssistantById(conversation.assistantId) ?: settings.getCurrentAssistant()
+                    val codexTurn = answer && assistant.codexAppServerEnabled
+                    if (session.isCodexOperationActive || (codexTurn && !session.tryBeginCodexOperation())) {
+                        addError(IllegalStateException("A Codex operation is already opening, starting, or running."), conversationId)
+                        false
+                    } else {
+                        ownsCodexLease = codexTurn
+                        previousJob = session.getJob()
+                        previousWasActive = previousJob?.isActive == true
+                        previousJob?.cancel()
+                        session.setJob(currentCoroutineContext().job)
+                        true
+                    }
                 }
+                if (!admitted) return@launch
+                runCatching { previousJob?.join() }
+                if (previousWasActive) finishInterruptedPendingTools(conversationId)
 
-                // The chat screen can be recreated before its asynchronous initialization
-                // finishes. Load the durable conversation before taking the snapshot used for
-                // the new user message, otherwise that message can be appended to an empty
-                // in-memory session and visually replace the recovered history.
-                ensureHydrated(conversationId)
-                val currentConversation = session.state.value
-                // Resolve the assistant from the conversation's own assistantId, not the
-                // global current-assistant pointer — otherwise switching assistants mid-
-                // generation makes one conversation preprocess input with another's config.
-                val settings = settingsStore.settingsFlow.first()
-                val assistant = settings.getAssistantById(currentConversation.assistantId)
-                    ?: settings.getCurrentAssistant()
-                if (answer && assistant.codexAppServerEnabled && content.any { it !is UIMessagePart.Text }) {
-                    throw IllegalArgumentException("This input type is not supported by the Codex App Server chat integration")
+                if (answer && assistant.codexAppServerEnabled) {
+                    validateCodexPreflight(conversationId, conversation, assistant, content)
                 }
                 val processedContent = preprocessUserInputParts(content, assistant)
-
-                // 添加消息到列表
-                val withUser = currentConversation.copy(
-                    messageNodes = currentConversation.messageNodes + UIMessage(
+                val withUser = conversation.copy(
+                    messageNodes = conversation.messageNodes + UIMessage(
                         role = MessageRole.USER,
                         parts = processedContent,
                     ).toMessageNode(),
                 )
                 saveConversation(conversationId, withUser)
 
-                // Phase 16 — fast-path router. If the assistant has it enabled and the user's
-                // message matches a deterministic intent, run the matching tool and inject the
-                // result as a synthetic assistant message — skipping the LLM entirely.
-                // Conservative: any match failure (tool throws, no result) falls back to the
-                // normal LLM path. Headless conversations and non-text messages are skipped.
                 val routedHandled = if (answer && !assistant.codexAppServerEnabled)
                     tryFastPathRoute(conversationId, processedContent, withUser, assistant)
                 else false
-
                 if (answer && assistant.codexAppServerEnabled) {
                     sendCodexTurn(conversationId, session, withUser, assistant, processedContent)
                 } else if (answer && !routedHandled) {
                     handleMessageComplete(conversationId)
                 }
-
                 _generationDoneFlow.emit(conversationId)
             } catch (e: Exception) {
                 e.printStackTrace()
                 addError(e, conversationId, title = context.getString(R.string.error_title_send_message))
             } finally {
-                if (codexOperation) session.endCodexOperation()
+                if (ownsCodexLease) session.endCodexOperation()
                 releaseForegroundWork()
             }
         }
-        session.setJob(job)
+    }
+
+    private suspend fun validateCodexPreflight(
+        conversationId: Uuid,
+        conversation: Conversation,
+        assistant: Assistant,
+        content: List<UIMessagePart>,
+    ) {
+        require(content.all { it is UIMessagePart.Text }) {
+            "This input type is not supported by the Codex App Server chat integration"
+        }
+        val workspaceId = assistant.workspaceId?.toString()
+            ?: throw IllegalStateException("Codex App Server requires a workspace")
+        val workspace = workspaceRepository.getById(workspaceId)
+            ?: throw IllegalStateException("Codex workspace does not exist")
+        check(workspace.shellStatus == WorkspaceShellStatus.READY.name) { "Codex workspace shell is not ready" }
+        val cwd = conversation.workspaceCwd.orEmpty()
+        require(!cwd.startsWith('/') && !cwd.startsWith('\\') && cwd.split('/', '\\').none { it == ".." }) {
+            "Codex CWD must stay inside the workspace"
+        }
+        codexBindingRepository?.getBinding(conversationId.toString())?.let { binding ->
+            if (binding.workspaceId != workspaceId || binding.workspaceCwd != cwd) {
+                getOrCreateSession(conversationId).publishCodexState(
+                    CodexConversationUiState.WorkspaceMismatch(binding.workspaceId, workspaceId)
+                )
+                throw IllegalStateException(
+                    "Existing Codex thread is bound to another workspace/CWD. Reset the Codex session first."
+                )
+            }
+        }
     }
 
     private suspend fun sendCodexTurn(
