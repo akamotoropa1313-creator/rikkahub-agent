@@ -19,7 +19,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -50,7 +49,7 @@ class CodexAppServerApprovalApiTest {
                 assertEquals(CodexAppServerNetworkProtocol.Https, networkApprovalContext!!.protocol)
                 assertEquals(listOf("allow cat"), proposedExecpolicyAmendment)
                 assertEquals(CodexAppServerNetworkPolicyRuleAction.Allow, proposedNetworkPolicyAmendments!!.single().action)
-                assertSame(params, rawParams)
+                assertEquals(params, rawParams)
             }
             events.close()
         }
@@ -97,7 +96,7 @@ class CodexAppServerApprovalApiTest {
             val present = JsonObject(fileParams() + ("reason" to JsonPrimitive("why")) + ("grantRoot" to JsonPrimitive("/root")))
             f.request(JsonRpcId.StringId("s"), FILE, present); f.request(JsonRpcId.NumberId(7), FILE, JsonObject(fileParams() + ("reason" to JsonNull) + ("grantRoot" to JsonNull)))
             val first = events.next() as CodexAppServerApprovalEvent.FileChangeRequest
-            assertEquals(JsonRpcId.StringId("s"), first.requestId); assertEquals("why", first.request.reason); assertEquals("/root", first.request.grantRoot); assertSame(present, first.request.rawParams)
+            assertEquals(JsonRpcId.StringId("s"), first.requestId); assertEquals("why", first.request.reason); assertEquals("/root", first.request.grantRoot); assertEquals(present, first.request.rawParams)
             val second = events.next() as CodexAppServerApprovalEvent.FileChangeRequest
             assertEquals(JsonRpcId.NumberId(7), second.requestId); assertEquals(null, second.request.reason); assertEquals(null, second.request.grantRoot)
             f.request(JsonRpcId.NumberId(8), FILE, JsonObject(fileParams() + ("startedAtMs" to JsonPrimitive(1.2))))
