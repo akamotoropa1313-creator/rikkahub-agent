@@ -13,6 +13,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -83,7 +84,12 @@ class ChatVM(
         (settings.getAssistantById(conversation.assistantId) ?: settings.getCurrentAssistant()).codexAppServerEnabled
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    fun resetCodexSession() { viewModelScope.launch { chatService.resetCodexSession(_conversationId) } }
+    private val _hasCodexBinding = MutableStateFlow(false)
+    val hasCodexBinding: StateFlow<Boolean> = _hasCodexBinding
+    fun resetCodexSession() { viewModelScope.launch {
+        chatService.resetCodexSession(_conversationId)
+        _hasCodexBinding.value = false
+    } }
     fun interruptCodexTurn() { viewModelScope.launch { chatService.stopGeneration(_conversationId) } }
     fun respondCodexCommandApproval(id: JsonRpcId, decision: CodexAppServerCommandApprovalDecision) {
         viewModelScope.launch { chatService.respondCodexCommandApproval(_conversationId, id, decision) }
@@ -103,6 +109,14 @@ class ChatVM(
         // 初始化对话
         viewModelScope.launch {
             chatService.initializeConversation(_conversationId)
+            _hasCodexBinding.value = chatService.hasCodexBinding(_conversationId)
+        }
+        viewModelScope.launch {
+            codexState.collect { state ->
+                if (state is CodexConversationUiState.Ready || state is CodexConversationUiState.Running ||
+                    state is CodexConversationUiState.WaitingForApproval || state is CodexConversationUiState.Terminal
+                ) _hasCodexBinding.value = chatService.hasCodexBinding(_conversationId)
+            }
         }
 
         // 记住对话ID, 方便下次启动恢复

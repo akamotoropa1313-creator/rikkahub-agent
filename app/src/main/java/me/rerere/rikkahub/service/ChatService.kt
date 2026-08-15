@@ -755,6 +755,9 @@ class ChatService(
     suspend fun respondCodexFileApproval(conversationId: Uuid, requestId: JsonRpcId, decision: CodexAppServerFileChangeApprovalDecision): Boolean =
         sessions[conversationId]?.codexRuntime?.respondFileApproval(requestId, decision) ?: false
 
+    suspend fun hasCodexBinding(conversationId: Uuid): Boolean =
+        codexBindingRepository?.getBinding(conversationId.toString()) != null
+
     suspend fun resetCodexSession(conversationId: Uuid) {
         codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {
             sessions[conversationId]?.replaceCodexRuntime(null)

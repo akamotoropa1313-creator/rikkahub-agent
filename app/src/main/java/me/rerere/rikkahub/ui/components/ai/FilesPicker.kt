@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -97,6 +98,8 @@ internal fun FilesPicker(
     onCompressContext: (additionalPrompt: String, targetTokens: Int, keepRecentMessages: Int) -> Job,
     onUpdateAssistant: (Assistant) -> Unit,
     onUpdateConversation: (Conversation) -> Unit,
+    hasCodexBinding: Boolean,
+    onResetCodexSession: () -> Unit,
     showInjectionSheet: Boolean,
     onShowInjectionSheetChange: (Boolean) -> Unit,
     showCompressDialog: Boolean,
@@ -113,6 +116,14 @@ internal fun FilesPicker(
     val navController = LocalNavController.current
     val workspaceRepository: WorkspaceRepository = koinInject()
     val workspaces by workspaceRepository.listFlow().collectAsState(initial = emptyList())
+    var confirmCodexReset by remember { mutableStateOf(false) }
+    if (confirmCodexReset) AlertDialog(
+        onDismissRequest = { confirmCodexReset = false },
+        title = { Text("Reset Codex session?") },
+        text = { Text("Continuity with the current Codex thread will be lost. The next Send will create a new thread.") },
+        confirmButton = { TextButton(onClick = { confirmCodexReset = false; onResetCodexSession() }) { Text("Reset") } },
+        dismissButton = { TextButton(onClick = { confirmCodexReset = false }) { Text("Cancel") } },
+    )
 
     Column(
         modifier = Modifier
@@ -184,6 +195,10 @@ internal fun FilesPicker(
             },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         )
+
+        if (hasCodexBinding) {
+            TextButton(onClick = { confirmCodexReset = true }) { Text("Reset Codex session") }
+        }
 
         if (settings.mcpServers.isNotEmpty()) {
             McpPickerListItem(

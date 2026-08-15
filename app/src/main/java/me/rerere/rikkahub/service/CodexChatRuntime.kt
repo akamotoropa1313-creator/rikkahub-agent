@@ -39,9 +39,9 @@ class CodexChatRuntime(
     val state: StateFlow<CodexConversationUiState> = _state.asStateFlow()
     private val turns = ConcurrentHashMap<String, TurnRecord>()
     private val text = ConcurrentHashMap<Pair<String, String>, String>()
-    private val reasoning = ConcurrentHashMap<Pair<String, String>, String>()
-    private val commands = ConcurrentHashMap<String, CodexAppServerItemSnapshot.CommandExecution>()
-    private val files = ConcurrentHashMap<String, CodexAppServerItemSnapshot.FileChange>()
+    private val reasoning = java.util.Collections.synchronizedMap(linkedMapOf<Pair<String, String>, String>())
+    private val commands = java.util.Collections.synchronizedMap(linkedMapOf<String, CodexAppServerItemSnapshot.CommandExecution>())
+    private val files = java.util.Collections.synchronizedMap(linkedMapOf<String, CodexAppServerItemSnapshot.FileChange>())
     @Volatile private var turnDiff: String? = null
     private val terminalInteractions = mutableListOf<String>()
     private val terminalClaimed = ConcurrentHashMap.newKeySet<String>()
@@ -61,7 +61,7 @@ class CodexChatRuntime(
         turn.status = status
         val isCurrent = activeTurnId == null || activeTurnId == turnId
         if (activeTurnId == turnId) activeTurnId = null
-        if (isCurrent) _state.value = CodexConversationUiState.Terminal(session.threadId, turnId, status)
+        if (isCurrent) _state.value = CodexConversationUiState.Terminal(session.threadId, turnId, status, activity(turnId))
         onTurnTerminal(turnId)
         turn.terminal.complete(status)
     }
@@ -73,13 +73,19 @@ class CodexChatRuntime(
         }
     }
 
+    private fun activity(turnId: String) = CodexConversationActivity(
+        reasoning = synchronized(reasoning) { reasoning.filterKeys { it.first == turnId }.values.joinToString("\n") },
+        commands = synchronized(commands) { commands.values.toList() },
+        files = synchronized(files) { files.values.toList() },
+        diff = turnDiff,
+        terminalInteractions = synchronized(terminalInteractions) { terminalInteractions.toList() },
+    )
+
     private fun publishActivity(turnId: String) {
-        if (_state.value is CodexConversationUiState.WaitingForApproval) return
-        _state.value = CodexConversationUiState.Activity(
-            session.threadId, turnId,
-            reasoning.filterKeys { it.first == turnId }.values.joinToString("\n"),
-            commands.values.toList(), files.values.toList(), turnDiff, terminalInteractions.toList(),
-        )
+        val snapshot = activity(turnId)
+        val current = _state.value
+        _state.value = if (current is CodexConversationUiState.WaitingForApproval) current.copy(activity = snapshot)
+        else CodexConversationUiState.Running(session.threadId, turnId, snapshot)
     }
 
     private val collector: Job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -153,16 +159,17 @@ class CodexChatRuntime(
         session.approvalApi.events.collect { event ->
             when (event) {
                 is CodexAppServerApprovalEvent.CommandExecutionRequest ->
-                    _state.value = CodexConversationUiState.WaitingForApproval(event)
+                    _state.value = CodexConversationUiState.WaitingForApproval(event, activity = activity(event.request.turnId))
                 is CodexAppServerApprovalEvent.FileChangeRequest ->
                     _state.value = CodexConversationUiState.WaitingForApproval(
-                        event, fileChange = files[event.request.itemId]?.takeIf { event.request.turnId == activeTurnId }
+                        event, fileChange = files[event.request.itemId]?.takeIf { event.request.turnId == activeTurnId },
+                        activity = activity(event.request.turnId)
                     )
                 is CodexAppServerApprovalEvent.Resolved -> {
                     approvalResponses.add(event.requestId)
                     val waiting = _state.value as? CodexConversationUiState.WaitingForApproval
                     if (waiting?.requestId == event.requestId) {
-                        _state.value = activeTurnId?.let { CodexConversationUiState.Running(session.threadId, it) }
+                        _state.value = activeTurnId?.let { CodexConversationUiState.Running(session.threadId, it, waiting.activity) }
                             ?: CodexConversationUiState.Ready(session.threadId)
                     }
                 }
@@ -217,7 +224,7 @@ class CodexChatRuntime(
         if (status is CodexAppServerTurnStatus.InProgress) {
             activeTurnId = turnId
             interruptWhenKnown(turnId)
-            _state.value = CodexConversationUiState.Running(session.threadId, turnId)
+            _state.value = CodexConversationUiState.Running(session.threadId, turnId, activity(turnId))
         } else terminal(turnId, status)
     }
 
@@ -260,23 +267,26 @@ internal class CodexTurnStopController {
     }
 }
 
+data class CodexConversationActivity(
+    val reasoning: String = "",
+    val commands: List<CodexAppServerItemSnapshot.CommandExecution> = emptyList(),
+    val files: List<CodexAppServerItemSnapshot.FileChange> = emptyList(),
+    val diff: String? = null,
+    val terminalInteractions: List<String> = emptyList(),
+)
+
 sealed interface CodexConversationUiState {
     data object Disabled : CodexConversationUiState
     data object Disconnected : CodexConversationUiState
     data object Opening : CodexConversationUiState
     data class Ready(val threadId: String) : CodexConversationUiState
-    data class Running(val threadId: String, val turnId: String) : CodexConversationUiState
-    data class Terminal(val threadId: String, val turnId: String, val status: CodexAppServerTurnStatus) : CodexConversationUiState
-    data class Activity(
-        val threadId: String, val turnId: String, val reasoning: String,
-        val commands: List<CodexAppServerItemSnapshot.CommandExecution>,
-        val files: List<CodexAppServerItemSnapshot.FileChange>, val diff: String?,
-        val terminalInteractions: List<String>,
-    ) : CodexConversationUiState
+    data class Running(val threadId: String, val turnId: String, val activity: CodexConversationActivity = CodexConversationActivity()) : CodexConversationUiState
+    data class Terminal(val threadId: String, val turnId: String, val status: CodexAppServerTurnStatus, val activity: CodexConversationActivity = CodexConversationActivity()) : CodexConversationUiState
     data class WaitingForApproval(
         val event: CodexAppServerApprovalEvent,
         val submitting: Boolean = false,
         val fileChange: CodexAppServerItemSnapshot.FileChange? = null,
+        val activity: CodexConversationActivity = CodexConversationActivity(),
     ) : CodexConversationUiState {
         val requestId: JsonRpcId? get() = when (event) {
             is CodexAppServerApprovalEvent.CommandExecutionRequest -> event.requestId

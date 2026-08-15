@@ -114,6 +114,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val loadingJob by vm.conversationJob.collectAsStateWithLifecycle()
     val processingStatus by vm.processingStatus.collectAsStateWithLifecycle()
     val codexState by vm.codexState.collectAsStateWithLifecycle()
+    val hasCodexBinding by vm.hasCodexBinding.collectAsStateWithLifecycle()
     val currentChatModel by vm.currentChatModel.collectAsStateWithLifecycle()
     val enableWebSearch by vm.enableWebSearch.collectAsStateWithLifecycle()
     val errors by vm.errors.collectAsStateWithLifecycle()
@@ -210,6 +211,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
                     codexState = codexState,
+                    hasCodexBinding = hasCodexBinding,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -243,6 +245,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
                     codexState = codexState,
+                    hasCodexBinding = hasCodexBinding,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -270,6 +273,7 @@ private fun ChatPageContent(
     loadingJob: Job?,
     processingStatus: String? = null,
     codexState: CodexConversationUiState,
+    hasCodexBinding: Boolean,
     setting: Settings,
     bigScreen: Boolean,
     conversation: Conversation,
@@ -700,6 +704,8 @@ private fun ChatFilesPickerSheet(
                     )
                 )
             },
+            hasCodexBinding = hasCodexBinding,
+            onResetCodexSession = vm::resetCodexSession,
             onUpdateConversation = {
                 vm.updateConversation(it)
                 vm.saveConversationAsync()

@@ -95,6 +95,7 @@ import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.CodexConversationUiState
+import me.rerere.rikkahub.service.CodexConversationActivity
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
@@ -627,27 +628,40 @@ private fun buildHighlightedText(
 }
 
 @Composable
+private fun CodexActivityContent(activity: CodexConversationActivity) {
+    if (activity.reasoning.isNotBlank()) Text(activity.reasoning, style = MaterialTheme.typography.bodySmall)
+    activity.commands.forEach { CodexCommandExecutionCard(it) }
+    activity.files.forEach { CodexFileChangeCard(it) }
+    activity.diff?.let { CodexTurnDiffCard(it) }
+    activity.terminalInteractions.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+}
+
+@Composable
 private fun CodexLiveActivity(
     state: CodexConversationUiState,
     onCommand: (JsonRpcId, CodexAppServerCommandApprovalDecision) -> Unit,
     onFile: (JsonRpcId, CodexAppServerFileChangeApprovalDecision) -> Unit,
 ) {
     if (state is CodexConversationUiState.WaitingForApproval) {
-        when (val event = state.event) {
-            is CodexAppServerApprovalEvent.CommandExecutionRequest -> CodexCommandApprovalCard(event.request, { onCommand(event.requestId, it) }, submitting = state.submitting)
-            is CodexAppServerApprovalEvent.FileChangeRequest -> CodexFileChangeApprovalCard(event.request, { onFile(event.requestId, it) }, fileChange = state.fileChange, submitting = state.submitting)
-            else -> Text("Unsupported Codex approval event", color = MaterialTheme.colorScheme.error)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            CodexActivityContent(state.activity)
+            when (val event = state.event) {
+                is CodexAppServerApprovalEvent.CommandExecutionRequest -> CodexCommandApprovalCard(event.request, { onCommand(event.requestId, it) }, submitting = state.submitting)
+                is CodexAppServerApprovalEvent.FileChangeRequest -> CodexFileChangeApprovalCard(event.request, { onFile(event.requestId, it) }, fileChange = state.fileChange, submitting = state.submitting)
+                else -> Text("Unsupported Codex approval event", color = MaterialTheme.colorScheme.error)
+            }
         }
         return
     }
-    if (state is CodexConversationUiState.Activity) {
+    val phaseActivity = when (state) {
+        is CodexConversationUiState.Running -> state.activity
+        is CodexConversationUiState.Terminal -> state.activity
+        else -> null
+    }
+    if (phaseActivity != null && phaseActivity != CodexConversationActivity()) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Codex activity · ${state.turnId}", style = MaterialTheme.typography.titleSmall)
-            if (state.reasoning.isNotBlank()) Text(state.reasoning, style = MaterialTheme.typography.bodySmall)
-            state.commands.forEach { CodexCommandExecutionCard(it) }
-            state.files.forEach { CodexFileChangeCard(it) }
-            state.diff?.let { CodexTurnDiffCard(it) }
-            state.terminalInteractions.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+            Text("Codex activity", style = MaterialTheme.typography.titleSmall)
+            CodexActivityContent(phaseActivity)
         }
         return
     }
@@ -658,7 +672,6 @@ private fun CodexLiveActivity(
         is CodexConversationUiState.Ready -> "Codex ready · ${state.threadId}"
         is CodexConversationUiState.Running -> "Codex running · ${state.turnId}"
         is CodexConversationUiState.Terminal -> "Codex ${state.status.wireValue}"
-        is CodexConversationUiState.Activity -> "Codex activity"
         is CodexConversationUiState.WaitingForApproval -> "Codex is waiting for your approval"
         is CodexConversationUiState.StaleBinding -> "Codex binding is stale: ${state.reason}"
         is CodexConversationUiState.WorkspaceMismatch -> "Codex workspace mismatch"
