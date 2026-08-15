@@ -67,6 +67,20 @@ jobs:
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Compile app and generate Room schemas
+        run: ./gradlew :app:compileDebugKotlin
+
+      - name: Verify committed Room schemas are clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          schema_status="$(git status --porcelain -- app/schemas/me.rerere.rikkahub.data.db.AppDatabase)"
+          if [[ -n "$schema_status" ]]; then
+            printf '%s\n' "$schema_status" >&2
+            echo "Room/KSP generated uncommitted schema changes." >&2
+            exit 1
+          fi
+
       - name: Run Codex App Server protocol unit tests
         run: >-
           ./gradlew :app:testDebugUnitTest
