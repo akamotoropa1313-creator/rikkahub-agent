@@ -4,7 +4,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -86,8 +90,39 @@ class CodexAppServerAccountApiTest {
         }
     }
 
+    @Test fun `amazon bedrock managed credentials defaults strictly`() = runBlocking {
+        supervisorScope { fixture().use { f ->
+            listOf(null to false, JsonPrimitive(false) to false, JsonPrimitive(true) to true).forEach { (wire, expected) ->
+                val call = async { f.api.readAccount() }
+                f.respond(f.takeRequest(), account("amazonBedrock") { wire?.let { put("usesCodexManagedCredentials", it) } })
+                assertEquals(expected, (call.await().account as CodexAppServerAccount.AmazonBedrock).usesCodexManagedCredentials)
+            }
+            listOf(JsonNull, JsonPrimitive("false"), JsonPrimitive("true"), JsonPrimitive(0), buildJsonObject {}, JsonArray(emptyList())).forEach { malformed ->
+                val call = async { f.api.readAccount() }
+                f.respond(f.takeRequest(), account("amazonBedrock") { put("usesCodexManagedCredentials", malformed) })
+                expect<CodexAppServerAccountProtocolException> { call.await() }
+            }
+        } }
+    }
+
+    @Test fun `all official plan wire values map to known typed variants`() {
+        val expected = linkedMapOf(
+            "free" to CodexAppServerPlanType.Free, "go" to CodexAppServerPlanType.Go,
+            "plus" to CodexAppServerPlanType.Plus, "pro" to CodexAppServerPlanType.Pro,
+            "prolite" to CodexAppServerPlanType.ProLite, "team" to CodexAppServerPlanType.Team,
+            "self_serve_business_prolite" to CodexAppServerPlanType.SelfServeBusinessProLite,
+            "self_serve_business_usage_based" to CodexAppServerPlanType.SelfServeBusinessUsageBased,
+            "business" to CodexAppServerPlanType.Business, "ent26" to CodexAppServerPlanType.Ent26,
+            "enterprise_cbp_automation" to CodexAppServerPlanType.EnterpriseCbpAutomation,
+            "enterprise_cbp_usage_based" to CodexAppServerPlanType.EnterpriseCbpUsageBased,
+            "enterprise" to CodexAppServerPlanType.Enterprise, "edu" to CodexAppServerPlanType.Edu,
+        )
+        expected.forEach { (wire, plan) -> assertEquals("wire=$wire", plan, wire.toPlanType()) }
+        assertEquals(CodexAppServerPlanType.Unknown("futurePlan"), "futurePlan".toPlanType())
+    }
+
     @Test fun `missing and blank login fields fail protocol validation`() = runBlocking {
-        fixture().use { f ->
+        supervisorScope { fixture().use { f ->
             val results = listOf(
                 buildJsonObject { put("type", "chatgpt"); put("authUrl", "https://example.test") },
                 buildJsonObject { put("type", "chatgpt"); put("loginId", " "); put("authUrl", "https://example.test") },
@@ -98,18 +133,18 @@ class CodexAppServerAccountApiTest {
                 val call = async { f.api.startChatGptLogin() }; f.respond(f.takeRequest(), result)
                 expect<CodexAppServerAccountProtocolException> { call.await() }
             }
-        }
+        } }
     }
 
     @Test fun `invalid login response and blank cancellation fail safely`() = runBlocking {
-        fixture().use { f ->
+        supervisorScope { fixture().use { f ->
             val wrong = async { f.api.startChatGptLogin() }; val request = f.takeRequest()
             f.respond(request, buildJsonObject { put("type", "chatgptDeviceCode"); put("authUrl", "secret") })
             expect<CodexAppServerUnexpectedLoginVariantException> { wrong.await() }
             val writes = f.transport.successfulWriteCount()
             expect<IllegalArgumentException> { f.api.cancelLogin(" ") }
             assertEquals(writes, f.transport.successfulWriteCount())
-        }
+        } }
     }
 
     @Test fun `operations require ready state`() = runBlocking {

@@ -15,10 +15,17 @@ import kotlinx.serialization.json.put
 sealed interface CodexAppServerPlanType {
     val displayName: String
     data object Free : CodexAppServerPlanType { override val displayName = "Free" }
+    data object Go : CodexAppServerPlanType { override val displayName = "Go" }
     data object Plus : CodexAppServerPlanType { override val displayName = "Plus" }
     data object Pro : CodexAppServerPlanType { override val displayName = "Pro" }
+    data object ProLite : CodexAppServerPlanType { override val displayName = "Pro Lite" }
     data object Team : CodexAppServerPlanType { override val displayName = "Team" }
+    data object SelfServeBusinessProLite : CodexAppServerPlanType { override val displayName = "Self Serve Business Pro Lite" }
+    data object SelfServeBusinessUsageBased : CodexAppServerPlanType { override val displayName = "Self Serve Business Usage Based" }
     data object Business : CodexAppServerPlanType { override val displayName = "Business" }
+    data object Ent26 : CodexAppServerPlanType { override val displayName = "Enterprise" }
+    data object EnterpriseCbpAutomation : CodexAppServerPlanType { override val displayName = "Enterprise CBP Automation" }
+    data object EnterpriseCbpUsageBased : CodexAppServerPlanType { override val displayName = "Enterprise CBP Usage Based" }
     data object Enterprise : CodexAppServerPlanType { override val displayName = "Enterprise" }
     data object Edu : CodexAppServerPlanType { override val displayName = "Edu" }
     data class Unknown(val raw: String) : CodexAppServerPlanType { override val displayName = raw }
@@ -135,14 +142,20 @@ class CodexAppServerAccountApi(private val connection: CodexAppServerConnection)
 private fun decodeAccount(raw: JsonObject): CodexAppServerAccount = when (val type = raw.optionalString("type")) {
     "apiKey" -> CodexAppServerAccount.ApiKey(raw)
     "chatgpt" -> CodexAppServerAccount.ChatGpt(raw.optionalString("email"), raw.requiredString("planType").toPlanType(), raw)
-    "amazonBedrock" -> CodexAppServerAccount.AmazonBedrock(raw.requiredBoolean("usesCodexManagedCredentials"), raw)
+    "amazonBedrock" -> CodexAppServerAccount.AmazonBedrock(raw.booleanOrDefault("usesCodexManagedCredentials"), raw)
     else -> CodexAppServerAccount.Unknown(type, raw)
 }
 
-private fun String.toPlanType() = when (this) {
-    "free" -> CodexAppServerPlanType.Free; "plus" -> CodexAppServerPlanType.Plus
-    "pro" -> CodexAppServerPlanType.Pro; "team" -> CodexAppServerPlanType.Team
-    "business" -> CodexAppServerPlanType.Business; "enterprise" -> CodexAppServerPlanType.Enterprise
+internal fun String.toPlanType() = when (this) {
+    "free" -> CodexAppServerPlanType.Free; "go" -> CodexAppServerPlanType.Go
+    "plus" -> CodexAppServerPlanType.Plus; "pro" -> CodexAppServerPlanType.Pro
+    "prolite" -> CodexAppServerPlanType.ProLite; "team" -> CodexAppServerPlanType.Team
+    "self_serve_business_prolite" -> CodexAppServerPlanType.SelfServeBusinessProLite
+    "self_serve_business_usage_based" -> CodexAppServerPlanType.SelfServeBusinessUsageBased
+    "business" -> CodexAppServerPlanType.Business; "ent26" -> CodexAppServerPlanType.Ent26
+    "enterprise_cbp_automation" -> CodexAppServerPlanType.EnterpriseCbpAutomation
+    "enterprise_cbp_usage_based" -> CodexAppServerPlanType.EnterpriseCbpUsageBased
+    "enterprise" -> CodexAppServerPlanType.Enterprise
     "edu" -> CodexAppServerPlanType.Edu; else -> CodexAppServerPlanType.Unknown(this)
 }
 private fun String.toAuthMode() = when (this) {
@@ -156,6 +169,11 @@ private fun JsonObject.requiredString(name: String) = (this[name] as? JsonPrimit
 private fun JsonObject.requiredNonBlankString(name: String) = requiredString(name).also { if (it.isBlank()) throw protocol("$name must not be blank") }
 private fun JsonObject.optionalString(name: String): String? { val value = this[name] ?: return null; if (value === JsonNull) return null; return (value as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: throw protocol("$name must be a string or null") }
 private fun JsonObject.requiredBoolean(name: String) = (this[name] as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull ?: throw protocol("$name must be a boolean")
+private fun JsonObject.booleanOrDefault(name: String): Boolean {
+    val value = this[name] ?: return false
+    return (value as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull
+        ?: throw protocol("$name must be a boolean when present")
+}
 private fun protocol(message: String) = CodexAppServerAccountProtocolException(message)
 open class CodexAppServerAccountProtocolException(message: String) : SerializationException(message)
 class CodexAppServerUnexpectedLoginVariantException(val responseType: String, val rawResult: JsonObject) :

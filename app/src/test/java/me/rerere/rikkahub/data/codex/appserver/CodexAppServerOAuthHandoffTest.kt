@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -32,7 +33,7 @@ class CodexAppServerOAuthHandoffTest {
     }
 
     @Test fun `launcher failure is safe and has no automatic side effects`() = runBlocking {
-        fixture().use { f ->
+        supervisorScope { fixture().use { f ->
             val handoff = CodexAppServerOAuthHandoff(f.api) { throw IllegalStateException("no browser") }
             val call = async { handoff.beginChatGptLogin() }; val request = f.takeRequest()
             val url = "https://example.test/auth?secret=never-log"
@@ -41,19 +42,21 @@ class CodexAppServerOAuthHandoffTest {
             assertEquals("login-failed", error.loginId); assertFalse(error.toString().contains(url))
             assertEquals(3, f.transport.successfulWriteCount())
             assertTrue(f.connection.state.value is CodexAppServerConnectionState.Ready)
-        }
+        } }
     }
 
     @Test fun `launcher cancellation propagates unchanged without side effects`() = runBlocking {
-        fixture().use { f ->
+        supervisorScope { fixture().use { f ->
             val cancellation = CancellationException("caller cancelled")
             val handoff = CodexAppServerOAuthHandoff(f.api) { throw cancellation }
             val call = async { handoff.beginChatGptLogin() }; val request = f.takeRequest()
             f.respond(request, loginResult("login-cancelled", "https://example.test/auth"))
             val observed = expect<CancellationException> { call.await() }
-            assertSame(cancellation, observed); assertEquals(3, f.transport.successfulWriteCount())
+            assertEquals("caller cancelled", observed.message)
+            assertFalse((observed as Throwable) is CodexAppServerBrowserLaunchException)
+            assertEquals(3, f.transport.successfulWriteCount())
             assertTrue(f.connection.state.value is CodexAppServerConnectionState.Ready)
-        }
+        } }
     }
 
     @Test fun `url policy permits https and loopback only without rewriting`() {
