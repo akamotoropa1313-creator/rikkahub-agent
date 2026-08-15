@@ -9,7 +9,7 @@ import org.junit.Test
 class CodexAppServerSkillsApiTest {
     private val codec = CodexAppServerJsonRpc()
 
-    @Test fun `list default and non-default params use exact wire`() = runBlocking {
+    @Test fun `list default and non-default params use exact wire`(): Unit = runBlocking {
         fixture().use { f ->
             suspend fun verify(cwds: List<String> = emptyList(), reload: Boolean = false, expected: JsonObject) {
                 val call = async { f.api.list(cwds, reload) }; val request = f.request()
@@ -23,7 +23,7 @@ class CodexAppServerSkillsApiTest {
         }
     }
 
-    @Test fun `metadata optional fields errors and future additions are preserved`() = runBlocking {
+    @Test fun `metadata optional fields errors and future additions are preserved`(): Unit = runBlocking {
         fixture().use { f ->
             val call = async { f.api.list() }; val request = f.request()
             val skill = buildJsonObject {
@@ -42,7 +42,7 @@ class CodexAppServerSkillsApiTest {
         }
     }
 
-    @Test fun `config selectors and enabled values use exact wire`() = runBlocking {
+    @Test fun `config selectors and enabled values use exact wire`(): Unit = runBlocking {
         fixture().use { f ->
             val pathCall = async { f.api.writeConfig(false, path = "/skill") }; val path = f.request()
             assertEquals("skills/config/write", path.method)
@@ -54,7 +54,7 @@ class CodexAppServerSkillsApiTest {
         }
     }
 
-    @Test fun `invalid input and malformed responses fail safely`() = runBlocking {
+    @Test fun `invalid input and malformed responses fail safely`(): Unit = runBlocking {
         fixture().use { f ->
             val writes = f.transport.successfulWriteCount()
             assertFails<IllegalArgumentException> { f.api.list(listOf(" ")) }
@@ -68,7 +68,7 @@ class CodexAppServerSkillsApiTest {
         }
     }
 
-    @Test fun `every operation is Ready gated`() = runBlocking {
+    @Test fun `every operation is Ready gated`(): Unit = runBlocking {
         val t = FakeCodexAppServerTransport(); val c = CodexAppServerConnection(CodexAppServerRequestDispatcher(t), CodexAppServerClientInfo(name = "test", version = "1")); val api = CodexAppServerSkillsApi(c)
         assertFails<CodexAppServerNotReadyException> { api.list() }; assertFails<CodexAppServerNotReadyException> { api.writeConfig(true, name = "x") }
         assertEquals(0, t.successfulWriteCount()); c.close()

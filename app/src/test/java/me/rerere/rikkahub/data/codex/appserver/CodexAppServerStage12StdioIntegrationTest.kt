@@ -10,14 +10,14 @@ import org.junit.Test
 class CodexAppServerStage12StdioIntegrationTest {
     private val json=CodexAppServerJsonRpc().json
 
-    @Test fun `controlled workspace skills list and explicit turn use app server only`()=runBlocking { controlled().use { f ->
+    @Test fun `controlled workspace skills list and explicit turn use app server only`(): Unit = runBlocking { controlled().use { f ->
         f.initialize();val skills=CodexAppServerSkillsApi(f.connection);val turns=CodexAppServerTurnApi(f.connection)
         val list=async(Dispatchers.Default){skills.list()};val listWire=f.awaitRequest(2);f.assertWire(listWire,"skills/list",buildJsonObject{})
         f.respond(listWire,buildJsonObject{putJsonArray("data"){addJsonObject{put("cwd","/repo");putJsonArray("skills"){addJsonObject{put("name","demo");put("description","Demo");put("path","/skills/demo");put("scope","user");put("enabled",true)}};putJsonArray("errors"){}}}});assertEquals("demo",list.await().data.single().skills.single().name)
         val invocation=explicitSkillInvocation("demo","/skills/demo","work");val turn=async(Dispatchers.Default){turns.startTurn("thread",invocation.input)};val turnWire=f.awaitRequest(3);f.assertWire(turnWire,"turn/start",buildJsonObject{put("threadId","thread");putJsonArray("input"){addJsonObject{put("type","text");put("text","\$demo work")};addJsonObject{put("type","skill");put("name","demo");put("path","/skills/demo")}}});f.respond(turnWire,buildJsonObject{putJsonObject("turn"){put("id","turn");put("status","inProgress")}});assertEquals("turn",turn.await().turn.id);assertEquals(4,f.process.stdin.flushes);assertTrue(f.connection.state.value is CodexAppServerConnectionState.Ready)
     } }
 
-    @Test fun `controlled workspace MCP calls each emit exactly one app server request`()=runBlocking { controlled().use { f ->
+    @Test fun `controlled workspace MCP calls each emit exactly one app server request`(): Unit = runBlocking { controlled().use { f ->
         f.initialize();val api=CodexAppServerMcpApi(f.connection)
         val status=async(Dispatchers.Default){api.listStatus()};val sw=f.awaitRequest(2);f.assertWire(sw,"mcpServerStatus/list",buildJsonObject{});f.respond(sw,buildJsonObject{putJsonArray("data"){addJsonObject{put("name","srv");put("pluginId",JsonNull);put("serverInfo",JsonNull);putJsonObject("tools"){};putJsonArray("resources"){};putJsonArray("resourceTemplates"){};put("authStatus","unsupported")}};put("nextCursor",JsonNull)});status.await()
         val resource=async(Dispatchers.Default){api.readResource("srv","file:///r")};val rw=f.awaitRequest(3);f.assertWire(rw,"mcpServer/resource/read",buildJsonObject{put("server","srv");put("uri","file:///r")});f.respond(rw,buildJsonObject{putJsonArray("contents"){addJsonObject{put("uri","file:///r");put("text","ok")}}});resource.await()
