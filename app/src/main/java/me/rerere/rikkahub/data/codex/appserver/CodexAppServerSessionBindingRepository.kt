@@ -85,8 +85,14 @@ class CodexAppServerSessionBindingRepository(
         bindingDao.deleteByConversationId(conversationId)
     }
 
-    suspend fun recordTurnStarted(conversationId: String, expectedThreadId: String, turnId: String) =
-        recordTurn(conversationId, expectedThreadId, turnId, "inProgress")
+    suspend fun recordTurnStarted(conversationId: String, expectedThreadId: String, turnId: String) {
+        require(conversationId.isNotBlank()) { "conversationId must not be blank" }
+        require(expectedThreadId.isNotBlank()) { "expectedThreadId must not be blank" }
+        require(turnId.isNotBlank()) { "turnId must not be blank" }
+        if (bindingDao.transitionTurnStarted(conversationId, expectedThreadId, turnId, nowMs()) == -1) {
+            throw CodexAppServerBindingChangedException(conversationId, expectedThreadId)
+        }
+    }
 
     suspend fun recordTurnCompleted(conversationId: String, expectedThreadId: String, turnId: String, status: String) =
         recordTurn(conversationId, expectedThreadId, turnId, status)

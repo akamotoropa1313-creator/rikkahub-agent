@@ -224,6 +224,11 @@ private class StdioBindingDao : CodexAppServerSessionBindingDao {
         upsert(binding); return rows.size.toLong()
     }
     override suspend fun updateLastObservedTurn(conversationId: String, expectedThreadId: String, turnId: String, status: String, updatedAtMs: Long) = update(conversationId, expectedThreadId) { it.copy(lastObservedTurnId = turnId, lastObservedTurnStatus = status, updatedAtMs = updatedAtMs) }
+    override suspend fun updateLastObservedTurnStarted(conversationId: String, expectedThreadId: String, turnId: String, updatedAtMs: Long): Int {
+        val row = rows[conversationId]?.takeIf { it.threadId == expectedThreadId } ?: return 0
+        if (row.lastObservedTurnId == turnId && row.lastObservedTurnStatus != null && row.lastObservedTurnStatus != "inProgress") return 0
+        return update(conversationId, expectedThreadId) { it.copy(lastObservedTurnId = turnId, lastObservedTurnStatus = "inProgress", updatedAtMs = updatedAtMs) }
+    }
     override suspend fun updateLastResumed(conversationId: String, expectedThreadId: String, resumedAtMs: Long) = update(conversationId, expectedThreadId) { it.copy(lastResumedAtMs = resumedAtMs, updatedAtMs = resumedAtMs) }
     override suspend fun deleteByConversationId(conversationId: String) = if (rows.remove(conversationId) != null) { states[conversationId]?.value = null; 1 } else 0
     private fun update(id: String, thread: String, block: (CodexAppServerSessionBindingEntity) -> CodexAppServerSessionBindingEntity): Int { val row = rows[id]?.takeIf { it.threadId == thread } ?: return 0; rows[id] = block(row); states[id]?.value = rows[id]; return 1 }

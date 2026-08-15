@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.codex.appserver
 
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,27 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class CodexAppServerSessionRecoveryTest {
+    @Test fun `completion persisted before late started write remains terminal`() = runBlocking {
+        val transport = FakeCodexAppServerTransport(); val connection = connection(transport)
+        val f = Fixture(creator = CodexAppServerConnectionCreator { _, _ -> connection }); f.bind()
+        val recovering = async { f.recovery.recover("a") }; respondInitialize(transport)
+        val resume = Json.parseToJsonElement(transport.takeClientLine()).jsonObject
+        transport.injectServerLine("""{"id":${resume["id"]},"result":{"thread":{"id":"thread-1"},"model":"m","modelProvider":"p","cwd":"src"}}""")
+        val session = (recovering.await() as CodexAppServerSessionRecoveryResult.Recovered).session
+        f.dao.gateStartedUpdate = true
+        val starting = async { session.startTurn(listOf(CodexAppServerTurnInput.Text("race"))) }
+        val request = Json.parseToJsonElement(transport.takeClientLine()).jsonObject
+        transport.injectServerLine("""{"id":${request["id"]},"result":{"turn":{"id":"turn-1","status":"inProgress"}}}""")
+        f.dao.startedUpdateEntered.await()
+        transport.injectServerLine("""{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}}""")
+        f.dao.observeByConversationId("a").first { it?.lastObservedTurnStatus == "completed" }
+        f.dao.startedUpdateRelease.complete(Unit)
+        starting.await()
+        assertEquals("turn-1", f.repo.getBinding("a")?.lastObservedTurnId)
+        assertEquals("completed", f.repo.getBinding("a")?.lastObservedTurnStatus)
+        session.close()
+    }
+
     @Test fun `concurrent openers atomically create binding and loser closes`() = runBlocking { supervisorScope {
         val firstTransport = FakeCodexAppServerTransport(); val secondTransport = FakeCodexAppServerTransport()
         val firstConnection = connection(firstTransport); val secondConnection = connection(secondTransport)
@@ -264,6 +286,9 @@ class CodexAppServerSessionRecoveryTest {
         val states = linkedMapOf<String, MutableStateFlow<CodexAppServerSessionBindingEntity?>>()
         var failResumeUpdate = false
         var turnUpdateFailure: Throwable? = null
+        var gateStartedUpdate = false
+        val startedUpdateEntered = CompletableDeferred<Unit>()
+        val startedUpdateRelease = CompletableDeferred<Unit>()
         override suspend fun getByConversationId(conversationId: String) = rows[conversationId]
         override fun observeByConversationId(conversationId: String): Flow<CodexAppServerSessionBindingEntity?> = states.getOrPut(conversationId) { MutableStateFlow(rows[conversationId]) }
         override suspend fun getByThreadId(threadId: String) = rows.values.singleOrNull { it.threadId == threadId }
@@ -275,6 +300,15 @@ class CodexAppServerSessionRecoveryTest {
         override suspend fun updateLastObservedTurn(conversationId: String, expectedThreadId: String, turnId: String, status: String, updatedAtMs: Long): Int {
             turnUpdateFailure?.let { throw it }
             return update(conversationId, expectedThreadId) { it.copy(lastObservedTurnId = turnId, lastObservedTurnStatus = status, updatedAtMs = updatedAtMs) }
+        }
+        override suspend fun updateLastObservedTurnStarted(conversationId: String, expectedThreadId: String, turnId: String, updatedAtMs: Long): Int {
+            if (gateStartedUpdate) {
+                startedUpdateEntered.complete(Unit)
+                startedUpdateRelease.await()
+            }
+            val row = rows[conversationId]?.takeIf { it.threadId == expectedThreadId } ?: return 0
+            if (row.lastObservedTurnId == turnId && row.lastObservedTurnStatus != null && row.lastObservedTurnStatus != "inProgress") return 0
+            return update(conversationId, expectedThreadId) { it.copy(lastObservedTurnId = turnId, lastObservedTurnStatus = "inProgress", updatedAtMs = updatedAtMs) }
         }
         override suspend fun updateLastResumed(conversationId: String, expectedThreadId: String, resumedAtMs: Long) = if (failResumeUpdate) 0 else update(conversationId, expectedThreadId) { it.copy(lastResumedAtMs = resumedAtMs, updatedAtMs = resumedAtMs) }
         override suspend fun deleteByConversationId(conversationId: String) = if (rows.remove(conversationId) != null) { states[conversationId]?.value = null; 1 } else 0

@@ -70,6 +70,18 @@ class CodexAppServerSessionBindingRepositoryTest {
         }
     }
 
+    @Test fun `late same-turn start cannot regress terminal but a different turn can start`() = runBlocking {
+        val f = Fixture(); f.repo.bindPersistentThread("a", "w", "", thread("t", JsonPrimitive(false)))
+        f.repo.recordTurnCompleted("a", "t", "turn-1", "completed")
+        f.repo.recordTurnStarted("a", "t", "turn-1")
+        assertEquals("turn-1", f.dao.getByConversationId("a")?.lastObservedTurnId)
+        assertEquals("completed", f.dao.getByConversationId("a")?.lastObservedTurnStatus)
+
+        f.repo.recordTurnStarted("a", "t", "turn-2")
+        assertEquals("turn-2", f.dao.getByConversationId("a")?.lastObservedTurnId)
+        assertEquals("inProgress", f.dao.getByConversationId("a")?.lastObservedTurnStatus)
+    }
+
     @Test fun `stale old-thread events cannot mutate replacement binding`() = runBlocking {
         val f = Fixture(); f.repo.bindPersistentThread("a", "w", "", thread("old", JsonPrimitive(false)))
         f.repo.bindPersistentThread("a", "w", "", thread("new", JsonPrimitive(false)))
@@ -108,6 +120,11 @@ class CodexAppServerSessionBindingRepositoryTest {
             upsert(binding); return rows.size.toLong()
         }
         override suspend fun updateLastObservedTurn(conversationId: String, expectedThreadId: String, turnId: String, status: String, updatedAtMs: Long): Int = update(conversationId, expectedThreadId) { it.copy(lastObservedTurnId = turnId, lastObservedTurnStatus = status, updatedAtMs = updatedAtMs) }
+        override suspend fun updateLastObservedTurnStarted(conversationId: String, expectedThreadId: String, turnId: String, updatedAtMs: Long): Int {
+            val row = rows[conversationId]?.takeIf { it.threadId == expectedThreadId } ?: return 0
+            if (row.lastObservedTurnId == turnId && row.lastObservedTurnStatus != null && row.lastObservedTurnStatus != "inProgress") return 0
+            return update(conversationId, expectedThreadId) { it.copy(lastObservedTurnId = turnId, lastObservedTurnStatus = "inProgress", updatedAtMs = updatedAtMs) }
+        }
         override suspend fun updateLastResumed(conversationId: String, expectedThreadId: String, resumedAtMs: Long): Int = update(conversationId, expectedThreadId) { it.copy(lastResumedAtMs = resumedAtMs, updatedAtMs = resumedAtMs) }
         override suspend fun deleteByConversationId(conversationId: String) = if (rows.remove(conversationId) != null) 1 else 0
         private fun update(id: String, thread: String, transform: (CodexAppServerSessionBindingEntity) -> CodexAppServerSessionBindingEntity): Int { val row = rows[id]?.takeIf { it.threadId == thread } ?: return 0; rows[id] = transform(row); return 1 }
