@@ -33,12 +33,12 @@ class CodexAppServerApprovalApiTest {
             val action = buildJsonObject { put("type", "read"); put("command", "cat a"); put("name", "a"); put("path", "/a") }
             val network = buildJsonObject { put("host", "example.com"); put("protocol", "https") }
             val amendment = buildJsonObject { put("host", "example.com"); put("action", "allow") }
-            val params = commandParams().let { JsonObject(it + mapOf(
+            val params = JsonObject(commandParams() + mapOf(
                 "approvalId" to JsonPrimitive("callback-99"), "environmentId" to JsonPrimitive("env"),
                 "reason" to JsonPrimitive("needed"), "command" to JsonPrimitive("cat a"), "cwd" to JsonPrimitive("/work"),
                 "commandActions" to JsonArray(listOf(action)), "networkApprovalContext" to network,
                 "proposedExecpolicyAmendment" to JsonArray(listOf(JsonPrimitive("allow cat"))),
-                "proposedNetworkPolicyAmendments" to JsonArray(listOf(amendment)), "future" to JsonPrimitive(true)))) }
+                "proposedNetworkPolicyAmendments" to JsonArray(listOf(amendment)), "future" to JsonPrimitive(true)))
             f.request(JsonRpcId.StringId("rpc-request-7"), COMMAND, params)
             val event = events.next() as CodexAppServerApprovalEvent.CommandExecutionRequest
             assertEquals(JsonRpcId.StringId("rpc-request-7"), event.requestId)
@@ -170,7 +170,10 @@ class CodexAppServerApprovalApiTest {
     }
 
     @Test fun `responses require ready connection and never write`() = runBlocking {
-        val transport = FakeCodexAppServerTransport(); val connection = CodexAppServerConnection(CodexAppServerRequestDispatcher(transport), CodexAppServerClientInfo("test", "1")); val api = CodexAppServerApprovalApi(connection)
+        val transport = FakeCodexAppServerTransport(); val connection = CodexAppServerConnection(
+            CodexAppServerRequestDispatcher(transport),
+            CodexAppServerClientInfo(name = "test", version = "1"),
+        ); val api = CodexAppServerApprovalApi(connection)
         expect<CodexAppServerNotReadyException> { api.respondCommandApproval(JsonRpcId.NumberId(1), CodexAppServerCommandApprovalDecision.Accept) }
         expect<CodexAppServerNotReadyException> { api.respondFileChangeApproval(JsonRpcId.StringId("x"), CodexAppServerFileChangeApprovalDecision.Decline) }
         assertEquals(0, transport.successfulWriteCount()); connection.close()
@@ -182,7 +185,7 @@ class CodexAppServerApprovalApiTest {
         assertEquals(id, (codec.decode(line).getOrThrow() as JsonRpcMessage.Response).value.id)
         assertEquals(buildJsonObject { put("decision", decision) }, raw["result"]!!.jsonObject)
     }
-    private suspend fun fixture(): Fixture { val t=FakeCodexAppServerTransport(); val d=CodexAppServerRequestDispatcher(t); val c=CodexAppServerConnection(d,CodexAppServerClientInfo("test","1")); val init=kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.currentCoroutineContext()).async{c.initialize()}; val request=(codec.decode(t.takeClientLine()).getOrThrow() as JsonRpcMessage.Request).value; t.injectServerLine(codec.encode(JsonRpcResponse(request.id,buildJsonObject{put("userAgent","fake");put("codexHome","/tmp");put("platformFamily","unix");put("platformOs","linux")})));init.await();t.takeClientLine();return Fixture(t,c,CodexAppServerApprovalApi(c)) }
+    private suspend fun fixture(): Fixture { val t=FakeCodexAppServerTransport(); val d=CodexAppServerRequestDispatcher(t); val c=CodexAppServerConnection(d,CodexAppServerClientInfo(name = "test", version = "1")); val init=kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.currentCoroutineContext()).async{c.initialize()}; val request=(codec.decode(t.takeClientLine()).getOrThrow() as JsonRpcMessage.Request).value; t.injectServerLine(codec.encode(JsonRpcResponse(request.id,buildJsonObject{put("userAgent","fake");put("codexHome","/tmp");put("platformFamily","unix");put("platformOs","linux")})));init.await();t.takeClientLine();return Fixture(t,c,CodexAppServerApprovalApi(c)) }
     private fun commandParams()=buildJsonObject{put("threadId","thread");put("turnId","turn");put("itemId","command-1");put("startedAtMs",9_223_372_036_854_000_000L)}
     private fun fileParams()=buildJsonObject{put("threadId","thread");put("turnId","turn");put("itemId","file-1");put("startedAtMs",8_000_000_000L)}
     private suspend fun collect(f:Fixture):EventCollector { val channel=kotlinx.coroutines.channels.Channel<CodexAppServerApprovalEvent>(kotlinx.coroutines.channels.Channel.UNLIMITED); val job=kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.currentCoroutineContext()).launch(start=CoroutineStart.UNDISPATCHED){f.api.events.collect{channel.send(it)}}; return EventCollector(channel,job) }

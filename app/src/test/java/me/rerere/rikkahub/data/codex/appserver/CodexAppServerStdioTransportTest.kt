@@ -133,13 +133,25 @@ class CodexAppServerStdioTransportTest {
 
 internal class RecordingOutput(private val fail: Boolean) : OutputStream() {
     private val bytes = ByteArrayOutputStream()
-    var flushes = 0
+    private val flushMonitor = java.lang.Object()
+    @Volatile var flushes = 0
     val flushed = CountDownLatch(1)
     @Synchronized override fun write(b: Int) { if (fail) throw IOException("write failed"); bytes.write(b) }
     @Synchronized override fun write(b: ByteArray, off: Int, len: Int) {
         if (fail) throw IOException("write failed"); bytes.write(b, off, len)
     }
-    override fun flush() { flushes++; flushed.countDown() }
+    override fun flush() = synchronized(flushMonitor) {
+        flushes++; flushed.countDown(); flushMonitor.notifyAll()
+    }
+    fun awaitFlushCount(expected: Int, timeoutMillis: Long): Boolean = synchronized(flushMonitor) {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+        while (flushes < expected) {
+            val remaining = deadline - System.nanoTime()
+            if (remaining <= 0) return false
+            TimeUnit.NANOSECONDS.timedWait(flushMonitor, remaining)
+        }
+        true
+    }
     @Synchronized fun text() = bytes.toString(StandardCharsets.UTF_8.name())
 }
 
