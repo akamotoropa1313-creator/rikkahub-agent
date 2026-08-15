@@ -1,6 +1,9 @@
 package me.rerere.rikkahub.service
 
 import java.io.Closeable
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -12,60 +15,94 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnEvent
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnStatus
 
-/** Thin application adapter; protocol and process ownership remain in the Stage 13 session. */
+/** Conversation-owned application adapter around the single Stage 13 protocol session. */
 class CodexChatRuntime(
     val session: CodexAppServerConversationSession,
     scope: CoroutineScope,
     private val onAgentText: suspend (turnId: String, itemId: String, text: String) -> Unit,
+    private val onTurnTerminal: suspend (turnId: String) -> Unit = {},
+    private val onFailure: (CodexChatRuntime, Throwable) -> Unit = { _, _ -> },
 ) : Closeable {
-    private val _state = MutableStateFlow<CodexConversationUiState>(
-        CodexConversationUiState.Ready(session.threadId)
+    private data class TurnRecord(
+        val terminal: CompletableDeferred<CodexAppServerTurnStatus> = CompletableDeferred(),
+        @Volatile var status: CodexAppServerTurnStatus = CodexAppServerTurnStatus.InProgress,
     )
+
+    private val _state = MutableStateFlow<CodexConversationUiState>(CodexConversationUiState.Ready(session.threadId))
     val state: StateFlow<CodexConversationUiState> = _state.asStateFlow()
-    private val text = linkedMapOf<Pair<String, String>, String>()
-    private var activeTurnId: String? = null
+    private val turns = ConcurrentHashMap<String, TurnRecord>()
+    private val text = ConcurrentHashMap<Pair<String, String>, String>()
+    private val terminalClaimed = ConcurrentHashMap.newKeySet<String>()
+    private val closed = AtomicBoolean(false)
+    @Volatile private var activeTurnId: String? = null
+
+    private fun record(turnId: String) = turns.computeIfAbsent(turnId) { TurnRecord() }
+
+    private suspend fun terminal(turnId: String, status: CodexAppServerTurnStatus) {
+        val turn = record(turnId)
+        if (!terminalClaimed.add(turnId)) return
+        turn.status = status
+        val isCurrent = activeTurnId == null || activeTurnId == turnId
+        if (activeTurnId == turnId) activeTurnId = null
+        if (isCurrent) _state.value = CodexConversationUiState.Terminal(session.threadId, turnId, status)
+        onTurnTerminal(turnId)
+        turn.terminal.complete(status)
+    }
+
     private val collector: Job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.turnApi.events.collect { event ->
             if (event.threadIdOrNull() != session.threadId) return@collect
             when (event) {
                 is CodexAppServerTurnEvent.TurnStarted -> {
-                    activeTurnId = event.turn.id
-                    _state.value = CodexConversationUiState.Running(session.threadId, event.turn.id)
+                    val turn = record(event.turn.id)
+                    if (!terminalClaimed.contains(event.turn.id) && (activeTurnId == null || activeTurnId == event.turn.id)) {
+                        activeTurnId = event.turn.id
+                        _state.value = CodexConversationUiState.Running(session.threadId, event.turn.id)
+                    }
                 }
                 is CodexAppServerTurnEvent.AgentMessageDelta -> {
-                    activeTurnId = event.turnId
+                    val turn = record(event.turnId)
+                    if (!terminalClaimed.contains(event.turnId) && (activeTurnId == null || activeTurnId == event.turnId)) activeTurnId = event.turnId
                     val key = event.turnId to event.itemId
-                    val accumulated = text.getOrDefault(key, "") + event.delta
-                    text[key] = accumulated
+                    val accumulated = text.compute(key) { _, old -> old.orEmpty() + event.delta }!!
                     onAgentText(event.turnId, event.itemId, accumulated)
                 }
-                is CodexAppServerTurnEvent.TurnCompleted -> {
-                    activeTurnId = null
-                    _state.value = CodexConversationUiState.Terminal(session.threadId, event.turn.id, event.turn.status)
-                }
+                is CodexAppServerTurnEvent.TurnCompleted -> terminal(event.turn.id, event.turn.status)
                 else -> Unit
             }
         }
     }
+
     private val failureCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-        session.failure.collect { it?.let { failure ->
+        session.failure.collect { failure ->
+            failure ?: return@collect
             activeTurnId = null
             _state.value = CodexConversationUiState.Failed(failure.message ?: failure.toString())
-        } }
+            turns.values.forEach { it.terminal.completeExceptionally(failure) }
+            onFailure(this@CodexChatRuntime, failure)
+        }
     }
 
-    fun markStarting() { _state.value = CodexConversationUiState.Opening }
     fun activeTurnId(): String? = activeTurnId
-    fun acceptStartResponse(turnId: String, status: CodexAppServerTurnStatus) {
+
+    /** Monotonic: an early terminal notification always wins over a later inProgress response. */
+    suspend fun acceptStartResponse(turnId: String, status: CodexAppServerTurnStatus) {
+        val turn = record(turnId)
+        if (terminalClaimed.contains(turnId)) return
         if (status is CodexAppServerTurnStatus.InProgress) {
             activeTurnId = turnId
             _state.value = CodexConversationUiState.Running(session.threadId, turnId)
-        } else {
-            activeTurnId = null
-            _state.value = CodexConversationUiState.Terminal(session.threadId, turnId, status)
-        }
+        } else terminal(turnId, status)
     }
-    override fun close() { collector.cancel(); failureCollector.cancel(); session.close() }
+
+    suspend fun awaitTurnTerminal(turnId: String): CodexAppServerTurnStatus = record(turnId).terminal.await()
+
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        collector.cancel()
+        failureCollector.cancel()
+        session.close()
+    }
 }
 
 sealed interface CodexConversationUiState {

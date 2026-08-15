@@ -42,11 +42,30 @@ class ConversationSession(
 
     @Volatile var codexRuntime: CodexChatRuntime? = null
         private set
+    private var codexStateJob: Job? = null
+    private val _codexState = MutableStateFlow<CodexConversationUiState>(CodexConversationUiState.Disconnected)
+    val codexState: StateFlow<CodexConversationUiState> = _codexState.asStateFlow()
 
-    fun replaceCodexRuntime(runtime: CodexChatRuntime?) {
+    @Synchronized fun replaceCodexRuntime(runtime: CodexChatRuntime?) {
         val previous = codexRuntime
         codexRuntime = runtime
+        codexStateJob?.cancel()
+        codexStateJob = runtime?.let { installed ->
+            scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                installed.state.collect { _codexState.value = it }
+            }
+        }
+        if (runtime == null && previous == null) _codexState.value = CodexConversationUiState.Disconnected
         if (previous !== runtime) previous?.close()
+    }
+
+    @Synchronized fun detachCodexRuntime(expected: CodexChatRuntime, preserveState: Boolean = true): Boolean {
+        if (codexRuntime !== expected) return false
+        codexRuntime = null
+        codexStateJob?.cancel()
+        codexStateJob = null
+        if (!preserveState) _codexState.value = CodexConversationUiState.Disconnected
+        return true
     }
 
     fun acquire(): Int = refCount.incrementAndGet().also {
@@ -99,6 +118,8 @@ class ConversationSession(
     }
 
     fun getJob(): Job? = _generationJob.value
+
+    fun publishCodexState(state: CodexConversationUiState) { _codexState.value = state }
 
     private fun scheduleIdleCheck() {
         idleCheckJob?.cancel()
