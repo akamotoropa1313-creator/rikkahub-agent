@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.net.toUri
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -546,6 +547,8 @@ class ChatService(
         if (content.isEmptyInputMessage()) return
         val session = getOrCreateSession(conversationId)
         val releaseForegroundWork = foregroundWorkTracker.acquire()
+        val foregroundReleased = java.util.concurrent.atomic.AtomicBoolean(false)
+        val releaseForegroundOnce = { if (foregroundReleased.compareAndSet(false, true)) releaseForegroundWork() }
         val job = appScope.launch(start = CoroutineStart.LAZY) {
             var ownsCodexLease = false
             try {
@@ -565,12 +568,16 @@ class ChatService(
                         false
                     } else {
                         ownsCodexLease = codexTurn
-                        previousJob = session.getJob()
-                        previousWasActive = previousJob?.isActive == true
-                        previousJob?.cancel()
-                        session.promotePendingSend(currentCoroutineContext().job)
-                        session.setJob(currentCoroutineContext().job)
-                        true
+                        val promotion = session.promotePendingSendToGeneration(currentCoroutineContext().job)
+                        if (!promotion.promoted) {
+                            if (ownsCodexLease) { session.endCodexOperation(); ownsCodexLease = false }
+                            false
+                        } else {
+                            previousJob = promotion.previous
+                            previousWasActive = previousJob?.isActive == true
+                            previousJob?.cancel()
+                            true
+                        }
                     }
                 }
                 if (!admitted) return@launch
@@ -602,12 +609,13 @@ class ChatService(
                 e.printStackTrace()
                 addError(e, conversationId, title = context.getString(R.string.error_title_send_message))
             } finally {
-                session.promotePendingSend(currentCoroutineContext().job)
+                session.removePendingSend(currentCoroutineContext().job)
                 if (ownsCodexLease) session.endCodexOperation()
-                releaseForegroundWork()
+                releaseForegroundOnce()
             }
         }
         session.registerPendingSend(job)
+        job.invokeOnCompletion { releaseForegroundOnce() }
         job.start()
     }
 

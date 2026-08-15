@@ -34,17 +34,27 @@ class ConversationSession(
 
     // 生成任务（内聚在 session 中）
     private val _generationJob = MutableStateFlow<Job?>(null)
-    private val pendingSendJobs = java.util.concurrent.ConcurrentHashMap.newKeySet<Job>()
-    fun registerPendingSend(job: Job) { pendingSendJobs.add(job) }
-    fun promotePendingSend(job: Job) { pendingSendJobs.remove(job) }
-    fun cancelPendingSends() {
-        pendingSendJobs.toList().forEach { job ->
-            if (pendingSendJobs.remove(job)) job.cancel()
-        }
+    private val sendTrackingLock = Any()
+    private val pendingSendJobs = linkedSetOf<Job>()
+    fun registerPendingSend(job: Job) = synchronized(sendTrackingLock) { pendingSendJobs.add(job) }
+    data class SendPromotion(val promoted: Boolean, val previous: Job?)
+    fun promotePendingSendToGeneration(job: Job): SendPromotion = synchronized(sendTrackingLock) {
+        if (!pendingSendJobs.remove(job)) return@synchronized SendPromotion(false, null)
+        val previous = _generationJob.getAndUpdate { job }
+        installJobCompletion(job)
+        SendPromotion(true, previous)
     }
+    fun removePendingSend(job: Job) = synchronized(sendTrackingLock) { pendingSendJobs.remove(job) }
+    fun cancelPendingSends() {
+        val jobs = synchronized(sendTrackingLock) {
+            pendingSendJobs.toList().also { pendingSendJobs.clear() }
+        }
+        jobs.forEach(Job::cancel)
+    }
+    val hasPendingSends: Boolean get() = synchronized(sendTrackingLock) { pendingSendJobs.isNotEmpty() }
     val generationJob: StateFlow<Job?> = _generationJob.asStateFlow()
     val isGenerating: Boolean get() = _generationJob.value?.isActive == true
-    val isInUse: Boolean get() = refCount.get() > 0 || isGenerating
+    val isInUse: Boolean get() = refCount.get() > 0 || isGenerating || hasPendingSends
     private val codexOperationActive = AtomicBoolean(false)
     fun tryBeginCodexOperation(): Boolean = codexOperationActive.compareAndSet(false, true)
     fun endCodexOperation() { codexOperationActive.set(false) }
@@ -119,14 +129,13 @@ class ConversationSession(
         // getJob() returns B; stopGeneration only cancels B; A leaks until completion.
         val previous = _generationJob.getAndUpdate { job }
         previous?.cancel()
-        // Identity-checked completion handler: only null the StateFlow if the value is
-        // STILL the same job we just set. Without this an out-of-order setJob(B) →
-        // A.invokeOnCompletion → clobber-B race could null out the live job.
-        job?.invokeOnCompletion {
+        job?.let(::installJobCompletion)
+    }
+
+    private fun installJobCompletion(job: Job) {
+        job.invokeOnCompletion {
             _generationJob.compareAndSet(job, null)
-            if (refCount.get() <= 0) {
-                scheduleIdleCheck()
-            }
+            if (refCount.get() <= 0) scheduleIdleCheck()
         }
     }
 

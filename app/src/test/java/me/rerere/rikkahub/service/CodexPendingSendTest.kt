@@ -23,10 +23,13 @@ class CodexPendingSendTest {
         val pending = scope.launch(start = CoroutineStart.LAZY) { entered.set(true) }
 
         session.registerPendingSend(pending)
+        assertTrue(session.hasPendingSends)
+        assertTrue(session.isInUse)
         session.cancelPendingSends()
         assertTrue(pending.isCancelled)
         assertFalse(pending.start())
         assertFalse(entered.get())
+        assertFalse(session.hasPendingSends)
         scope.cancel()
     }
 
@@ -38,7 +41,7 @@ class CodexPendingSendTest {
         val pending = scope.launch(start = CoroutineStart.LAZY) { }
 
         session.registerPendingSend(pending)
-        session.promotePendingSend(pending)
+        assertTrue(session.promotePendingSendToGeneration(pending).promoted)
         session.cancelPendingSends()
         assertFalse(pending.isCancelled)
         scope.cancel()
