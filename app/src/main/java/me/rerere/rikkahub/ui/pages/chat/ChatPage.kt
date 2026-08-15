@@ -67,12 +67,14 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
+import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
+import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
@@ -111,6 +113,8 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val conversation by vm.conversation.collectAsStateWithLifecycle()
     val loadingJob by vm.conversationJob.collectAsStateWithLifecycle()
     val processingStatus by vm.processingStatus.collectAsStateWithLifecycle()
+    val codexState by vm.codexState.collectAsStateWithLifecycle()
+    val hasCodexBinding by vm.hasCodexBinding.collectAsStateWithLifecycle()
     val currentChatModel by vm.currentChatModel.collectAsStateWithLifecycle()
     val enableWebSearch by vm.enableWebSearch.collectAsStateWithLifecycle()
     val errors by vm.errors.collectAsStateWithLifecycle()
@@ -206,6 +210,8 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     inputState = inputState,
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
+                    codexState = codexState,
+                    hasCodexBinding = hasCodexBinding,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -238,6 +244,8 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     inputState = inputState,
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
+                    codexState = codexState,
+                    hasCodexBinding = hasCodexBinding,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -264,6 +272,8 @@ private fun ChatPageContent(
     inputState: ChatInputState,
     loadingJob: Job?,
     processingStatus: String? = null,
+    codexState: CodexConversationUiState,
+    hasCodexBinding: Boolean,
     setting: Settings,
     bigScreen: Boolean,
     conversation: Conversation,
@@ -283,7 +293,7 @@ private fun ChatPageContent(
     val workspaceRepository: WorkspaceRepository = koinInject()
     var previewMode by rememberSaveable { mutableStateOf(false) }
     val hazeState = rememberHazeState()
-    val assistant = setting.getCurrentAssistant()
+    val assistant = setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
     var showFilesSheet by remember { mutableStateOf(false) }
 
     val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
@@ -350,7 +360,7 @@ private fun ChatPageContent(
                         )
                     },
                     onSendClick = {
-                        if (currentChatModel == null) {
+                        if (currentChatModel == null && !assistant.codexAppServerEnabled) {
                             toaster.show(
                                 context.getString(R.string.chat_select_model_first),
                                 type = ToastType.Error,
@@ -420,12 +430,15 @@ private fun ChatPageContent(
                 state = chatListState,
                 loading = loadingJob != null,
                 processingStatus = processingStatus,
+                codexState = codexState,
                 previewMode = previewMode,
                 settings = setting,
                 hazeState = hazeState,
                 errors = errors,
                 onDismissError = onDismissError,
                 onClearAllErrors = onClearAllErrors,
+                onCodexCommandApproval = vm::respondCodexCommandApproval,
+                onCodexFileApproval = vm::respondCodexFileApproval,
                 onRegenerate = {
                     vm.regenerateAtMessage(it)
                 },
@@ -497,6 +510,7 @@ private fun ChatPageContent(
                 setting = setting,
                 conversation = conversation,
                 assistant = assistant,
+                hasCodexBinding = hasCodexBinding,
                 vm = vm,
                 onDismiss = { showFilesSheet = false },
             )
@@ -510,6 +524,7 @@ private fun ChatFilesPickerSheet(
     setting: Settings,
     conversation: Conversation,
     assistant: Assistant,
+    hasCodexBinding: Boolean,
     vm: ChatVM,
     onDismiss: () -> Unit,
 ) {
@@ -691,6 +706,8 @@ private fun ChatFilesPickerSheet(
                     )
                 )
             },
+            hasCodexBinding = hasCodexBinding,
+            onResetCodexSession = vm::resetCodexSession,
             onUpdateConversation = {
                 vm.updateConversation(it)
                 vm.saveConversationAsync()
@@ -752,7 +769,7 @@ private fun TopBar(
                 color = Color.Transparent,
             ) {
                 Column {
-                    val assistant = settings.getCurrentAssistant()
+                    val assistant = settings.getAssistantById(conversation.assistantId) ?: settings.getCurrentAssistant()
                     val model = settings.getCurrentChatModel()
                     val provider = model?.findProvider(providers = settings.providers, checkOverwrite = false)
                     Text(
@@ -761,7 +778,15 @@ private fun TopBar(
                         style = MaterialTheme.typography.bodyMedium,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (model != null && provider != null) {
+                    if (assistant.codexAppServerEnabled) {
+                        Text(
+                            text = "${assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) }} / Codex App Server",
+                            overflow = TextOverflow.Ellipsis,
+                            maxLines = 1,
+                            color = LocalContentColor.current.copy(0.65f),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    } else if (model != null && provider != null) {
                         Text(
                             text = "${assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) }} / ${model.displayName} (${provider.name})",
                             overflow = TextOverflow.Ellipsis,

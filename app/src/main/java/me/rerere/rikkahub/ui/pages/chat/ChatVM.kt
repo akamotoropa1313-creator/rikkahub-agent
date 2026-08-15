@@ -13,6 +13,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -26,8 +27,12 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
+import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
+import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Avatar
 import me.rerere.rikkahub.data.model.Conversation
@@ -37,6 +42,7 @@ import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FavoriteRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.ChatService
+import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.ui.hooks.writeStringPreference
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.rikkahub.utils.UiState
@@ -73,6 +79,25 @@ class ChatVM(
         chatService
             .getProcessingStatusFlow(_conversationId)
 
+    val codexState: StateFlow<CodexConversationUiState> = chatService.getCodexStateFlow(_conversationId)
+    val codexEnabled: StateFlow<Boolean> = kotlinx.coroutines.flow.combine(conversation, settingsStore.settingsFlow) { conversation, settings ->
+        (settings.getAssistantById(conversation.assistantId) ?: settings.getCurrentAssistant()).codexAppServerEnabled
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    private val _hasCodexBinding = MutableStateFlow(false)
+    val hasCodexBinding: StateFlow<Boolean> = _hasCodexBinding
+    fun resetCodexSession() { viewModelScope.launch {
+        chatService.resetCodexSession(_conversationId)
+        _hasCodexBinding.value = false
+    } }
+    fun interruptCodexTurn() { viewModelScope.launch { chatService.stopGeneration(_conversationId) } }
+    fun respondCodexCommandApproval(id: JsonRpcId, decision: CodexAppServerCommandApprovalDecision) {
+        viewModelScope.launch { chatService.respondCodexCommandApproval(_conversationId, id, decision) }
+    }
+    fun respondCodexFileApproval(id: JsonRpcId, decision: CodexAppServerFileChangeApprovalDecision) {
+        viewModelScope.launch { chatService.respondCodexFileApproval(_conversationId, id, decision) }
+    }
+
     val conversationJobs = chatService
         .getConversationJobs()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
@@ -84,6 +109,14 @@ class ChatVM(
         // 初始化对话
         viewModelScope.launch {
             chatService.initializeConversation(_conversationId)
+            _hasCodexBinding.value = chatService.hasCodexBinding(_conversationId)
+        }
+        viewModelScope.launch {
+            codexState.collect { state ->
+                if (state is CodexConversationUiState.Ready || state is CodexConversationUiState.Running ||
+                    state is CodexConversationUiState.WaitingForApproval || state is CodexConversationUiState.Terminal
+                ) _hasCodexBinding.value = chatService.hasCodexBinding(_conversationId)
+            }
         }
 
         // 记住对话ID, 方便下次启动恢复
