@@ -18,7 +18,7 @@ class CodexAppServerMcpApiTest {
     } }
 
     @Test fun `missing required status inventory fails`(): Unit = runBlocking { fixture().use { f ->
-        for(field in listOf("tools","resources","resourceTemplates")){ val call=async { f.api.listStatus() };val r=f.request();val item=status()["data"]!!.jsonArray.single().jsonObject.toMutableMap().also{it.remove(field)};f.respond(r,buildJsonObject { put("data",JsonArray(listOf(JsonObject(item))));put("nextCursor",JsonNull) });assertFails<CodexAppServerMcpProtocolException>{call.await()} }
+        for(field in listOf("tools","resources","resourceTemplates")){ supervisorScope { val call=async { f.api.listStatus() };val r=f.request();val item=status()["data"]!!.jsonArray.single().jsonObject.toMutableMap().also{it.remove(field)};f.respond(r,buildJsonObject { put("data",JsonArray(listOf(JsonObject(item))));put("nextCursor",JsonNull) });assertFails<CodexAppServerMcpProtocolException>{call.await()} } }
     } }
 
     @Test fun `resource tool and reload exact wire and results`(): Unit = runBlocking { fixture().use { f ->

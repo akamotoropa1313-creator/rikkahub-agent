@@ -2,6 +2,7 @@ package me.rerere.rikkahub.data.codex.appserver
 
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -60,11 +61,15 @@ class CodexAppServerSkillsApiTest {
             assertFails<IllegalArgumentException> { f.api.list(listOf(" ")) }
             assertFails<IllegalArgumentException> { f.api.writeConfig(true) }
             assertEquals(writes, f.transport.successfulWriteCount())
-            val malformed = async { f.api.list() }; f.respond(f.request(), JsonArray(emptyList()))
-            assertFails<CodexAppServerSkillsProtocolException> { malformed.await() }
-            val badSkill = async { f.api.list() }; val req = f.request()
-            f.respond(req, buildJsonObject { putJsonArray("data") { addJsonObject { put("cwd", "/"); putJsonArray("skills") { addJsonObject {} }; putJsonArray("errors") {} } } })
-            assertFails<CodexAppServerSkillsProtocolException> { badSkill.await() }
+            supervisorScope {
+                val malformed = async { f.api.list() }; f.respond(f.request(), JsonArray(emptyList()))
+                assertFails<CodexAppServerSkillsProtocolException> { malformed.await() }
+            }
+            supervisorScope {
+                val badSkill = async { f.api.list() }; val req = f.request()
+                f.respond(req, buildJsonObject { putJsonArray("data") { addJsonObject { put("cwd", "/"); putJsonArray("skills") { addJsonObject {} }; putJsonArray("errors") {} } } })
+                assertFails<CodexAppServerSkillsProtocolException> { badSkill.await() }
+            }
         }
     }
 
