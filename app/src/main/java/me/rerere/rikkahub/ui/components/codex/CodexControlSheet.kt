@@ -14,6 +14,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import me.rerere.rikkahub.service.CodexCapabilitiesUiState
 import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
@@ -25,6 +28,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexTokenUsageTelemetry
 import me.rerere.rikkahub.data.codex.appserver.CodexEffectiveConfigSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexConfigRequirementsSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerItemSnapshot
 import me.rerere.rikkahub.service.CodexReviewUiState
 import me.rerere.rikkahub.service.CodexReviewAction
 
@@ -40,6 +44,9 @@ fun CodexControlSheet(
     hasBinding: Boolean,
     onRefreshAccount: () -> Unit,
     onRefreshModels: () -> Unit,
+    onLoadThreadHistory: (String?, Boolean) -> Unit,
+    onReadHistoryThread: (String) -> Unit,
+    onCloseHistoryThread: () -> Unit,
     onRefreshConfigDiagnostics: () -> Unit,
     onRefreshSkills: () -> Unit,
     onRefreshMcp: () -> Unit,
@@ -59,6 +66,7 @@ fun CodexControlSheet(
     var sha by remember { mutableStateOf("") }
     var title by remember { mutableStateOf("") }
     var instructions by remember { mutableStateOf("") }
+    var historySearch by remember { mutableStateOf(capabilities.threadHistory.searchTerm) }
     val selectedModel = selectedCodexModel(assistant.codexModel, capabilities.models)
     val serviceTierModel = serviceTierCatalogModel(assistant.codexModel, capabilities.models)
     LazyColumn(
@@ -67,6 +75,61 @@ fun CodexControlSheet(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { Text("Codex Control Center", style = MaterialTheme.typography.headlineSmall) }
+        item {
+            Section("Thread history") {
+                val history = capabilities.threadHistory
+                if (history.selectedThreadId != null) {
+                    TextButton(modifier = Modifier.heightIn(min = 44.dp), onClick = onCloseHistoryThread) { Text("Back to history") }
+                    if (history.detailLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    history.detailError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    history.selectedThread?.let { thread ->
+                        Text(thread.name ?: thread.preview ?: "Untitled thread", style = MaterialTheme.typography.titleMedium)
+                        Text("Thread ID: ${thread.id}", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        thread.modelProvider?.let { Text("Model provider: $it") }
+                        thread.status?.let { Text("Status: ${it.wireValue}") }
+                        thread.recencyAt?.let { Text("Recency: $it") }
+                        thread.updatedAt?.let { Text("Updated: $it") }
+                        thread.cwd?.let { Text("CWD: ${it.substringAfterLast('/').ifBlank { "/" }}", maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                        thread.turns.forEach { historyTurn ->
+                            HorizontalDivider()
+                            Text("Turn ${historyTurn.turn.id}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${historyTurn.turn.status.wireValue}${historyTurn.turn.durationMs?.let { " · ${it}ms" }.orEmpty()}")
+                            historyTurn.turn.error?.let { Text(it.message, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+                            historyTurn.items.forEach { item -> Text(historyItemText(item), maxLines = 5, overflow = TextOverflow.Ellipsis) }
+                        }
+                    }
+                } else {
+                    Text("Browse persisted App Server threads without switching this conversation.")
+                    if (history.loaded) OutlinedTextField(
+                        value = historySearch, onValueChange = { historySearch = it }, modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Search") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { onLoadThreadHistory(historySearch, false) }),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(modifier = Modifier.heightIn(min = 44.dp), enabled = capabilities.connected && !history.loading && !operationBusy,
+                            onClick = { onLoadThreadHistory(historySearch.takeIf(String::isNotBlank), false) }) {
+                            Text(if (history.loaded) "Refresh" else "Load history")
+                        }
+                        if (history.loaded) Button(modifier = Modifier.heightIn(min = 44.dp), enabled = capabilities.connected && !history.loading && !operationBusy,
+                            onClick = { onLoadThreadHistory(historySearch.takeIf(String::isNotBlank), false) }) { Text("Search") }
+                    }
+                    if (history.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    history.error?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 4, overflow = TextOverflow.Ellipsis) }
+                    history.threads.forEach { thread ->
+                        ListItem(
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                            headlineContent = { Text(thread.name ?: thread.preview ?: "Untitled thread", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            supportingContent = { Text(listOfNotNull(thread.preview, thread.recencyAt?.toString(), thread.status?.wireValue, thread.modelProvider).joinToString(" · "), maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                            trailingContent = { if (thread.id == connection.threadId) Text("Current", color = MaterialTheme.colorScheme.primary) },
+                        )
+                        TextButton(modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp), enabled = !operationBusy, onClick = { onReadHistoryThread(thread.id) }) { Text("View details") }
+                    }
+                    Button(modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp), enabled = history.nextCursor != null && !history.loading && !operationBusy,
+                        onClick = { onLoadThreadHistory(history.searchTerm.takeIf(String::isNotBlank), true) }) { Text("Load more") }
+                }
+            }
+        }
         item {
             Section("Usage & status") {
                 val telemetry = connection.telemetryOrNull()
@@ -435,6 +498,23 @@ private fun CodexConversationUiState.telemetryOrNull(): CodexTokenUsageTelemetry
     is CodexConversationUiState.Terminal -> telemetry
     is CodexConversationUiState.WaitingForApproval -> telemetry
     else -> null
+}
+
+private val CodexConversationUiState.threadId: String? get() = when (this) {
+    is CodexConversationUiState.Ready -> threadId
+    is CodexConversationUiState.Running -> threadId
+    is CodexConversationUiState.Terminal -> threadId
+    else -> null
+}
+
+private fun historyItemText(item: CodexAppServerItemSnapshot): String = when (item) {
+    is CodexAppServerItemSnapshot.AgentMessage -> "Agent: ${item.text}"
+    is CodexAppServerItemSnapshot.Reasoning -> "Reasoning: ${(item.summary + item.content).joinToString("\n")}"
+    is CodexAppServerItemSnapshot.CommandExecution -> "Command: ${item.command}${item.aggregatedOutput?.let { "\n$it" }.orEmpty()}"
+    is CodexAppServerItemSnapshot.FileChange -> "File changes: ${item.changes.size}"
+    is CodexAppServerItemSnapshot.EnteredReviewMode -> "Entered review mode: ${item.review}"
+    is CodexAppServerItemSnapshot.ExitedReviewMode -> "Exited review mode: ${item.review}"
+    is CodexAppServerItemSnapshot.Other -> "${item.type} item"
 }
 
 @Composable

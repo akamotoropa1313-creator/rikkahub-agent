@@ -26,6 +26,46 @@ class CodexAppServerThreadApiTest {
     private val codec = CodexAppServerJsonRpc()
 
     @Test
+    fun `history list strictly decodes metadata status cursors and preserves future fields`() {
+        val page = decodeThreadList(buildJsonObject {
+            put("data", JsonArray(listOf(buildJsonObject {
+                put("id", "t1"); put("preview", "hello"); put("createdAt", 123L); put("recencyAt", JsonNull)
+                put("status", buildJsonObject { put("type", "active"); put("activeFlags", JsonArray(listOf(JsonPrimitive("waiting")))) })
+                put("future", buildJsonObject { put("kept", true) })
+            })))
+            put("nextCursor", "next"); put("backwardsCursor", JsonNull)
+        })
+        assertEquals("next", page.nextCursor); assertEquals(null, page.backwardsCursor)
+        assertEquals(123L, page.data.single().createdAt)
+        assertTrue(page.data.single().status is CodexAppServerThreadStatus.Active)
+        assertTrue("future" in page.data.single().raw)
+        listOf(JsonPrimitive("123"), JsonPrimitive(123.5)).forEach { invalid ->
+            expect<CodexAppServerThreadProtocolException> { decodeThreadList(buildJsonObject {
+                put("data", JsonArray(listOf(buildJsonObject { put("id", "t"); put("createdAt", invalid) })))
+            }) }
+        }
+    }
+
+    @Test
+    fun `history list and read use exact stable wire`() = runBlocking {
+        fixture().use { f ->
+            val list = async { f.api.listThreads(cwd = "/repo", searchTerm = "query") }
+            val request = f.takeRequest()
+            assertEquals("thread/list", request.method)
+            assertEquals(setOf("limit", "sortKey", "sortDirection", "cwd", "archived", "searchTerm"), request.params!!.jsonObject.keys)
+            f.respond(request, buildJsonObject { put("data", JsonArray(emptyList())); put("nextCursor", JsonNull); put("backwardsCursor", JsonNull) })
+            list.await()
+
+            val read = async { f.api.readThread("t1") }
+            val readRequest = f.takeRequest()
+            assertEquals("thread/read", readRequest.method)
+            assertEquals(buildJsonObject { put("threadId", "t1"); put("includeTurns", true) }, readRequest.params)
+            f.respond(readRequest, buildJsonObject { put("thread", buildJsonObject { put("id", "t1"); put("turns", JsonArray(emptyList())) }) })
+            assertEquals("t1", read.await().id)
+        }
+    }
+
+    @Test
     fun `default start uses exact minimal wire and decodes raw result`() {
         runBlocking {
             fixture().use { f ->

@@ -842,6 +842,10 @@ class ChatService(
     }
     suspend fun refreshCodexSkills(id: Uuid) = withCodexCapabilityLease(id) { it.refreshSkills(true) }
     suspend fun refreshCodexModels(id: Uuid) = withCodexCapabilityLease(id) { it.refreshModels() }
+    suspend fun loadCodexThreadHistory(id: Uuid, searchTerm: String? = null, loadMore: Boolean = false) =
+        withCodexCapabilityLease(id) { it.loadThreadHistory(searchTerm, loadMore) }
+    suspend fun readCodexHistoryThread(id: Uuid, threadId: String) = withCodexCapabilityLease(id) { it.readHistoryThread(threadId) }
+    fun closeCodexHistoryThread(id: Uuid) { sessions[id]?.codexRuntime?.closeHistoryThread() }
     suspend fun refreshCodexConfigDiagnostics(id: Uuid) = withCodexCapabilityLease(id) { it.refreshConfigDiagnostics() }
     suspend fun startCodexReview(id: Uuid, target: CodexAppServerReviewTarget) = withCodexCapabilityLease(id) { runtime ->
         val result = runtime.startReview(target)
