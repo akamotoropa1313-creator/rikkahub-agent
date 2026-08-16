@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.codex.appserver
 
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.time.Duration
@@ -51,9 +52,10 @@ private fun CodexAppServerReviewTarget.toJson(): JsonObject = when (this) {
     CodexAppServerReviewTarget.UncommittedChanges -> JsonObject(mapOf("type" to JsonPrimitive("uncommittedChanges")))
     is CodexAppServerReviewTarget.BaseBranch -> JsonObject(mapOf("type" to JsonPrimitive("baseBranch"), "branch" to JsonPrimitive(branch)))
     is CodexAppServerReviewTarget.Commit -> JsonObject(buildMap {
-        put("type", JsonPrimitive("commit")); put("sha", JsonPrimitive(sha))
-        // Upstream's Option + skip_serializing_if semantics omit None rather than sending null.
-        title?.let { put("title", JsonPrimitive(it)) }
+        put("type", JsonPrimitive("commit"))
+        put("sha", JsonPrimitive(sha))
+        // Stable v2 ReviewTarget keeps `title` present and nullable; None serializes as JSON null.
+        put("title", title?.let(::JsonPrimitive) ?: JsonNull)
     })
     is CodexAppServerReviewTarget.Custom -> JsonObject(mapOf("type" to JsonPrimitive("custom"), "instructions" to JsonPrimitive(instructions)))
 }
