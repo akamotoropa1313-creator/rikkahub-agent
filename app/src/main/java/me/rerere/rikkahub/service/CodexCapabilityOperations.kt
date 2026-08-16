@@ -21,22 +21,20 @@ suspend fun <T> runCodexMcpOAuthBegin(
  * The App Server may omit loginId on the completion notification, so the sole in-flight login
  * attempt has to own that anonymous completion. Non-null completions are retained only for the
  * duration of that start attempt and are bounded to avoid accumulating stale IDs.
- *
- * All calls are made while CodexChatRuntime holds its account-login lock, which lets the runtime
- * update this correlation state and CodexCapabilitiesUiState atomically with respect to the
- * account event collector.
  */
 internal class CodexAccountLoginCorrelation {
     private var awaitingStartId = false
     private var anonymousCompletion: CodexAppServerAccountEvent.LoginCompleted? = null
     private val completionsById = linkedMapOf<String, CodexAppServerAccountEvent.LoginCompleted>()
 
+    @Synchronized
     fun beginAttempt() {
         awaitingStartId = true
         clearBuffered()
     }
 
     /** Returns true when the event was buffered for the still-unknown start loginId. */
+    @Synchronized
     fun bufferIfAwaiting(event: CodexAppServerAccountEvent.LoginCompleted): Boolean {
         if (!awaitingStartId) return false
         val id = event.loginId
@@ -56,6 +54,7 @@ internal class CodexAccountLoginCorrelation {
      * An exact ID wins; otherwise an anonymous completion belongs to the sole in-flight attempt.
      * All unrelated buffered IDs are discarded at this boundary.
      */
+    @Synchronized
     fun resolveStart(loginId: String): CodexAppServerAccountEvent.LoginCompleted? {
         check(awaitingStartId) { "No Codex account login start is awaiting correlation" }
         awaitingStartId = false
@@ -64,11 +63,13 @@ internal class CodexAccountLoginCorrelation {
         return completion
     }
 
+    @Synchronized
     fun abortAttempt() {
         awaitingStartId = false
         clearBuffered()
     }
 
+    @Synchronized
     internal fun bufferedCountForTest(): Int = completionsById.size + if (anonymousCompletion != null) 1 else 0
 
     private fun clearBuffered() {
