@@ -21,6 +21,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexMcpAuthStatus
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.CodexPersonalityPreference
 import me.rerere.rikkahub.data.model.CodexReasoningSummaryPreference
+import me.rerere.rikkahub.data.codex.appserver.CodexTokenUsageTelemetry
 
 /** Explicit control plane for the existing conversation-owned Codex runtime. Opening it sends no RPC. */
 @Composable
@@ -53,6 +54,32 @@ fun CodexControlSheet(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { Text("Codex Control Center", style = MaterialTheme.typography.headlineSmall) }
+        item {
+            Section("Usage & status") {
+                val telemetry = connection.telemetryOrNull()
+                val usage = telemetry?.latest?.tokenUsage
+                if (usage == null) Text("No token usage reported yet") else {
+                    Text("Current context", style = MaterialTheme.typography.titleMedium)
+                    Text(currentContextText(usage))
+                    if (usage.modelContextWindow == null) Text("Context window: Not reported")
+                    Text("Session total: ${formatTokenCount(usage.total.totalTokens)} tokens")
+                    Text("Latest usage breakdown", style = MaterialTheme.typography.titleMedium)
+                    Text("Input: ${formatTokenCount(usage.last.inputTokens)}")
+                    Text("Cached input: ${formatTokenCount(usage.last.cachedInputTokens)}")
+                    usage.last.cacheWriteInputTokens?.let { Text("Cache write input: ${formatTokenCount(it)}") }
+                    Text("Output: ${formatTokenCount(usage.last.outputTokens)}")
+                    Text("Reasoning output: ${formatTokenCount(usage.last.reasoningOutputTokens)}")
+                }
+                telemetry?.warning?.let { Text("Usage warning: $it", color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+                (connection as? CodexConversationUiState.Terminal)?.diagnostics?.let { turn ->
+                    Text(turnStatusText(turn), style = MaterialTheme.typography.titleMedium)
+                    turn.error?.let { error ->
+                        Text("${errorCategoryLabel(error.codexErrorInfo)}: ${error.message}", color = MaterialTheme.colorScheme.error)
+                        error.additionalDetails?.let { Text(it, maxLines = 4, overflow = TextOverflow.Ellipsis) }
+                    }
+                }
+            }
+        }
         item {
             Section("Safety & permissions") {
                 Text("Sandbox", style = MaterialTheme.typography.titleMedium)
@@ -312,6 +339,14 @@ fun CodexControlSheet(
             dismissButton = { TextButton(onClick = { pendingSafety = null }) { Text("Cancel") } },
         )
     }
+}
+
+private fun CodexConversationUiState.telemetryOrNull(): CodexTokenUsageTelemetry? = when (this) {
+    is CodexConversationUiState.Ready -> telemetry
+    is CodexConversationUiState.Running -> telemetry
+    is CodexConversationUiState.Terminal -> telemetry
+    is CodexConversationUiState.WaitingForApproval -> telemetry
+    else -> null
 }
 
 @Composable

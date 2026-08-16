@@ -54,6 +54,11 @@ class CodexChatRuntime(
     private val capabilityBusy = AtomicBoolean(false)
     private val _capabilities = MutableStateFlow(CodexCapabilitiesUiState(connected = true))
     val capabilities: StateFlow<CodexCapabilitiesUiState> = _capabilities.asStateFlow()
+    val tokenUsage: StateFlow<CodexTokenUsageTelemetry> = session.tokenUsageTracker.state
+
+    private val usageCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+        tokenUsage.collect { telemetry -> _state.value = _state.value.withTelemetry(telemetry) }
+    }
 
     private val accountLoginCorrelation = CodexAccountLoginCorrelation()
     private val accountCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -200,15 +205,21 @@ class CodexChatRuntime(
 
     private fun record(turnId: String) = turns.computeIfAbsent(turnId) { TurnRecord() }
 
-    private suspend fun terminal(turnId: String, status: CodexAppServerTurnStatus) {
+    private suspend fun terminal(turnId: String, status: CodexAppServerTurnStatus, snapshot: CodexAppServerTurnSnapshot? = null) {
         val turn = record(turnId)
-        if (!terminalClaimed.add(turnId)) return
+        if (!terminalClaimed.add(turnId)) {
+            val current = _state.value
+            if (current is CodexConversationUiState.Terminal && current.turnId == turnId && snapshot != null) {
+                _state.value = current.copy(diagnostics = snapshot)
+            }
+            return
+        }
         recentTerminalTurns.add(turnId)
         while (recentTerminalTurns.size > 32) terminalClaimed.remove(recentTerminalTurns.poll())
         turn.status = status
         val isCurrent = activeTurnId == null || activeTurnId == turnId
         if (activeTurnId == turnId) activeTurnId = null
-        if (isCurrent) _state.value = CodexConversationUiState.Terminal(session.threadId, turnId, status, activity(turnId))
+        if (isCurrent) _state.value = CodexConversationUiState.Terminal(session.threadId, turnId, status, activity(turnId), snapshot, tokenUsage.value)
         onTurnTerminal(turnId)
         turn.terminal.complete(status)
     }
@@ -232,7 +243,7 @@ class CodexChatRuntime(
         val snapshot = activity(turnId)
         val current = _state.value
         _state.value = if (current is CodexConversationUiState.WaitingForApproval) current.copy(activity = snapshot)
-        else CodexConversationUiState.Running(session.threadId, turnId, snapshot)
+        else CodexConversationUiState.Running(session.threadId, turnId, snapshot, tokenUsage.value)
     }
 
     private val collector: Job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -244,7 +255,7 @@ class CodexChatRuntime(
                     if (!terminalClaimed.contains(event.turn.id) && (activeTurnId == null || activeTurnId == event.turn.id)) {
                         activeTurnId = event.turn.id
                         interruptWhenKnown(event.turn.id)
-                        _state.value = CodexConversationUiState.Running(session.threadId, event.turn.id)
+                        _state.value = CodexConversationUiState.Running(session.threadId, event.turn.id, telemetry = tokenUsage.value)
                     }
                 }
                 is CodexAppServerTurnEvent.AgentMessageDelta -> {
@@ -254,7 +265,7 @@ class CodexChatRuntime(
                     val accumulated = text.compute(key) { _, old -> old.orEmpty() + event.delta }!!
                     onAgentText(event.turnId, event.itemId, accumulated)
                 }
-                is CodexAppServerTurnEvent.TurnCompleted -> terminal(event.turn.id, event.turn.status)
+                is CodexAppServerTurnEvent.TurnCompleted -> terminal(event.turn.id, event.turn.status, event.turn)
                 is CodexAppServerTurnEvent.ReasoningSummaryTextDelta -> {
                     reasoning.compute(event.turnId to event.itemId) { _, old -> old.orEmpty() + event.delta }
                     publishActivity(event.turnId)
@@ -308,18 +319,24 @@ class CodexChatRuntime(
         session.approvalApi.events.collect { event ->
             when (event) {
                 is CodexAppServerApprovalEvent.CommandExecutionRequest ->
-                    _state.value = CodexConversationUiState.WaitingForApproval(event, activity = activity(event.request.turnId))
+                    _state.value = CodexConversationUiState.WaitingForApproval(
+                        event,
+                        activity = activity(event.request.turnId),
+                        telemetry = tokenUsage.value,
+                    )
                 is CodexAppServerApprovalEvent.FileChangeRequest ->
                     _state.value = CodexConversationUiState.WaitingForApproval(
-                        event, fileChange = files[event.request.itemId]?.takeIf { event.request.turnId == activeTurnId },
-                        activity = activity(event.request.turnId)
+                        event,
+                        fileChange = files[event.request.itemId]?.takeIf { event.request.turnId == activeTurnId },
+                        activity = activity(event.request.turnId),
+                        telemetry = tokenUsage.value,
                     )
                 is CodexAppServerApprovalEvent.Resolved -> {
                     approvalResponses.add(event.requestId)
                     val waiting = _state.value as? CodexConversationUiState.WaitingForApproval
                     if (waiting?.requestId == event.requestId) {
-                        _state.value = activeTurnId?.let { CodexConversationUiState.Running(session.threadId, it, waiting.activity) }
-                            ?: CodexConversationUiState.Ready(session.threadId)
+                        _state.value = activeTurnId?.let { CodexConversationUiState.Running(session.threadId, it, waiting.activity, tokenUsage.value) }
+                            ?: CodexConversationUiState.Ready(session.threadId, tokenUsage.value)
                     }
                 }
                 is CodexAppServerApprovalEvent.MalformedRequest -> _state.value = CodexConversationUiState.Failed(event.cause.message ?: "Malformed approval")
@@ -373,7 +390,7 @@ class CodexChatRuntime(
         if (status is CodexAppServerTurnStatus.InProgress) {
             activeTurnId = turnId
             interruptWhenKnown(turnId)
-            _state.value = CodexConversationUiState.Running(session.threadId, turnId, activity(turnId))
+            _state.value = CodexConversationUiState.Running(session.threadId, turnId, activity(turnId), tokenUsage.value)
         } else terminal(turnId, status)
     }
 
@@ -396,6 +413,7 @@ class CodexChatRuntime(
         approvalCollector.cancel()
         accountCollector.cancel()
         mcpCollector.cancel()
+        usageCollector.cancel()
         _capabilities.value = CodexCapabilitiesUiState(connected = false)
         session.close()
     }
@@ -474,14 +492,15 @@ sealed interface CodexConversationUiState {
     data object Disabled : CodexConversationUiState
     data object Disconnected : CodexConversationUiState
     data object Opening : CodexConversationUiState
-    data class Ready(val threadId: String) : CodexConversationUiState
-    data class Running(val threadId: String, val turnId: String, val activity: CodexConversationActivity = CodexConversationActivity()) : CodexConversationUiState
-    data class Terminal(val threadId: String, val turnId: String, val status: CodexAppServerTurnStatus, val activity: CodexConversationActivity = CodexConversationActivity()) : CodexConversationUiState
+    data class Ready(val threadId: String, val telemetry: CodexTokenUsageTelemetry = CodexTokenUsageTelemetry()) : CodexConversationUiState
+    data class Running(val threadId: String, val turnId: String, val activity: CodexConversationActivity = CodexConversationActivity(), val telemetry: CodexTokenUsageTelemetry = CodexTokenUsageTelemetry()) : CodexConversationUiState
+    data class Terminal(val threadId: String, val turnId: String, val status: CodexAppServerTurnStatus, val activity: CodexConversationActivity = CodexConversationActivity(), val diagnostics: CodexAppServerTurnSnapshot? = null, val telemetry: CodexTokenUsageTelemetry = CodexTokenUsageTelemetry()) : CodexConversationUiState
     data class WaitingForApproval(
         val event: CodexAppServerApprovalEvent,
         val submitting: Boolean = false,
         val fileChange: CodexAppServerItemSnapshot.FileChange? = null,
         val activity: CodexConversationActivity = CodexConversationActivity(),
+        val telemetry: CodexTokenUsageTelemetry = CodexTokenUsageTelemetry(),
     ) : CodexConversationUiState {
         val requestId: JsonRpcId? get() = when (event) {
             is CodexAppServerApprovalEvent.CommandExecutionRequest -> event.requestId
@@ -492,6 +511,14 @@ sealed interface CodexConversationUiState {
     data class StaleBinding(val reason: String) : CodexConversationUiState
     data class WorkspaceMismatch(val boundWorkspaceId: String, val requestedWorkspaceId: String) : CodexConversationUiState
     data class Failed(val message: String) : CodexConversationUiState
+}
+
+private fun CodexConversationUiState.withTelemetry(value: CodexTokenUsageTelemetry): CodexConversationUiState = when (this) {
+    is CodexConversationUiState.Ready -> copy(telemetry = value)
+    is CodexConversationUiState.Running -> copy(telemetry = value)
+    is CodexConversationUiState.Terminal -> copy(telemetry = value)
+    is CodexConversationUiState.WaitingForApproval -> copy(telemetry = value)
+    else -> this
 }
 
 private fun CodexAppServerTurnEvent.threadIdOrNull(): String? = when (this) {

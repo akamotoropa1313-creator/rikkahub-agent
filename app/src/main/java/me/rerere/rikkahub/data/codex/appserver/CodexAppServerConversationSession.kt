@@ -25,6 +25,7 @@ open class CodexAppServerConversationSession internal constructor(
     val binding: CodexAppServerSessionBindingEntity,
     val connection: CodexAppServerConnection,
     private val bindingRepository: CodexAppServerSessionBindingRepository,
+    val tokenUsageTracker: CodexTokenUsageTracker = CodexTokenUsageTracker(connection, binding.threadId),
 ) : Closeable {
     val conversationId: String get() = binding.conversationId
     val workspaceId: String get() = binding.workspaceId
@@ -113,6 +114,7 @@ open class CodexAppServerConversationSession internal constructor(
         // Publication is deliberately last: observing failure is proof that all owned work and
         // the process connection have already crossed their deterministic cleanup boundary.
         job.cancel()
+        tokenUsageTracker.close()
         connection.close()
         if (cause != null) mutableFailure.value = cause
     }

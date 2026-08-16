@@ -21,7 +21,8 @@ class CodexAppServerRecoveredSession internal constructor(
     connection: CodexAppServerConnection,
     val resumeResult: CodexAppServerThreadOpenResult,
     repository: CodexAppServerSessionBindingRepository,
-) : CodexAppServerConversationSession(binding, connection, repository)
+    usageTracker: CodexTokenUsageTracker,
+) : CodexAppServerConversationSession(binding, connection, repository, usageTracker)
 
 class CodexAppServerSessionRecovery(
     private val repository: CodexAppServerSessionBindingRepository,
@@ -47,8 +48,11 @@ class CodexAppServerSessionRecovery(
 
         val connection = connectionFactory.create(workspace.root, binding.workspaceCwd)
         var ownershipTransferred = false
+        var usageTracker: CodexTokenUsageTracker? = null
         try {
             connection.initialize()
+            // Establish the no-replay subscription synchronously before resume can emit replay.
+            usageTracker = CodexTokenUsageTracker(connection, binding.threadId)
             val resumed = CodexAppServerThreadApi(connection).resumeThread(binding.threadId, overrides)
             val resumedAtMs = repository.markResumed(binding.conversationId, binding.threadId)
             val session = CodexAppServerRecoveredSession(
@@ -56,11 +60,12 @@ class CodexAppServerSessionRecovery(
                 connection,
                 resumed,
                 repository,
+                checkNotNull(usageTracker),
             )
             ownershipTransferred = true
             return CodexAppServerSessionRecoveryResult.Recovered(session)
         } finally {
-            if (!ownershipTransferred) connection.close()
+            if (!ownershipTransferred) { usageTracker?.close(); connection.close() }
         }
     }
 }
