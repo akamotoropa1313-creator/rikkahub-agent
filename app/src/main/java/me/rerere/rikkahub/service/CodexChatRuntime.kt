@@ -319,11 +319,17 @@ class CodexChatRuntime(
         session.approvalApi.events.collect { event ->
             when (event) {
                 is CodexAppServerApprovalEvent.CommandExecutionRequest ->
-                    _state.value = CodexConversationUiState.WaitingForApproval(event, activity = activity(event.request.turnId))
+                    _state.value = CodexConversationUiState.WaitingForApproval(
+                        event,
+                        activity = activity(event.request.turnId),
+                        telemetry = tokenUsage.value,
+                    )
                 is CodexAppServerApprovalEvent.FileChangeRequest ->
                     _state.value = CodexConversationUiState.WaitingForApproval(
-                        event, fileChange = files[event.request.itemId]?.takeIf { event.request.turnId == activeTurnId },
-                        activity = activity(event.request.turnId)
+                        event,
+                        fileChange = files[event.request.itemId]?.takeIf { event.request.turnId == activeTurnId },
+                        activity = activity(event.request.turnId),
+                        telemetry = tokenUsage.value,
                     )
                 is CodexAppServerApprovalEvent.Resolved -> {
                     approvalResponses.add(event.requestId)
@@ -494,6 +500,7 @@ sealed interface CodexConversationUiState {
         val submitting: Boolean = false,
         val fileChange: CodexAppServerItemSnapshot.FileChange? = null,
         val activity: CodexConversationActivity = CodexConversationActivity(),
+        val telemetry: CodexTokenUsageTelemetry = CodexTokenUsageTelemetry(),
     ) : CodexConversationUiState {
         val requestId: JsonRpcId? get() = when (event) {
             is CodexAppServerApprovalEvent.CommandExecutionRequest -> event.requestId
@@ -510,6 +517,7 @@ private fun CodexConversationUiState.withTelemetry(value: CodexTokenUsageTelemet
     is CodexConversationUiState.Ready -> copy(telemetry = value)
     is CodexConversationUiState.Running -> copy(telemetry = value)
     is CodexConversationUiState.Terminal -> copy(telemetry = value)
+    is CodexConversationUiState.WaitingForApproval -> copy(telemetry = value)
     else -> this
 }
 
