@@ -24,6 +24,8 @@ internal typealias CodexAppServerReasoningSummary =
 /**
  * Stage16 turn settings factory. Personality is emitted only after an explicit model/list refresh
  * has confirmed support for the selected wire model; unknown support means omit, not guess.
+ * Service tier intentionally differs: a saved explicit tier is allowed on a turn when catalog
+ * knowledge is unavailable, leaving the App Server as the final authority after the runtime exists.
  */
 internal fun CodexAppServerTurnStartParams(
     model: String? = null,
@@ -41,9 +43,12 @@ internal fun CodexAppServerTurnStartParams(
     )
 
 /**
- * New threads never need an unconfirmed personality override: the same saved preference is applied
- * on a later turn once the current App Server catalog confirms model support. This also prevents a
- * stale saved preference from making thread creation fail before model discovery is possible.
+ * New threads omit unconfirmed model-sensitive overrides so a stale persisted preference cannot
+ * prevent the runtime from being created. `default` is protocol-defined and safe to emit without
+ * catalog confirmation; a specific tier is emitted only when the current-process catalog confirms
+ * it for the selected wire model (or its explicit isDefault model when [model] is null). The saved
+ * preference itself is not changed, so a later turn can still apply it under the Stage18 Unknown
+ * policy once the runtime exists.
  */
 internal fun CodexAppServerThreadStartParams(
     model: String? = null,
@@ -55,5 +60,9 @@ internal fun CodexAppServerThreadStartParams(
         model = model,
         developerInstructions = developerInstructions,
         personality = null,
-        serviceTier = serviceTier,
+        serviceTier = when (serviceTier) {
+            null -> null
+            "default" -> "default"
+            else -> serviceTier.takeIf { CodexModelCatalogKnowledge.serviceTierConfirmed(model, it) }
+        },
     )
