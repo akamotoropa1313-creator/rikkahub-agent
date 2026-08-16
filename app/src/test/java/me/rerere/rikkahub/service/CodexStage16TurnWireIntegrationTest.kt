@@ -32,7 +32,7 @@ class CodexStage16TurnWireIntegrationTest {
     private val codec = CodexAppServerJsonRpc()
 
     @Test
-    fun `normal turn carries concrete Stage16 settings in one turn start`() = runBlocking {
+    fun `normal turn carries concrete Stage16 settings in one turn start`() = runBlocking<Unit> {
         fixture().use { f ->
             CodexModelCatalogKnowledge.replace(listOf(model("wire-model", supportsPersonality = true)))
             val params = CodexAppServerTurnStartParams(
@@ -62,7 +62,7 @@ class CodexStage16TurnWireIntegrationTest {
     }
 
     @Test
-    fun `explicit skill keeps Text then Skill order and shares Stage16 settings`() = runBlocking {
+    fun `explicit skill keeps Text then Skill order and shares Stage16 settings`() = runBlocking<Unit> {
         fixture().use { f ->
             CodexModelCatalogKnowledge.replace(listOf(model("wire-model", supportsPersonality = true)))
             val skill = CodexSkillMetadata(
@@ -105,7 +105,7 @@ class CodexStage16TurnWireIntegrationTest {
     }
 
     @Test
-    fun `unconfirmed or unsupported personality stays off the wire while saved request survives`() = runBlocking {
+    fun `unconfirmed or unsupported personality stays off the wire while saved request survives`() = runBlocking<Unit> {
         fixture().use { f ->
             CodexModelCatalogKnowledge.clearForTest()
             val requested = CodexAppServerPersonality.valueOf("FRIENDLY")
