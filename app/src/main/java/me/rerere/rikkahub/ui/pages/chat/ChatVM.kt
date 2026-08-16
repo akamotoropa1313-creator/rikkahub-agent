@@ -101,6 +101,10 @@ class ChatVM(
     fun reconnectCodexSession() { viewModelScope.launch { runCatching { chatService.reconnectCodexSession(_conversationId) } } }
     fun interruptCodexTurn() { viewModelScope.launch { chatService.stopGeneration(_conversationId) } }
     fun refreshCodexSkills() { viewModelScope.launch { runCatching { chatService.refreshCodexSkills(_conversationId) } } }
+    fun refreshCodexModels() { viewModelScope.launch { runCatching { chatService.refreshCodexModels(_conversationId) } } }
+    fun updateCodexPreferences(updated: Assistant) { viewModelScope.launch { settingsStore.update { settings ->
+        settings.copy(assistants = settings.assistants.map { if (it.id == updated.id) updated else it })
+    } } }
     fun refreshCodexAccount() { viewModelScope.launch { runCatching { chatService.refreshCodexAccount(_conversationId) } } }
     fun refreshCodexMcp() { viewModelScope.launch { runCatching { chatService.refreshCodexMcp(_conversationId) } } }
     fun reloadCodexMcp() { viewModelScope.launch { runCatching { chatService.reloadCodexMcp(_conversationId) } } }

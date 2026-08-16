@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.components.codex
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -12,14 +13,18 @@ import me.rerere.rikkahub.service.CodexCapabilitiesUiState
 import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
 import me.rerere.rikkahub.data.codex.appserver.CodexMcpAuthStatus
+import me.rerere.rikkahub.data.model.*
 
 /** Explicit control plane for the existing conversation-owned Codex runtime. Opening it sends no RPC. */
 @Composable
 fun CodexControlSheet(
     connection: CodexConversationUiState,
     capabilities: CodexCapabilitiesUiState,
+    assistant: Assistant,
+    onUpdateAssistant: (Assistant) -> Unit,
     hasBinding: Boolean,
     onRefreshAccount: () -> Unit,
+    onRefreshModels: () -> Unit,
     onRefreshSkills: () -> Unit,
     onRefreshMcp: () -> Unit,
     onReloadMcp: () -> Unit,
@@ -38,6 +43,53 @@ fun CodexControlSheet(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { Text("Codex Control Center", style = MaterialTheme.typography.headlineSmall) }
+        item {
+            Section("Model & behavior") {
+                Text("Codex model", style = MaterialTheme.typography.titleMedium)
+                Text("The App Server catalog is authoritative. Applies from the next Codex turn.")
+                Button(onClick = onRefreshModels, enabled = capabilities.connected && !capabilities.modelsLoading && !operationBusy) {
+                    Text(if (capabilities.models.isEmpty()) "Load models" else "Refresh models")
+                }
+                capabilities.modelsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        }
+        items(capabilities.models, key = { it.id }) { model ->
+            ListItem(
+                headlineContent = { Text(model.displayName + if (model.isDefault) " · Default" else "", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                supportingContent = {
+                    Column {
+                        Text(model.description, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text("Effort: " + model.supportedReasoningEfforts.joinToString(" · ") { it.reasoningEffort })
+                        if (!model.supportsPersonality) Text("This model does not advertise personality support")
+                    }
+                }, trailingContent = {
+                    TextButton(onClick = {
+                        val supported = model.supportedReasoningEfforts.map { it.reasoningEffort }
+                        if (supported.isEmpty()) return@TextButton
+                        onUpdateAssistant(assistant.copy(codexModel = model.model,
+                            codexReasoningEffort = assistant.codexReasoningEffort?.takeIf(supported::contains) ?: model.defaultReasoningEffort))
+                    }) { Text(if (assistant.codexModel == model.model) "Selected" else "Select") }
+                },
+            )
+        }
+        capabilities.models.firstOrNull { it.model == assistant.codexModel }?.let { selected ->
+            items(selected.supportedReasoningEfforts, key = { it.reasoningEffort }) { effort ->
+                TextButton(onClick = { onUpdateAssistant(assistant.copy(codexReasoningEffort = effort.reasoningEffort)) }) {
+                    Text((if (assistant.codexReasoningEffort == effort.reasoningEffort) "✓ " else "") + effort.reasoningEffort + " · " + effort.description)
+                }
+            }
+            item {
+                Text("Reasoning summary")
+                Row(Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState())) {
+                    CodexReasoningSummaryPreference.entries.forEach { value -> TextButton(onClick = { onUpdateAssistant(assistant.copy(codexReasoningSummary = value)) }) { Text(value.name.lowercase()) } }
+                }
+                Text("Personality")
+                Row(Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState())) {
+                    CodexPersonalityPreference.entries.forEach { value -> TextButton(enabled = selected.supportsPersonality, onClick = { onUpdateAssistant(assistant.copy(codexPersonality = value)) }) { Text(value.name.lowercase()) } }
+                }
+                if (!selected.supportsPersonality) Text("This model does not advertise personality support")
+            }
+        }
         item { Section("Connection") {
             Text(connectionLabel(connection, hasBinding))
             if (codexReconnectEligible(connection, hasBinding, capabilities.connected, operationBusy)) Button(onClick = onReconnect) { Text("Reconnect Codex") }

@@ -529,7 +529,7 @@ private fun ChatPageContent(
         }
         if (showCodexControls) {
             ModalBottomSheet(onDismissRequest = { showCodexControls = false }) {
-                CodexControlSheet(codexState, codexCapabilities, hasCodexBinding, vm::refreshCodexAccount, vm::refreshCodexSkills, vm::refreshCodexMcp, vm::reloadCodexMcp, vm::beginCodexAccountLogin, vm::cancelCodexAccountLogin, vm::logoutCodexAccount, vm::setCodexSkillEnabled, { vm.selectCodexSkill(it); showCodexControls = false }, vm::beginCodexMcpOAuth, codexOperationBusy, vm::reconnectCodexSession)
+                CodexControlSheet(codexState, codexCapabilities, assistant, vm::updateCodexPreferences, hasCodexBinding, vm::refreshCodexAccount, vm::refreshCodexModels, vm::refreshCodexSkills, vm::refreshCodexMcp, vm::reloadCodexMcp, vm::beginCodexAccountLogin, vm::cancelCodexAccountLogin, vm::logoutCodexAccount, vm::setCodexSkillEnabled, { vm.selectCodexSkill(it); showCodexControls = false }, vm::beginCodexMcpOAuth, codexOperationBusy, vm::reconnectCodexSession)
             }
         }
     }

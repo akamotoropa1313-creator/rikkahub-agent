@@ -94,6 +94,17 @@ class CodexChatRuntime(
             .onFailure { _capabilities.value = _capabilities.value.copy(skillsLoading = false, skillsError = it.safeMessage()); throw it }
     }
 
+    suspend fun refreshModels() = capabilityOperation {
+        _capabilities.value = _capabilities.value.copy(modelsLoading = true, modelsError = null)
+        try {
+            val models = session.modelApi.listAllVisible()
+            _capabilities.value = _capabilities.value.copy(modelsLoading = false, models = models)
+        } catch (failure: Throwable) {
+            _capabilities.value = _capabilities.value.copy(modelsLoading = false, modelsError = failure.safeMessage())
+            throw failure
+        }
+    }
+
     suspend fun setSkillEnabled(skill: CodexSkillMetadata, enabled: Boolean) = capabilityOperation {
         _capabilities.value = _capabilities.value.copy(skillUpdatingPath = skill.path, skillsError = null)
         try {
@@ -392,6 +403,9 @@ class CodexChatRuntime(
 
 data class CodexCapabilitiesUiState(
     val connected: Boolean = false,
+    val modelsLoading: Boolean = false,
+    val models: List<CodexAppServerModel> = emptyList(),
+    val modelsError: String? = null,
     val skillsLoading: Boolean = false,
     val skillGroups: List<CodexSkillsListEntry> = emptyList(),
     val skillUpdatingPath: String? = null,

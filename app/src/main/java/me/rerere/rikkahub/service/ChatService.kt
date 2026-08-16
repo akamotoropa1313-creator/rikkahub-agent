@@ -709,8 +709,10 @@ class ChatService(
                     append("\n\n--- Conversation instructions ---\n").append(conversation.customSystemPrompt)
                 }
             }.ifBlank { null }
+            val threadPersonality = assistant.codexPersonality?.let { CodexAppServerPersonality.valueOf(it.name) }
             when (val opened = opener.open(conversationId.toString(), workspaceId, cwd,
-                CodexAppServerThreadStartParams(developerInstructions = instructions))) {
+                CodexAppServerThreadStartParams(model = assistant.codexModel,
+                    developerInstructions = instructions, personality = threadPersonality))) {
                 is CodexAppServerConversationSessionOpenResult.Started -> opened.session
                 is CodexAppServerConversationSessionOpenResult.Recovered -> opened.session
                 is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
@@ -743,7 +745,16 @@ class ChatService(
                 .removePrefix("$${skill.name}").trimStart()
             buildCodexSkillInvocation(skill, prompt)
         } ?: parts.map { CodexAppServerTurnInput.Text((it as UIMessagePart.Text).text) }
-        val result = acceptCodexSkillAfterStart({ runtime.session.startTurn(input) }, onAccepted)
+        val selectedCatalogModel = runtime.capabilities.value.models.firstOrNull { it.model == assistant.codexModel }
+        val personality = assistant.codexPersonality?.let { CodexAppServerPersonality.valueOf(it.name) }
+            ?.takeUnless { selectedCatalogModel?.supportsPersonality == false }
+        val params = CodexAppServerTurnStartParams(
+            model = assistant.codexModel,
+            effort = assistant.codexReasoningEffort,
+            summary = assistant.codexReasoningSummary?.let { CodexAppServerReasoningSummary.valueOf(it.name) },
+            personality = personality,
+        )
+        val result = acceptCodexSkillAfterStart({ runtime.session.startTurn(input, params) }, onAccepted)
         runtime.acceptStartResponse(result.turn.id, result.turn.status)
         try {
             runtime.awaitTurnTerminal(result.turn.id)
@@ -783,6 +794,7 @@ class ChatService(
         finally { owner.endCodexOperation() }
     }
     suspend fun refreshCodexSkills(id: Uuid) = withCodexCapabilityLease(id) { it.refreshSkills(true) }
+    suspend fun refreshCodexModels(id: Uuid) = withCodexCapabilityLease(id) { it.refreshModels() }
     suspend fun setCodexSkillEnabled(id: Uuid, skill: CodexSkillMetadata, enabled: Boolean) = withCodexCapabilityLease(id) { it.setSkillEnabled(skill, enabled) }
     suspend fun refreshCodexAccount(id: Uuid) = withCodexCapabilityLease(id) { it.refreshAccount() }
     suspend fun beginCodexAccountLogin(id: Uuid, launcher: CodexAppServerAuthUrlLauncher) = withCodexCapabilityLease(id) { it.beginAccountLogin(launcher) }
