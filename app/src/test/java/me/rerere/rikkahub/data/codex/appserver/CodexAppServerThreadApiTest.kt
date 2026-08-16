@@ -333,7 +333,7 @@ class CodexAppServerThreadApiTest {
                     val call = async { f.api.resumeThread("id") }; val request = f.takeRequest()
                     f.transport.injectServerLine(codec.encode(JsonRpcErrorResponse(request.id, JsonRpcError(73, "resume denied"))))
                     val error = expect<CodexAppServerResponseException> { call.await() }
-                    assertEquals(73, error.error.code); assertEquals("no", error.error.message)
+                    assertEquals(73, error.error.code); assertEquals("resume denied", error.error.message)
                 }
             }
         }
