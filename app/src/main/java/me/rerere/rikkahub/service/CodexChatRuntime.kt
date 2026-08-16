@@ -317,6 +317,20 @@ class CodexChatRuntime(
                     _capabilities.value = _capabilities.value.copy(pendingLoginId = loginId)
                 },
             )
+        } catch (cancelled: CodexAppServerLoginHandoffCancellationException) {
+            // account/login/start succeeded before launcher cancellation. Keep the exact server
+            // login correlated/pending so its later completion remains observable and the user can
+            // explicitly cancel it; still rethrow CancellationException to preserve coroutine semantics.
+            accountLoginCorrelation.resolveStart(
+                cancelled.loginId,
+                onCompletion = { completion ->
+                    _capabilities.value = applyAccountLoginCompletion(_capabilities.value, completion)
+                },
+                onPending = { loginId ->
+                    _capabilities.value = _capabilities.value.copy(pendingLoginId = loginId, accountError = null)
+                },
+            )
+            throw cancelled
         } catch (failure: CodexAppServerLoginHandoffException) {
             accountLoginCorrelation.resolveStart(
                 failure.loginId,
@@ -343,9 +357,30 @@ class CodexChatRuntime(
 
     suspend fun cancelAccountLogin() = capabilityOperation {
         val id = checkNotNull(_capabilities.value.pendingLoginId) { "No pending Codex sign-in" }
-        session.accountApi.cancelLogin(id)
-        accountLoginCorrelation.markCanceled(id)
-        _capabilities.value = _capabilities.value.copy(pendingLoginId = null, accountStatus = "Sign-in canceled", accountError = null)
+        when (val result = session.accountApi.cancelLogin(id)) {
+            CodexAppServerCancelLoginResult.Canceled -> {
+                accountLoginCorrelation.markCanceled(id)
+                _capabilities.value = _capabilities.value.copy(
+                    pendingLoginId = null,
+                    accountStatus = "Sign-in canceled",
+                    accountError = null,
+                )
+            }
+            CodexAppServerCancelLoginResult.NotFound -> {
+                // A completion may have won the server race but still be queued locally. Do not
+                // retire the correlation or claim cancellation succeeded; keep accepting that
+                // delayed completion for this exact login ID.
+                _capabilities.value = _capabilities.value.copy(
+                    accountStatus = "Sign-in is no longer pending on the App Server",
+                    accountError = null,
+                )
+            }
+            is CodexAppServerCancelLoginResult.Unknown -> {
+                _capabilities.value = _capabilities.value.copy(
+                    accountError = "Unable to confirm sign-in cancellation (${result.raw})",
+                )
+            }
+        }
     }
     suspend fun logoutAccount() = capabilityOperation {
         session.accountApi.logout()
