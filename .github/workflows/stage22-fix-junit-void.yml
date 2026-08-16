@@ -25,17 +25,27 @@ jobs:
           from pathlib import Path
           path = Path('app/src/test/java/me/rerere/rikkahub/data/codex/appserver/CodexAppServerTurnApiTest.kt')
           text = path.read_text()
-          old = '''        expect<CodexAppServerTurnProtocolException> {\n            decodeItemSnapshot(buildJsonObject { put("id", "bad"); put("type", "exitedReviewMode"); put("review", 1) })\n        }\n    }\n\n    @Test\n    fun `stage 8 notifications remain simultaneously raw and typed while deprecated output stays raw only`() = runBlocking {'''
-          new = '''        expect<CodexAppServerTurnProtocolException> {\n            decodeItemSnapshot(buildJsonObject { put("id", "bad"); put("type", "exitedReviewMode"); put("review", 1) })\n        }\n        Unit\n    }\n\n    @Test\n    fun `stage 8 notifications remain simultaneously raw and typed while deprecated output stays raw only`() = runBlocking {'''
-          if text.count(old) != 1:
-              raise SystemExit(f'expected exactly one target, found {text.count(old)}')
-          path.write_text(text.replace(old, new, 1))
+          start_marker = '    fun `stage 22 review mode items are typed preserve raw and reject malformed known fields`() = runBlocking {'
+          next_marker = '\n    @Test\n    fun `stage 8 notifications remain simultaneously raw and typed while deprecated output stays raw only`()'
+          start = text.find(start_marker)
+          end = text.find(next_marker, start + 1)
+          if start < 0 or end < 0:
+              raise SystemExit(f'could not isolate target: start={start}, end={end}')
+          segment = text[start:end]
+          if '\n        Unit\n' in segment:
+              raise SystemExit('target already returns Unit')
+          close = segment.rfind('\n    }')
+          if close < 0:
+              raise SystemExit('could not find runBlocking close')
+          segment = segment[:close] + '\n        Unit' + segment[close:]
+          path.write_text(text[:start] + segment + text[end:])
           PY
           git diff --check
+          git diff -- app/src/test/java/me/rerere/rikkahub/data/codex/appserver/CodexAppServerTurnApiTest.kt
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add app/src/test/java/me/rerere/rikkahub/data/codex/appserver/CodexAppServerTurnApiTest.kt
           git commit -m 'test(codex): make review item test return Unit'
           git push origin HEAD:codex/-stage22
 
-# trigger
+# trigger-2
