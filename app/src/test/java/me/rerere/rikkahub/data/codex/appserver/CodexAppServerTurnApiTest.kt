@@ -196,7 +196,9 @@ class CodexAppServerTurnApiTest {
                 """[{"type":"text","text":"prompt"},{"type":"image","url":"https://example.test/image.png"},{"type":"localImage","path":"/tmp/image.png"},{"type":"audio","url":"data:audio/wav;base64,AA=="},{"type":"localAudio","path":"/tmp/audio.wav"},{"type":"skill","name":"review","path":"/skills/review"}]""",
                 request.params!!.jsonObject["input"].toString(),
             )
-            f.respond(request, turnResult("turn", "completed")); call.await()
+            f.respond(request, turnResult("turn", "completed"))
+            call.await()
+            Unit
         }
     }
 
