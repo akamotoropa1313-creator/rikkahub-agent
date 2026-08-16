@@ -554,9 +554,10 @@ class CodexChatRuntime(
 
     private fun registerApproval(event: CodexAppServerApprovalEvent, pending: PendingApproval): Boolean {
         if (pending.threadId != session.threadId || !admitNonTerminalTurn(pending.turnId)) return false
+        val requestId = event.requestIdOrNull() ?: return false
         synchronized(approvalLock) {
-            if (approvalResponses.contains(event.requestIdOrNull())) return false
-            pendingApprovals[event.requestIdOrNull() ?: return false] = pending
+            if (approvalResponses.contains(requestId)) return false
+            pendingApprovals[requestId] = pending
         }
         return true
     }
@@ -615,8 +616,18 @@ class CodexChatRuntime(
     }
 
     fun activeTurnId(): String? = activeTurnId
-    /** True only when Stop can target this runtime rather than a capability-only operation. */
-    fun hasInterruptibleTurn(): Boolean = activeTurnId != null || reviewStarting
+
+    /**
+     * ChatService calls requestStop only while the conversation-level Codex operation lease is
+     * held. Within that outer lease, runtime capabilityBusy distinguishes a capability-only RPC
+     * from a normal turn/start whose ID has not arrived yet. Review start is capabilityBusy too,
+     * but remains interruptible through reviewStarting.
+     */
+    fun hasInterruptibleTurn(): Boolean = shouldRecordCodexStop(
+        activeTurnId = activeTurnId,
+        reviewStarting = reviewStarting,
+        runtimeCapabilityBusy = capabilityBusy.get(),
+    )
 
     private fun claimApproval(id: JsonRpcId, kind: ApprovalKind): CodexConversationUiState.WaitingForApproval? = synchronized(approvalLock) {
         val waiting = _state.value as? CodexConversationUiState.WaitingForApproval ?: return@synchronized null
@@ -711,6 +722,13 @@ class CodexChatRuntime(
         session.close()
     }
 }
+
+/** Caller already proved that the conversation-level Codex operation lease is active. */
+internal fun shouldRecordCodexStop(
+    activeTurnId: String?,
+    reviewStarting: Boolean,
+    runtimeCapabilityBusy: Boolean,
+): Boolean = activeTurnId != null || reviewStarting || !runtimeCapabilityBusy
 
 data class CodexCapabilitiesUiState(
     val connected: Boolean = false,
