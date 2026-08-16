@@ -141,13 +141,16 @@ internal fun FilesPicker(
 
             ImagePickButton(onClick = onPickImage)
 
-            if (provider != null && provider is ProviderSetting.Google) {
+            if (!assistant.codexAppServerEnabled && provider != null && provider is ProviderSetting.Google) {
                 VideoPickButton(onClick = onPickVideo)
 
                 AudioPickButton(onClick = onPickAudio)
             }
 
-            FilePickButton(onClick = onPickFile)
+            // An unloaded/legacy catalog is Unknown, so the App Server remains authoritative.
+            if (assistant.codexAppServerEnabled) AudioPickButton(onClick = onPickAudio)
+
+            if (!assistant.codexAppServerEnabled) FilePickButton(onClick = onPickFile)
         }
 
         HorizontalDivider(

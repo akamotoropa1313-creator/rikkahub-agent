@@ -85,10 +85,11 @@ class WorkspaceManager(
         area: WorkspaceStorageArea = WorkspaceStorageArea.FILES,
         fileName: String,
         inputStream: InputStream,
+        maxBytes: Long = config.maxWriteBytes,
     ): WorkspaceFileEntry {
         val areaRoot = areaDir(root, area)
         val targetPath = if (destinationPath.isBlank()) fileName else "$destinationPath/$fileName"
-        return fileSystem.importBytes(areaRoot, targetPath, inputStream)
+        return fileSystem.importBytes(areaRoot, targetPath, inputStream, maxBytes)
     }
 
     fun fileSize(

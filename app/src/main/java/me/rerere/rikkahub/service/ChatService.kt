@@ -117,6 +117,8 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnInput
+import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability
+import me.rerere.rikkahub.data.codex.appserver.codexInputCapability
 import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
@@ -244,6 +246,7 @@ class ChatService(
     private val codexSessionOpener: CodexAppServerConversationSessionOpener? = null,
     private val codexBindingRepository: CodexAppServerSessionBindingRepository? = null,
 ) {
+    private val codexMediaStager = CodexMediaStager(context, workspaceRepository)
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
 
@@ -652,8 +655,14 @@ class ChatService(
         assistant: Assistant,
         content: List<UIMessagePart>,
     ) {
-        require(content.all { it is UIMessagePart.Text }) {
-            "This input type is not supported by the Codex App Server chat integration"
+        content.forEach { part ->
+            require(part is UIMessagePart.Text || part is UIMessagePart.Image || part is UIMessagePart.Audio) {
+                when (part) {
+                    is UIMessagePart.Video -> "Video is not supported by the Codex integration"
+                    is UIMessagePart.Document -> "Documents are not supported by the Codex integration"
+                    else -> "This input type is not supported by the Codex App Server chat integration"
+                }
+            }
         }
         val workspaceId = assistant.workspaceId?.toString()
             ?: throw IllegalStateException("Codex App Server requires a workspace")
@@ -740,14 +749,34 @@ class ChatService(
             }
         }
         check(runtime.activeTurnId() == null) { "A Codex turn is already running" }
+        val loadedCatalog = runtime.capabilities.value.models.takeIf { it.isNotEmpty() }
+        if (parts.any { it is UIMessagePart.Image } &&
+            codexInputCapability(assistant.codexModel, loadedCatalog, "image") == CodexInputCapability.Unsupported
+        ) throw IllegalArgumentException("The selected Codex model does not support images")
+        if (parts.any { it is UIMessagePart.Audio } &&
+            codexInputCapability(assistant.codexModel, loadedCatalog, "audio") == CodexInputCapability.Unsupported
+        ) throw IllegalArgumentException("The selected Codex model does not support audio")
+        val staged = codexMediaStager.stage(workspaceId, conversationId.toString(), parts)
+        try {
+        val media = staged.inputs.iterator()
+        val normalInput = buildList {
+            parts.forEach { part -> when (part) {
+                is UIMessagePart.Text -> if (part.text.isNotBlank()) add(CodexAppServerTurnInput.Text(part.text))
+                is UIMessagePart.Image, is UIMessagePart.Audio -> add(media.next())
+                else -> error("Unsupported Codex input")
+            } }
+        }
         val input = explicitSkill?.let { skill ->
-            val prompt = (parts.singleOrNull() as? UIMessagePart.Text)?.text.orEmpty()
+            val prompt = parts.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
                 .removePrefix("$${skill.name}").trimStart()
-            buildCodexSkillInvocation(skill, prompt)
-        } ?: parts.map { CodexAppServerTurnInput.Text((it as UIMessagePart.Text).text) }
-        val selectedCatalogModel = runtime.capabilities.value.models.firstOrNull { it.model == assistant.codexModel }
+            buildCodexSkillInvocation(skill, prompt) + normalInput.filterNot { it is CodexAppServerTurnInput.Text }
+        } ?: normalInput
+        require(input.isNotEmpty()) { "Codex input must not be empty" }
+        val selectedCatalogModel = if (assistant.codexModel != null)
+            loadedCatalog?.firstOrNull { it.model == assistant.codexModel }
+        else loadedCatalog?.firstOrNull { it.isDefault }
         val personality = assistant.codexPersonality?.let { CodexAppServerPersonality.valueOf(it.name) }
-            ?.takeUnless { selectedCatalogModel?.supportsPersonality == false }
+            ?.takeIf { selectedCatalogModel?.supportsPersonality == true }
         val params = CodexAppServerTurnStartParams(
             model = assistant.codexModel,
             effort = assistant.codexReasoningEffort,
@@ -760,6 +789,9 @@ class ChatService(
             runtime.awaitTurnTerminal(result.turn.id)
         } finally {
             runtime.finishTurn(result.turn.id)
+        }
+        } finally {
+            staged.cleanup()
         }
     }
 
