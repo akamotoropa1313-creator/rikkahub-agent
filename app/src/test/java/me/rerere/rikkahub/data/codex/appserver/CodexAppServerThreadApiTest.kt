@@ -26,6 +26,122 @@ class CodexAppServerThreadApiTest {
     private val codec = CodexAppServerJsonRpc()
 
     @Test
+    fun `history list strictly decodes metadata status cursors and preserves future fields`() = runBlocking {
+        val page = decodeThreadList(buildJsonObject {
+            put("data", JsonArray(listOf(buildJsonObject {
+                put("id", "t1"); put("preview", "hello"); put("createdAt", 123L); put("recencyAt", JsonNull)
+                put("status", buildJsonObject { put("type", "active"); put("activeFlags", JsonArray(listOf(JsonPrimitive("waiting")))) })
+                put("future", buildJsonObject { put("kept", true) })
+            })))
+            put("nextCursor", "next"); put("backwardsCursor", JsonNull)
+        })
+        assertEquals("next", page.nextCursor); assertEquals(null, page.backwardsCursor)
+        assertEquals(123L, page.data.single().createdAt)
+        assertTrue(page.data.single().status is CodexAppServerThreadStatus.Active)
+        assertTrue("future" in page.data.single().raw)
+        listOf(JsonPrimitive("123"), JsonPrimitive(123.5)).forEach { invalid ->
+            expect<CodexAppServerThreadProtocolException> { decodeThreadList(buildJsonObject {
+                put("data", JsonArray(listOf(buildJsonObject { put("id", "t"); put("createdAt", invalid) })))
+            }) }
+        }
+        expect<CodexAppServerThreadProtocolException> { decodeThreadList(buildJsonObject {
+            put("data", JsonArray(listOf(buildJsonObject { put("id", "t"); put("status", "active") })))
+        }) }
+        expect<CodexAppServerThreadProtocolException> { decodeThreadList(buildJsonObject {
+            put("data", JsonArray(listOf(buildJsonObject {
+                put("id", "t"); put("status", buildJsonObject { put("type", "active") })
+            })))
+        }) }
+        val futureStatus = decodeThreadList(buildJsonObject {
+            put("data", JsonArray(listOf(buildJsonObject {
+                put("id", "future"); put("status", buildJsonObject { put("type", "futureStatus"); put("newField", true) })
+            })))
+        }).data.single().status
+        assertTrue(futureStatus is CodexAppServerThreadStatus.Unknown)
+    }
+
+    @Test
+    fun `persisted user message decodes known inputs and preserves future inputs`(): Unit = runBlocking {
+        val item = decodeItemSnapshot(buildJsonObject {
+            put("id", "user-1")
+            put("type", "userMessage")
+            put("clientId", "client-1")
+            put("content", JsonArray(listOf(
+                buildJsonObject {
+                    put("type", "text"); put("text", "What changed?"); put("text_elements", JsonArray(emptyList()))
+                },
+                buildJsonObject { put("type", "image"); put("url", "data:image/png;base64,AA==") },
+                buildJsonObject { put("type", "futureInput"); put("future", true) },
+            )))
+        })
+        val user = item as CodexAppServerItemSnapshot.UserMessage
+        assertEquals("client-1", user.clientId)
+        assertEquals("What changed?", (user.content[0] as CodexAppServerUserInput.Text).text)
+        assertTrue(user.content[1] is CodexAppServerUserInput.Image)
+        assertTrue(user.content[2] is CodexAppServerUserInput.Other)
+
+        expect<CodexAppServerTurnProtocolException> { decodeItemSnapshot(buildJsonObject {
+            put("id", "bad"); put("type", "userMessage"); put("clientId", JsonNull); put("content", "bad")
+        }) }
+        expect<CodexAppServerTurnProtocolException> { decodeItemSnapshot(buildJsonObject {
+            put("id", "bad"); put("type", "userMessage"); put("clientId", JsonNull)
+            put("content", JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", 3); put("text_elements", JsonArray(emptyList())) })))
+        }) }
+    }
+
+    @Test
+    fun `persisted user message accepts omitted optional stable fields but rejects malformed present values`(): Unit = runBlocking {
+        val item = decodeItemSnapshot(buildJsonObject {
+            put("id", "user-optional")
+            put("type", "userMessage")
+            put("content", JsonArray(listOf(buildJsonObject {
+                put("type", "text")
+                put("text", "Optional fields omitted")
+            })))
+        }) as CodexAppServerItemSnapshot.UserMessage
+
+        assertEquals(null, item.clientId)
+        val text = item.content.single() as CodexAppServerUserInput.Text
+        assertEquals("Optional fields omitted", text.text)
+        assertTrue(text.textElements.isEmpty())
+
+        expect<CodexAppServerTurnProtocolException> { decodeItemSnapshot(buildJsonObject {
+            put("id", "bad-client")
+            put("type", "userMessage")
+            put("clientId", 7)
+            put("content", JsonArray(emptyList()))
+        }) }
+        expect<CodexAppServerTurnProtocolException> { decodeItemSnapshot(buildJsonObject {
+            put("id", "bad-elements")
+            put("type", "userMessage")
+            put("content", JsonArray(listOf(buildJsonObject {
+                put("type", "text")
+                put("text", "bad")
+                put("text_elements", "not-an-array")
+            })))
+        }) }
+    }
+
+    @Test
+    fun `history list and read use exact stable wire`() = runBlocking {
+        fixture().use { f ->
+            val list = async { f.api.listThreads(cwd = "/repo", searchTerm = "query") }
+            val request = f.takeRequest()
+            assertEquals("thread/list", request.method)
+            assertEquals(setOf("limit", "sortKey", "sortDirection", "cwd", "archived", "searchTerm"), request.params!!.jsonObject.keys)
+            f.respond(request, buildJsonObject { put("data", JsonArray(emptyList())); put("nextCursor", JsonNull); put("backwardsCursor", JsonNull) })
+            list.await()
+
+            val read = async { f.api.readThread("t1") }
+            val readRequest = f.takeRequest()
+            assertEquals("thread/read", readRequest.method)
+            assertEquals(buildJsonObject { put("threadId", "t1"); put("includeTurns", true) }, readRequest.params)
+            f.respond(readRequest, buildJsonObject { put("thread", buildJsonObject { put("id", "t1"); put("turns", JsonArray(emptyList())) }) })
+            assertEquals("t1", read.await().id)
+        }
+    }
+
+    @Test
     fun `default start uses exact minimal wire and decodes raw result`() {
         runBlocking {
             fixture().use { f ->

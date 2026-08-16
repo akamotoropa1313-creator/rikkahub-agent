@@ -142,6 +142,84 @@ class CodexChatRuntime(
         }
     }
 
+    suspend fun loadThreadHistory(searchTerm: String? = null, loadMore: Boolean = false) = capabilityOperation {
+        val old = _capabilities.value.threadHistory
+        val cursor = if (loadMore) old.nextCursor else null
+        _capabilities.value = _capabilities.value.copy(threadHistory = old.copy(loading = true, error = null, searchTerm = searchTerm.orEmpty()))
+        try {
+            val page = session.threadApi.listThreads(cursor = cursor, cwd = session.effectiveCwd, searchTerm = searchTerm)
+            val merged = if (loadMore) (old.threads + page.data).distinctBy { it.id } else page.data
+            _capabilities.value = _capabilities.value.copy(threadHistory = old.copy(
+                loaded = true, loading = false, threads = merged, nextCursor = page.nextCursor,
+                backwardsCursor = page.backwardsCursor, error = null, searchTerm = searchTerm.orEmpty(),
+            ))
+        } catch (cancelled: CancellationException) {
+            _capabilities.value = _capabilities.value.copy(threadHistory = old.copy(loading = false))
+            throw cancelled
+        }
+        catch (failure: Throwable) {
+            val message = if (failure is CodexAppServerResponseException && failure.error.code == -32601L)
+                "Thread history is not supported by this App Server" else failure.safeMessage()
+            _capabilities.value = _capabilities.value.copy(threadHistory = old.copy(loading = false, error = message))
+            throw failure
+        }
+    }
+
+    suspend fun readHistoryThread(threadId: String) = capabilityOperation {
+        val old = _capabilities.value.threadHistory
+        _capabilities.value = _capabilities.value.copy(
+            threadHistory = old.copy(
+                detailLoading = true,
+                detailError = null,
+                selectedThreadId = threadId,
+                selectedThread = null,
+            ),
+        )
+        try {
+            val thread = session.threadApi.readThread(threadId)
+            val current = _capabilities.value.threadHistory
+            if (current.selectedThreadId == threadId) {
+                _capabilities.value = _capabilities.value.copy(
+                    threadHistory = current.copy(
+                        selectedThread = thread,
+                        detailLoading = false,
+                        detailError = null,
+                    ),
+                )
+            }
+        } catch (cancelled: CancellationException) {
+            val current = _capabilities.value.threadHistory
+            if (current.selectedThreadId == threadId) {
+                _capabilities.value = _capabilities.value.copy(
+                    threadHistory = current.copy(detailLoading = false),
+                )
+            }
+            throw cancelled
+        } catch (failure: Throwable) {
+            val message = if (failure is CodexAppServerResponseException && failure.error.code == -32601L)
+                "Thread history is not supported by this App Server" else failure.safeMessage()
+            val current = _capabilities.value.threadHistory
+            if (current.selectedThreadId == threadId) {
+                _capabilities.value = _capabilities.value.copy(
+                    threadHistory = current.copy(detailLoading = false, detailError = message),
+                )
+            }
+            throw failure
+        }
+    }
+
+    fun closeHistoryThread() {
+        val current = _capabilities.value.threadHistory
+        _capabilities.value = _capabilities.value.copy(
+            threadHistory = current.copy(
+                selectedThreadId = null,
+                selectedThread = null,
+                detailLoading = false,
+                detailError = null,
+            ),
+        )
+    }
+
     /** Explicit-only, partial-success configuration diagnostics. Existing snapshots survive errors. */
     suspend fun refreshConfigDiagnostics() = capabilityOperation {
         _capabilities.value = _capabilities.value.copy(
@@ -509,6 +587,16 @@ data class CodexCapabilitiesUiState(
     val requirements: CodexConfigRequirementsSnapshot? = null,
     val requirementsLoaded: Boolean = false,
     val requirementsError: String? = null,
+    val threadHistory: CodexThreadHistoryUiState = CodexThreadHistoryUiState(),
+)
+
+data class CodexThreadHistoryUiState(
+    val loaded: Boolean = false, val loading: Boolean = false,
+    val threads: List<CodexAppServerThreadSnapshot> = emptyList(),
+    val nextCursor: String? = null, val backwardsCursor: String? = null,
+    val error: String? = null, val searchTerm: String = "",
+    val selectedThreadId: String? = null, val detailLoading: Boolean = false,
+    val selectedThread: CodexAppServerThreadSnapshot? = null, val detailError: String? = null,
 )
 
 data class CodexReviewUiState(

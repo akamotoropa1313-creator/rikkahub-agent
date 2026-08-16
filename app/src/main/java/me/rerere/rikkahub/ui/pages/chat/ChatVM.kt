@@ -103,6 +103,9 @@ class ChatVM(
     fun interruptCodexTurn() { viewModelScope.launch { chatService.stopGeneration(_conversationId) } }
     fun refreshCodexSkills() { viewModelScope.launch { runCatching { chatService.refreshCodexSkills(_conversationId) } } }
     fun refreshCodexModels() { viewModelScope.launch { runCatching { chatService.refreshCodexModels(_conversationId) } } }
+    fun loadCodexThreadHistory(searchTerm: String? = null, loadMore: Boolean = false) { viewModelScope.launch { runCatching { chatService.loadCodexThreadHistory(_conversationId, searchTerm, loadMore) } } }
+    fun readCodexHistoryThread(threadId: String) { viewModelScope.launch { runCatching { chatService.readCodexHistoryThread(_conversationId, threadId) } } }
+    fun closeCodexHistoryThread() = chatService.closeCodexHistoryThread(_conversationId)
     fun refreshCodexConfigDiagnostics() { viewModelScope.launch { runCatching { chatService.refreshCodexConfigDiagnostics(_conversationId) } } }
     fun startCodexReview(action: CodexReviewAction) {
         when (action) {

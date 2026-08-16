@@ -24,10 +24,31 @@ sealed interface CodexAppServerPatchApplyStatus { data object InProgress : Codex
 sealed interface CodexAppServerPatchChangeKind { val raw: JsonObject; data class Add(override val raw: JsonObject) : CodexAppServerPatchChangeKind; data class Delete(override val raw: JsonObject) : CodexAppServerPatchChangeKind; data class Update(val movePath: String?, override val raw: JsonObject) : CodexAppServerPatchChangeKind; data class Other(val type: String, override val raw: JsonObject) : CodexAppServerPatchChangeKind }
 data class CodexAppServerFileUpdateChange(val path: String, val kind: CodexAppServerPatchChangeKind, val diff: String, val raw: JsonObject)
 
+sealed interface CodexAppServerUserInput {
+    val type: String
+    val raw: JsonObject
+
+    data class Text(val text: String, val textElements: JsonArray, override val raw: JsonObject) : CodexAppServerUserInput { override val type = "text" }
+    data class Image(val url: String, val detail: String?, override val raw: JsonObject) : CodexAppServerUserInput { override val type = "image" }
+    data class LocalImage(val path: String, val detail: String?, override val raw: JsonObject) : CodexAppServerUserInput { override val type = "localImage" }
+    data class Audio(val url: String, override val raw: JsonObject) : CodexAppServerUserInput { override val type = "audio" }
+    data class LocalAudio(val path: String, override val raw: JsonObject) : CodexAppServerUserInput { override val type = "localAudio" }
+    data class Skill(val name: String, val path: String, override val raw: JsonObject) : CodexAppServerUserInput { override val type = "skill" }
+    data class Mention(val name: String, val path: String, override val raw: JsonObject) : CodexAppServerUserInput { override val type = "mention" }
+    data class Other(override val type: String, override val raw: JsonObject) : CodexAppServerUserInput
+}
+
 sealed interface CodexAppServerItemSnapshot {
     val id: String
     val type: String
     val raw: JsonObject
+
+    data class UserMessage(
+        override val id: String,
+        val clientId: String?,
+        val content: List<CodexAppServerUserInput>,
+        override val raw: JsonObject,
+    ) : CodexAppServerItemSnapshot { override val type = "userMessage" }
 
     data class AgentMessage(
         override val id: String,
@@ -124,6 +145,7 @@ internal fun decodeItemSnapshot(raw: JsonObject): CodexAppServerItemSnapshot {
     val id = raw.requiredString("item.id", "id")
     if (id.isBlank()) malformed("item.id must not be blank")
     return when (val type = raw.requiredString("item.type", "type")) {
+        "userMessage" -> decodeUserMessage(id, raw)
         "agentMessage" -> CodexAppServerItemSnapshot.AgentMessage(id, raw.requiredString("item.text", "text"), raw)
         "reasoning" -> CodexAppServerItemSnapshot.Reasoning(id, raw.stringListOrEmpty("summary"), raw.stringListOrEmpty("content"), raw)
         "commandExecution" -> decodeCommandExecution(id, raw)
@@ -131,6 +153,36 @@ internal fun decodeItemSnapshot(raw: JsonObject): CodexAppServerItemSnapshot {
         "enteredReviewMode" -> CodexAppServerItemSnapshot.EnteredReviewMode(id, raw.requiredString("item.review", "review"), raw)
         "exitedReviewMode" -> CodexAppServerItemSnapshot.ExitedReviewMode(id, raw.requiredString("item.review", "review"), raw)
         else -> CodexAppServerItemSnapshot.Other(id, type, raw)
+    }
+}
+
+private fun decodeUserMessage(id: String, raw: JsonObject): CodexAppServerItemSnapshot.UserMessage {
+    val clientId = raw.optionalString("clientId")
+    val content = (raw["content"] as? JsonArray ?: malformed("item.content must be an array")).mapIndexed { index, element ->
+        decodeUserInput(element as? JsonObject ?: malformed("item.content[$index] must be an object"), index)
+    }
+    return CodexAppServerItemSnapshot.UserMessage(id, clientId, content, raw)
+}
+
+private fun decodeUserInput(raw: JsonObject, index: Int): CodexAppServerUserInput {
+    val prefix = "item.content[$index]"
+    return when (val type = raw.requiredString("$prefix.type", "type")) {
+        "text" -> CodexAppServerUserInput.Text(
+            raw.requiredString("$prefix.text", "text"),
+            when (val textElements = raw["text_elements"]) {
+                null -> JsonArray(emptyList())
+                is JsonArray -> textElements
+                else -> malformed("$prefix.text_elements must be an array")
+            },
+            raw,
+        )
+        "image" -> CodexAppServerUserInput.Image(raw.requiredString("$prefix.url", "url"), raw.optionalString("detail"), raw)
+        "localImage" -> CodexAppServerUserInput.LocalImage(raw.requiredString("$prefix.path", "path"), raw.optionalString("detail"), raw)
+        "audio" -> CodexAppServerUserInput.Audio(raw.requiredString("$prefix.url", "url"), raw)
+        "localAudio" -> CodexAppServerUserInput.LocalAudio(raw.requiredString("$prefix.path", "path"), raw)
+        "skill" -> CodexAppServerUserInput.Skill(raw.requiredString("$prefix.name", "name"), raw.requiredString("$prefix.path", "path"), raw)
+        "mention" -> CodexAppServerUserInput.Mention(raw.requiredString("$prefix.name", "name"), raw.requiredString("$prefix.path", "path"), raw)
+        else -> CodexAppServerUserInput.Other(type, raw)
     }
 }
 
@@ -157,6 +209,7 @@ private fun decodePatchStatus(v:String)=when(v){"inProgress"->CodexAppServerPatc
 private fun JsonObject.defaultedCommandSource(): CodexAppServerCommandExecutionSource =
     if ("source" !in this) CodexAppServerCommandExecutionSource.Agent
     else decodeSource(requiredString("item.source", "source"))
+private fun JsonObject.requiredNullableString(label:String,key:String):String? { val e=this[key] ?: malformed("$label must be a string or null"); if(e === JsonNull) return null; return (e as? JsonPrimitive)?.takeIf{it.isString}?.contentOrNull ?: malformed("$label must be a string or null") }
 private fun JsonObject.optionalString(key:String):String? { val e=this[key]?:return null; if(e === JsonNull) return null; return (e as? JsonPrimitive)?.takeIf{it.isString}?.contentOrNull ?: malformed("$key must be a string or null") }
 private fun JsonObject.optionalLong(key:String):Long? { val e=this[key]?:return null; if(e === JsonNull) return null; return (e as? JsonPrimitive)?.takeUnless{it.isString}?.longOrNull ?: malformed("$key must be an integer or null") }
 private fun JsonObject.optionalInt(key:String):Int? { val e=this[key]?:return null; if(e === JsonNull) return null; return (e as? JsonPrimitive)?.takeUnless{it.isString}?.intOrNull ?: malformed("$key must be an i32 integer or null") }
