@@ -55,13 +55,18 @@ class CodexChatRuntime(
     private val _capabilities = MutableStateFlow(CodexCapabilitiesUiState(connected = true))
     val capabilities: StateFlow<CodexCapabilitiesUiState> = _capabilities.asStateFlow()
 
-    private val completedAccountLoginIds = ConcurrentHashMap.newKeySet<String>()
+    private val accountLoginCorrelation = CodexAccountLoginCorrelation()
     private val accountCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.accountApi.events.collect { event ->
             when (event) {
                 is CodexAppServerAccountEvent.LoginCompleted -> {
-                    event.loginId?.let(completedAccountLoginIds::add)
-                    _capabilities.value = applyAccountLoginCompletion(_capabilities.value, event)
+                    val buffered = accountLoginCorrelation.bufferIfAwaiting(event)
+                    // A nullable loginId belongs to the sole in-flight login and can be applied
+                    // immediately. A non-null early completion is held until start returns so an
+                    // unrelated login cannot overwrite this conversation's account state.
+                    if (!buffered || event.loginId == null) {
+                        _capabilities.value = applyAccountLoginCompletion(_capabilities.value, event)
+                    }
                 }
                 is CodexAppServerAccountEvent.MalformedNotification ->
                     _capabilities.value = _capabilities.value.copy(accountError = event.cause.message ?: "Malformed account event")
@@ -114,15 +119,28 @@ class CodexChatRuntime(
     }
 
     suspend fun beginAccountLogin(launcher: CodexAppServerAuthUrlLauncher) = capabilityOperation {
+        accountLoginCorrelation.beginAttempt()
         _capabilities.value = _capabilities.value.copy(accountSubmitting = true, accountError = null)
         try {
             val pending = CodexAppServerOAuthHandoff(session.accountApi, launcher).beginChatGptLogin()
-            if (!completedAccountLoginIds.remove(pending.loginId))
-                _capabilities.value = _capabilities.value.copy(pendingLoginId = pending.loginId)
+            val earlyCompletion = accountLoginCorrelation.resolveStart(pending.loginId)
+            _capabilities.value = if (earlyCompletion != null) {
+                applyAccountLoginCompletion(_capabilities.value, earlyCompletion)
+            } else {
+                _capabilities.value.copy(pendingLoginId = pending.loginId)
+            }
         } catch (failure: CodexAppServerBrowserLaunchException) {
-            _capabilities.value = _capabilities.value.copy(pendingLoginId = failure.loginId, accountError = failure.safeMessage()); throw failure
+            val earlyCompletion = accountLoginCorrelation.resolveStart(failure.loginId)
+            _capabilities.value = if (earlyCompletion != null) {
+                applyAccountLoginCompletion(_capabilities.value, earlyCompletion)
+            } else {
+                _capabilities.value.copy(pendingLoginId = failure.loginId, accountError = failure.safeMessage())
+            }
+            throw failure
         } catch (failure: Throwable) {
-            _capabilities.value = _capabilities.value.copy(accountError = failure.safeMessage()); throw failure
+            accountLoginCorrelation.abortAttempt()
+            _capabilities.value = _capabilities.value.copy(accountError = failure.safeMessage())
+            throw failure
         } finally { _capabilities.value = _capabilities.value.copy(accountSubmitting = false) }
     }
 
