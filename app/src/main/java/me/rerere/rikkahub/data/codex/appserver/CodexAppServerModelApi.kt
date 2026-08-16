@@ -49,7 +49,12 @@ class CodexAppServerModelApi(private val connection: CodexAppServerConnection) {
         repeat(maxPages) {
             val page = list(cursor = cursor, includeHidden = false)
             models += page.data.filterNot { it.hidden }
-            val next = page.nextCursor ?: return models
+            val next = page.nextCursor
+            if (next == null) {
+                val complete = models.toList()
+                CodexModelCatalogKnowledge.replace(complete)
+                return complete
+            }
             if (!seen.add(next)) throw CodexAppServerModelProtocolException("model/list repeated cursor: $next")
             cursor = next
         }
