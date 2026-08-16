@@ -100,6 +100,7 @@ class ChatVM(
     fun interruptCodexTurn() { viewModelScope.launch { chatService.stopGeneration(_conversationId) } }
     fun refreshCodexSkills() { viewModelScope.launch { runCatching { chatService.refreshCodexSkills(_conversationId) } } }
     fun refreshCodexModels() { viewModelScope.launch { runCatching { chatService.refreshCodexModels(_conversationId) } } }
+    fun refreshCodexConfigDiagnostics() { viewModelScope.launch { runCatching { chatService.refreshCodexConfigDiagnostics(_conversationId) } } }
 
     /** Apply only a Codex preference delta against the newest Assistant inside SettingsStore.update. */
     fun updateCodexPreferences(transform: (Assistant) -> Assistant) {

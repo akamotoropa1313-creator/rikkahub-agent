@@ -839,6 +839,7 @@ class ChatService(
     }
     suspend fun refreshCodexSkills(id: Uuid) = withCodexCapabilityLease(id) { it.refreshSkills(true) }
     suspend fun refreshCodexModels(id: Uuid) = withCodexCapabilityLease(id) { it.refreshModels() }
+    suspend fun refreshCodexConfigDiagnostics(id: Uuid) = withCodexCapabilityLease(id) { it.refreshConfigDiagnostics() }
     suspend fun setCodexSkillEnabled(id: Uuid, skill: CodexSkillMetadata, enabled: Boolean) = withCodexCapabilityLease(id) { it.setSkillEnabled(skill, enabled) }
     suspend fun refreshCodexAccount(id: Uuid) = withCodexCapabilityLease(id) { it.refreshAccount() }
     suspend fun beginCodexAccountLogin(id: Uuid, launcher: CodexAppServerAuthUrlLauncher) = withCodexCapabilityLease(id) { it.beginAccountLogin(launcher) }

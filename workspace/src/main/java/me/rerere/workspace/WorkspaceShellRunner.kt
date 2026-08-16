@@ -30,6 +30,19 @@ data class WorkspaceShellContext(
     val bindMounts: List<WorkspaceBindMount> = emptyList(),
 )
 
+/**
+ * Returns the absolute working directory visible inside the PRoot workspace namespace.
+ * Keep this as the single mapping used both by process launch and App Server diagnostics.
+ */
+fun resolveWorkspaceRootfsCwd(cwd: String): String {
+    val normalized = cwd.trim().trim('/')
+    return if (normalized.isBlank()) {
+        WorkspaceManager.ROOTFS_WORKSPACE_DIR
+    } else {
+        "${WorkspaceManager.ROOTFS_WORKSPACE_DIR}/$normalized"
+    }
+}
+
 class HostShellRunner : WorkspaceShellRunner {
     override fun execute(context: WorkspaceShellContext): WorkspaceCommandResult {
         val process = newProcessBuilder(context).start()

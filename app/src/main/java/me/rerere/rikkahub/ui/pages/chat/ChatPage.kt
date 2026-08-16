@@ -565,6 +565,7 @@ private fun ChatPageContent(
                     hasBinding = hasCodexBinding,
                     onRefreshAccount = vm::refreshCodexAccount,
                     onRefreshModels = vm::refreshCodexModels,
+                    onRefreshConfigDiagnostics = vm::refreshCodexConfigDiagnostics,
                     onRefreshSkills = vm::refreshCodexSkills,
                     onRefreshMcp = vm::refreshCodexMcp,
                     onReloadMcp = vm::reloadCodexMcp,
