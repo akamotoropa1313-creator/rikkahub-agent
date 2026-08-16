@@ -2,6 +2,7 @@ package me.rerere.rikkahub.service
 
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
@@ -46,7 +47,7 @@ class CodexReviewStartRaceTest {
         val persisted = CopyOnWriteArrayList<String>()
         val harness = harness(this) { _, _, text -> persisted += text }
         try {
-            val call = async { harness.runtime.startReview(CodexAppServerReviewTarget.UncommittedChanges) }
+            val call = async(start = CoroutineStart.UNDISPATCHED) { harness.runtime.startReview(CodexAppServerReviewTarget.UncommittedChanges) }
             val request = decodeRequest(harness.transport.takeClientLine())
             assertEquals("review/start", request.method)
 
@@ -78,7 +79,7 @@ class CodexReviewStartRaceTest {
     fun `review response may precede notifications and remains one ordinary active turn`() = runBlocking {
         val harness = harness(this) { _, _, _ -> }
         try {
-            val call = async { harness.runtime.startReview(CodexAppServerReviewTarget.Custom("Audit correctness")) }
+            val call = async(start = CoroutineStart.UNDISPATCHED) { harness.runtime.startReview(CodexAppServerReviewTarget.Custom("Audit correctness")) }
             val request = decodeRequest(harness.transport.takeClientLine())
             harness.respond(request, reviewResult("turn-1", "inProgress", "thread-1"))
             assertEquals("turn-1", call.await().turn.id)
@@ -101,7 +102,7 @@ class CodexReviewStartRaceTest {
     fun `review method not found is local unsupported state and keeps connection usable`() = runBlocking {
         val harness = harness(this) { _, _, _ -> }
         try {
-            val call = async { harness.runtime.startReview(CodexAppServerReviewTarget.UncommittedChanges) }
+            val call = async(start = CoroutineStart.UNDISPATCHED) { harness.runtime.startReview(CodexAppServerReviewTarget.UncommittedChanges) }
             val request = decodeRequest(harness.transport.takeClientLine())
             harness.transport.injectServerLine(codec.encode(JsonRpcErrorResponse(
                 request.id,
@@ -142,7 +143,7 @@ class CodexReviewStartRaceTest {
             CodexAppServerRequestDispatcher(transport),
             CodexAppServerClientInfo(name = "test", version = "1"),
         )
-        val initializing = scope.async { connection.initialize() }
+        val initializing = scope.async(start = CoroutineStart.UNDISPATCHED) { connection.initialize() }
         val initRequest = decodeRequest(transport.takeClientLine())
         transport.injectServerLine(codec.encode(JsonRpcResponse(initRequest.id, buildJsonObject {
             put("userAgent", "fake")

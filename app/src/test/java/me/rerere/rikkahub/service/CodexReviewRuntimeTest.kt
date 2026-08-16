@@ -2,6 +2,8 @@ package me.rerere.rikkahub.service
 
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -18,11 +20,14 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerClientInfo
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConnection
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerLocalState
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerJsonRpc
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerRequestDispatcher
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTransport
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTransportEvent
 import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
+import me.rerere.rikkahub.data.codex.appserver.JsonRpcMessage
+import me.rerere.rikkahub.data.codex.appserver.JsonRpcResponse
 import me.rerere.rikkahub.data.db.dao.CodexAppServerSessionBindingDao
 import me.rerere.rikkahub.data.db.entity.CodexAppServerSessionBindingEntity
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
@@ -106,7 +111,7 @@ class CodexReviewRuntimeTest {
         }
     }
 
-    private fun harness(
+    private suspend fun harness(
         scope: CoroutineScope,
         onAgentText: suspend (String, String, String) -> Unit,
     ): Harness {
@@ -130,6 +135,18 @@ class CodexReviewRuntimeTest {
             CodexAppServerRequestDispatcher(transport),
             CodexAppServerClientInfo(version = "test"),
         )
+        val codec = CodexAppServerJsonRpc()
+        val initializing = scope.async(start = CoroutineStart.UNDISPATCHED) { connection.initialize() }
+        val initRequest = (codec.decode(transport.takeClientLine()).getOrThrow() as JsonRpcMessage.Request).value
+        transport.emit(codec.encode(JsonRpcResponse(initRequest.id, buildJsonObject {
+            put("userAgent", "fake")
+            put("codexHome", "/tmp")
+            put("platformFamily", "unix")
+            put("platformOs", "linux")
+        })))
+        initializing.await()
+        transport.takeClientLine() // initialized notification
+
         val session = CodexAppServerConversationSession(binding, connection, repository)
         return Harness(CodexChatRuntime(session, scope, onAgentText = onAgentText), transport)
     }
@@ -138,12 +155,15 @@ class CodexReviewRuntimeTest {
 
     private class FakeTransport : CodexAppServerTransport {
         private val inbound = Channel<CodexAppServerTransportEvent>(Channel.UNLIMITED)
+        private val outbound = Channel<String>(Channel.UNLIMITED)
         override val events: Flow<CodexAppServerTransportEvent> = inbound.receiveAsFlow()
-        override suspend fun sendLine(line: String) = Unit
+        override suspend fun sendLine(line: String) { outbound.send(line) }
+        suspend fun takeClientLine(): String = outbound.receive()
         suspend fun emit(line: String) { inbound.send(CodexAppServerTransportEvent.Line(line)) }
         override fun close() {
             inbound.trySend(CodexAppServerTransportEvent.Closed)
             inbound.close()
+            outbound.close()
         }
     }
 
