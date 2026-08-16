@@ -3,6 +3,7 @@ package me.rerere.rikkahub.data.codex.appserver
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.rerere.rikkahub.data.db.dao.CodexAppServerSessionBindingDao
@@ -50,15 +51,17 @@ class CodexAppServerReviewSessionTest {
 
         val session = CodexAppServerConversationSession(binding, connection, repository)
         try {
-            val call = async { session.startReview(CodexAppServerReviewTarget.UncommittedChanges) }
-            val request = decodeRequest(transport.takeClientLine())
-            assertEquals("review/start", request.method)
-            transport.injectServerLine(codec.encode(JsonRpcResponse(request.id, buildJsonObject {
-                put("turn", buildJsonObject { put("id", "review-turn"); put("status", "inProgress") })
-                put("reviewThreadId", "foreign-thread")
-            })))
+            supervisorScope {
+                val call = async { session.startReview(CodexAppServerReviewTarget.UncommittedChanges) }
+                val request = decodeRequest(transport.takeClientLine())
+                assertEquals("review/start", request.method)
+                transport.injectServerLine(codec.encode(JsonRpcResponse(request.id, buildJsonObject {
+                    put("turn", buildJsonObject { put("id", "review-turn"); put("status", "inProgress") })
+                    put("reviewThreadId", "foreign-thread")
+                })))
 
-            expect<CodexAppServerTurnProtocolException> { call.await() }
+                expect<CodexAppServerTurnProtocolException> { call.await() }
+            }
             val after = dao.getByConversationId("conversation-1")!!
             assertEquals("thread-1", after.threadId)
             assertEquals(null, after.lastObservedTurnId)
