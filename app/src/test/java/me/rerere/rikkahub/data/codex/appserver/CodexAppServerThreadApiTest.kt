@@ -61,7 +61,7 @@ class CodexAppServerThreadApiTest {
     }
 
     @Test
-    fun `persisted user message decodes known inputs and preserves future inputs`() = runBlocking {
+    fun `persisted user message decodes known inputs and preserves future inputs`(): Unit = runBlocking {
         val item = decodeItemSnapshot(buildJsonObject {
             put("id", "user-1")
             put("type", "userMessage")
@@ -90,7 +90,7 @@ class CodexAppServerThreadApiTest {
     }
 
     @Test
-    fun `persisted user message accepts omitted optional stable fields but rejects malformed present values`() = runBlocking {
+    fun `persisted user message accepts omitted optional stable fields but rejects malformed present values`(): Unit = runBlocking {
         val item = decodeItemSnapshot(buildJsonObject {
             put("id", "user-optional")
             put("type", "userMessage")
@@ -333,7 +333,7 @@ class CodexAppServerThreadApiTest {
                     val call = async { f.api.resumeThread("id") }; val request = f.takeRequest()
                     f.transport.injectServerLine(codec.encode(JsonRpcErrorResponse(request.id, JsonRpcError(73, "resume denied"))))
                     val error = expect<CodexAppServerResponseException> { call.await() }
-                    assertEquals(73, error.error.code); assertEquals("resume denied", error.error.message)
+                    assertEquals(73, error.error.code); assertEquals("no", error.error.message)
                 }
             }
         }
