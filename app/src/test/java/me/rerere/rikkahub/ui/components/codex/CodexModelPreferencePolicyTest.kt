@@ -20,6 +20,17 @@ class CodexModelPreferencePolicyTest {
     }
 
     @Test
+    fun `service tier catalog model uses explicit default only when saved model is null`() {
+        val default = model(id = "default-id", model = "default-wire", isDefault = true)
+        val other = model(id = "other-id", model = "other-wire")
+        val models = listOf(other, default)
+        assertEquals("default-wire", serviceTierCatalogModel(null, models)?.model)
+        assertEquals("other-wire", serviceTierCatalogModel("other-wire", models)?.model)
+        assertEquals(null, serviceTierCatalogModel("missing", models))
+        assertEquals(null, serviceTierCatalogModel("default-id", models))
+    }
+
+    @Test
     fun `server effort order is preserved and compatible saved effort survives model switch`() {
         val target = model(efforts = listOf("focused", "future", "low"), default = "future")
         val updated = applyCodexModelSelection(
@@ -83,11 +94,32 @@ class CodexModelPreferencePolicyTest {
     }
 
     @Test
+    fun `unreported tier metadata preserves saved exact string but explicit empty rejects it`() {
+        assertEquals("priority", serviceTierForCodexModelSelection("priority", model(tiers = null, legacy = null)))
+        assertEquals("default", serviceTierForCodexModelSelection("priority", model(tiers = emptyList(), legacy = null)))
+        assertEquals("fast", serviceTierForCodexModelSelection("fast", model(tiers = emptyList(), legacy = listOf("fast"))))
+    }
+
+    @Test
     fun `composer distinguishes omitted default catalog and unknown tier`() {
         val target = model(model = "wire", displayName = "Future", tiers = listOf(CodexModelServiceTier("priority", "Fast", "Faster")))
         assertEquals("Codex · Future · Fast", codexComposerLabel(Assistant(codexAppServerEnabled = true, codexModel = "wire", codexServiceTier = "priority"), listOf(target)))
         assertEquals("Codex · Future · Default", codexComposerLabel(Assistant(codexAppServerEnabled = true, codexModel = "wire", codexServiceTier = "default"), listOf(target)))
         assertEquals("Codex · Future · unknown", codexComposerLabel(Assistant(codexAppServerEnabled = true, codexModel = "wire", codexServiceTier = "unknown"), listOf(target)))
+    }
+
+    @Test
+    fun `composer resolves tier name from explicit default catalog without changing model label`() {
+        val default = model(
+            model = "default-wire",
+            displayName = "Default Model",
+            isDefault = true,
+            tiers = listOf(CodexModelServiceTier("priority", "Fast", "Faster")),
+        )
+        assertEquals(
+            "Codex · server default · Fast",
+            codexComposerLabel(Assistant(codexAppServerEnabled = true, codexServiceTier = "priority"), listOf(default)),
+        )
     }
 
     private fun model(
@@ -96,6 +128,7 @@ class CodexModelPreferencePolicyTest {
         displayName: String = "Model",
         efforts: List<String> = listOf("low", "high"),
         default: String = efforts.lastOrNull() ?: "high",
+        isDefault: Boolean = false,
         tiers: List<CodexModelServiceTier>? = null,
         legacy: List<String>? = null,
     ) = CodexAppServerModel(
@@ -107,7 +140,7 @@ class CodexModelPreferencePolicyTest {
         supportedReasoningEfforts = efforts.map { CodexReasoningEffortOption(it, it) },
         defaultReasoningEffort = default,
         supportsPersonality = true,
-        isDefault = false,
+        isDefault = isDefault,
         raw = JsonObject(emptyMap()),
         serviceTiers = tiers,
         additionalSpeedTiers = legacy,
