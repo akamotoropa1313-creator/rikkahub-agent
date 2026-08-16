@@ -35,7 +35,7 @@ class CodexAppServerTurnApiTest {
                 CodexAppServerReviewTarget.UncommittedChanges to buildJsonObject { put("type", "uncommittedChanges") },
                 CodexAppServerReviewTarget.BaseBranch("main") to buildJsonObject { put("type", "baseBranch"); put("branch", "main") },
                 CodexAppServerReviewTarget.Commit("abc", "Fix") to buildJsonObject { put("type", "commit"); put("sha", "abc"); put("title", "Fix") },
-                CodexAppServerReviewTarget.Commit("def") to buildJsonObject { put("type", "commit"); put("sha", "def") },
+                CodexAppServerReviewTarget.Commit("def") to buildJsonObject { put("type", "commit"); put("sha", "def"); put("title", JsonNull) },
                 CodexAppServerReviewTarget.Custom("Audit security") to buildJsonObject { put("type", "custom"); put("instructions", "Audit security") },
             )
             targets.forEachIndexed { index, (target, expected) ->
