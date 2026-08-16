@@ -341,7 +341,8 @@ class CodexChatRuntime(
                     publishActivity(event.turnId)
                 }
                 is CodexAppServerTurnEvent.ItemCompleted -> {
-                    when (val item = event.item) {
+                    val item = event.item
+                    when (item) {
                         is CodexAppServerItemSnapshot.CommandExecution -> commands[item.id] = item
                         is CodexAppServerItemSnapshot.FileChange -> files[item.id] = item
                         else -> Unit
