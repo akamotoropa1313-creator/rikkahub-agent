@@ -90,6 +90,39 @@ class CodexAppServerThreadApiTest {
     }
 
     @Test
+    fun `persisted user message accepts omitted optional stable fields but rejects malformed present values`() = runBlocking {
+        val item = decodeItemSnapshot(buildJsonObject {
+            put("id", "user-optional")
+            put("type", "userMessage")
+            put("content", JsonArray(listOf(buildJsonObject {
+                put("type", "text")
+                put("text", "Optional fields omitted")
+            })))
+        }) as CodexAppServerItemSnapshot.UserMessage
+
+        assertEquals(null, item.clientId)
+        val text = item.content.single() as CodexAppServerUserInput.Text
+        assertEquals("Optional fields omitted", text.text)
+        assertTrue(text.textElements.isEmpty())
+
+        expect<CodexAppServerTurnProtocolException> { decodeItemSnapshot(buildJsonObject {
+            put("id", "bad-client")
+            put("type", "userMessage")
+            put("clientId", 7)
+            put("content", JsonArray(emptyList()))
+        }) }
+        expect<CodexAppServerTurnProtocolException> { decodeItemSnapshot(buildJsonObject {
+            put("id", "bad-elements")
+            put("type", "userMessage")
+            put("content", JsonArray(listOf(buildJsonObject {
+                put("type", "text")
+                put("text", "bad")
+                put("text_elements", "not-an-array")
+            })))
+        }) }
+    }
+
+    @Test
     fun `history list and read use exact stable wire`() = runBlocking {
         fixture().use { f ->
             val list = async { f.api.listThreads(cwd = "/repo", searchTerm = "query") }
