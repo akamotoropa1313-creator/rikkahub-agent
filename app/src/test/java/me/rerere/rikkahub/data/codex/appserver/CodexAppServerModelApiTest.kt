@@ -11,11 +11,11 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
-import kotlinx.serialization.json.addJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -45,7 +45,7 @@ class CodexAppServerModelApiTest {
             f.respond(request, page(null))
             val result = call.await()
             val model = result.data.single()
-            assertEquals("catalog-id", model.id)
+            assertEquals("catalog-wire-model", model.id)
             assertEquals("wire-model", model.model)
             assertEquals(listOf("max", "low", "focused"), model.supportedReasoningEfforts.map { it.reasoningEffort })
             assertEquals("focused", model.defaultReasoningEffort)
@@ -72,10 +72,10 @@ class CodexAppServerModelApiTest {
         fixture().use { f ->
             val call = async { f.api.listAllVisible() }
             val first = f.request()
-            assertEquals(false, first.params!!.jsonObject["includeHidden"].let { it as JsonPrimitive }.boolean)
+            assertEquals(false, (first.params!!.jsonObject["includeHidden"] as JsonPrimitive).content.toBoolean())
             f.respond(first, page("next", model = "model-a", efforts = listOf("focused", "low")))
             val second = f.request()
-            assertEquals("next", second.params!!.jsonObject["cursor"].let { it as JsonPrimitive }.content)
+            assertEquals("next", (second.params!!.jsonObject["cursor"] as JsonPrimitive).content)
             f.respond(second, page(null, model = "model-b", efforts = listOf("future", "max")))
             val models = call.await()
             assertEquals(listOf("model-a", "model-b"), models.map { it.model })
@@ -132,9 +132,7 @@ class CodexAppServerModelApiTest {
             fixture().use { f ->
                 val call = async { f.api.list() }
                 val request = f.request()
-                f.transport.injectServerLine(
-                    codec.encode(JsonRpcErrorResponse(request.id, JsonRpcError(429, "catalog busy"))),
-                )
+                f.transport.injectServerLine(codec.encode(JsonRpcErrorResponse(request.id, JsonRpcError(429, "catalog busy"))))
                 val failure = expect<CodexAppServerResponseException> { call.await() }
                 assertEquals(429, failure.error.code)
                 assertEquals("catalog busy", failure.error.message)
@@ -217,7 +215,10 @@ class CodexAppServerModelApiTest {
     private suspend fun fixture(): Fixture {
         val transport = FakeCodexAppServerTransport()
         val dispatcher = CodexAppServerRequestDispatcher(transport)
-        val connection = CodexAppServerConnection(dispatcher, CodexAppServerClientInfo("test", "1"))
+        val connection = CodexAppServerConnection(
+            dispatcher,
+            CodexAppServerClientInfo(name = "test", title = "Test", version = "1"),
+        )
         val init = CoroutineScope(currentCoroutineContext()).async { connection.initialize() }
         val request = decodeRequest(transport.takeClientLine())
         transport.injectServerLine(
@@ -238,8 +239,7 @@ class CodexAppServerModelApiTest {
         return Fixture(transport, dispatcher, connection, CodexAppServerModelApi(connection))
     }
 
-    private fun decodeRequest(line: String) =
-        (codec.decode(line).getOrThrow() as JsonRpcMessage.Request).value
+    private fun decodeRequest(line: String) = (codec.decode(line).getOrThrow() as JsonRpcMessage.Request).value
 
     private suspend inline fun <reified T : Throwable> expect(crossinline block: suspend () -> Unit): T =
         try {
