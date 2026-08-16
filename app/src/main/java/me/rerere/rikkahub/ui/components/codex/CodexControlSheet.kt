@@ -345,6 +345,7 @@ private fun CodexConversationUiState.telemetryOrNull(): CodexTokenUsageTelemetry
     is CodexConversationUiState.Ready -> telemetry
     is CodexConversationUiState.Running -> telemetry
     is CodexConversationUiState.Terminal -> telemetry
+    is CodexConversationUiState.WaitingForApproval -> telemetry
     else -> null
 }
 
