@@ -30,9 +30,30 @@ data class CodexAppServerModelListResult(
     val data: List<CodexAppServerModel>, val nextCursor: String?, val raw: JsonObject,
 )
 
-/** Modern metadata wins; legacy values are consulted only when modern metadata is absent/empty. */
-fun CodexAppServerModel.serviceTierIds(): List<String> =
-    serviceTiers?.takeIf { it.isNotEmpty() }?.map { it.id } ?: additionalSpeedTiers.orEmpty()
+/**
+ * Confirmed service-tier ids when the server reported tier metadata, or null when an older server
+ * did not report either modern or legacy metadata. Membership is intentionally permissive in the
+ * unknown case so a saved explicit tier is not silently rewritten merely because capability data
+ * is unavailable. Callers that must require confirmation (for example new thread creation) inspect
+ * [confirmed] directly.
+ */
+data class CodexServiceTierIds(val confirmed: List<String>?) {
+    operator fun contains(id: String): Boolean = confirmed?.contains(id) ?: true
+}
+
+/**
+ * Modern non-empty metadata wins. An empty modern list may fall back to explicitly reported legacy
+ * metadata. If neither field was reported, support remains unknown rather than becoming an explicit
+ * empty set; this preserves compatibility with older App Servers.
+ */
+fun CodexAppServerModel.serviceTierIds(): CodexServiceTierIds = CodexServiceTierIds(
+    confirmed = when {
+        !serviceTiers.isNullOrEmpty() -> serviceTiers.map { it.id }
+        additionalSpeedTiers != null -> additionalSpeedTiers
+        serviceTiers != null -> emptyList()
+        else -> null
+    },
+)
 
 class CodexAppServerModelProtocolException(message: String) : SerializationException(message)
 
