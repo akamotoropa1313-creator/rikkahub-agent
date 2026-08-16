@@ -116,6 +116,8 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSessionOpenResult
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSandboxMode
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalPolicy
 import me.rerere.rikkahub.data.codex.appserver.serviceTierIds
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnInput
 import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability
@@ -722,7 +724,9 @@ class ChatService(
             val threadPersonality = assistant.codexPersonality?.let { CodexAppServerPersonality.valueOf(it.name) }
             when (val opened = opener.open(conversationId.toString(), workspaceId, cwd,
                 CodexAppServerThreadStartParams(model = assistant.codexModel, serviceTier = assistant.codexServiceTier,
-                    developerInstructions = instructions, personality = threadPersonality))) {
+                    developerInstructions = instructions, personality = threadPersonality,
+                    sandbox = CodexAppServerSandboxMode.fromPreference(assistant.codexSandboxMode),
+                    approvalPolicy = CodexAppServerApprovalPolicy.fromPreference(assistant.codexApprovalPolicy)))) {
                 is CodexAppServerConversationSessionOpenResult.Started -> opened.session
                 is CodexAppServerConversationSessionOpenResult.Recovered -> opened.session
                 is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
@@ -788,6 +792,8 @@ class ChatService(
             summary = assistant.codexReasoningSummary?.let { CodexAppServerReasoningSummary.valueOf(it.name) },
             serviceTier = serviceTier,
             personality = personality,
+            sandbox = CodexAppServerSandboxMode.fromPreference(assistant.codexSandboxMode),
+            approvalPolicy = CodexAppServerApprovalPolicy.fromPreference(assistant.codexApprovalPolicy),
         )
         val result = acceptCodexSkillAfterStart({ runtime.session.startTurn(input, params) }, onAccepted)
         runtime.acceptStartResponse(result.turn.id, result.turn.status)
@@ -858,7 +864,13 @@ class ChatService(
                     error("Existing Codex binding belongs to another workspace/CWD")
                 }
                 owner.publishCodexState(CodexConversationUiState.Opening)
-                when (val opened = checkNotNull(codexSessionOpener).recoverBound(conversationId.toString())) {
+                when (val opened = checkNotNull(codexSessionOpener).recoverBound(
+                    conversationId.toString(),
+                    me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadResumeParams(
+                        sandbox = CodexAppServerSandboxMode.fromPreference(assistant.codexSandboxMode),
+                        approvalPolicy = CodexAppServerApprovalPolicy.fromPreference(assistant.codexApprovalPolicy),
+                    ),
+                )) {
                     is CodexAppServerConversationSessionOpenResult.Recovered -> installCodexRuntime(conversationId, owner, opened.session)
                     is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
                         owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason.toString()))

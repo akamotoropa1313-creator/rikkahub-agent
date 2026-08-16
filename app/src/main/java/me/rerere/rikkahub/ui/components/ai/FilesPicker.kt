@@ -83,6 +83,7 @@ import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
 import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
 import me.rerere.rikkahub.ui.context.LocalNavController
+import me.rerere.rikkahub.ui.components.codex.codexSafetyIndicator
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.workspace.WorkspaceShellStatus
@@ -204,7 +205,12 @@ internal fun FilesPicker(
         if (assistant.codexAppServerEnabled) {
             ListItem(
                 headlineContent = { Text("Codex controls") },
-                supportingContent = { Text("Connection, Account, Codex Skills, and Codex MCP") },
+                supportingContent = {
+                    Column {
+                        Text("Connection, Account, Codex Skills, Codex MCP, and safety")
+                        codexSafetyIndicator(assistant)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    }
+                },
                 modifier = Modifier.clip(MaterialTheme.shapes.large).clickable { onOpenCodexControls() },
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             )
