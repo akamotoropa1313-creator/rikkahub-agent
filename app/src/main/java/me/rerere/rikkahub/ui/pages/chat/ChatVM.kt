@@ -12,6 +12,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.net.toUri
 import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
@@ -82,6 +83,7 @@ class ChatVM(
 
     val codexState: StateFlow<CodexConversationUiState> = chatService.getCodexStateFlow(_conversationId)
     val codexCapabilities = chatService.getCodexCapabilitiesStateFlow(_conversationId)
+    val codexReview = chatService.getCodexReviewStateFlow(_conversationId)
     val codexOperationBusy = chatService.getCodexOperationBusyFlow(_conversationId)
     private val _selectedCodexSkill = MutableStateFlow<CodexSkillMetadata?>(null)
     val selectedCodexSkill: StateFlow<CodexSkillMetadata?> = _selectedCodexSkill
@@ -101,6 +103,7 @@ class ChatVM(
     fun refreshCodexSkills() { viewModelScope.launch { runCatching { chatService.refreshCodexSkills(_conversationId) } } }
     fun refreshCodexModels() { viewModelScope.launch { runCatching { chatService.refreshCodexModels(_conversationId) } } }
     fun refreshCodexConfigDiagnostics() { viewModelScope.launch { runCatching { chatService.refreshCodexConfigDiagnostics(_conversationId) } } }
+    fun startCodexReview(target: CodexAppServerReviewTarget) { viewModelScope.launch { runCatching { chatService.startCodexReview(_conversationId, target) } } }
 
     /** Apply only a Codex preference delta against the newest Assistant inside SettingsStore.update. */
     fun updateCodexPreferences(transform: (Assistant) -> Assistant) {

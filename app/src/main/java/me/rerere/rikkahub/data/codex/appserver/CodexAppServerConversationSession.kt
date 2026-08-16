@@ -35,6 +35,7 @@ open class CodexAppServerConversationSession internal constructor(
 
     val threadApi = CodexAppServerThreadApi(connection)
     val turnApi = CodexAppServerTurnApi(connection)
+    val reviewApi = CodexAppServerReviewApi(connection)
     val approvalApi = CodexAppServerApprovalApi(connection)
     val skillsApi = CodexAppServerSkillsApi(connection)
     val mcpApi = CodexAppServerMcpApi(connection)
@@ -83,12 +84,28 @@ open class CodexAppServerConversationSession internal constructor(
     ): CodexAppServerTurnStartResult {
         checkOpen()
         val result = turnApi.startTurn(threadId, input, params, timeout)
+        registerStartedTurn(result.turn)
+        return result
+    }
+
+    suspend fun startReview(
+        target: CodexAppServerReviewTarget,
+        timeout: Duration = 30.seconds,
+    ): CodexAppServerReviewStartResult {
+        checkOpen()
+        val result = reviewApi.startReview(threadId, target, timeout)
+        if (result.reviewThreadId != threadId) {
+            throw CodexAppServerTurnProtocolException("inline review returned a different reviewThreadId")
+        }
+        registerStartedTurn(result.turn)
+        return result
+    }
+
+    private suspend fun registerStartedTurn(turn: CodexAppServerTurnSnapshot) {
         try {
-            bindingRepository.recordTurnStarted(conversationId, threadId, result.turn.id)
-            if (result.turn.status !is CodexAppServerTurnStatus.InProgress) {
-                bindingRepository.recordTurnCompleted(
-                    conversationId, threadId, result.turn.id, result.turn.status,
-                )
+            bindingRepository.recordTurnStarted(conversationId, threadId, turn.id)
+            if (turn.status !is CodexAppServerTurnStatus.InProgress) {
+                bindingRepository.recordTurnCompleted(conversationId, threadId, turn.id, turn.status)
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -96,7 +113,6 @@ open class CodexAppServerConversationSession internal constructor(
             terminate(failure)
             throw failure
         }
-        return result
     }
 
     suspend fun interruptTurn(

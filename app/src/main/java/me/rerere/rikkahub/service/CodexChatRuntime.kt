@@ -53,6 +53,11 @@ class CodexChatRuntime(
     private val approvalResponses = ConcurrentHashMap.newKeySet<JsonRpcId>()
     @Volatile private var activeTurnId: String? = null
     private val capabilityBusy = AtomicBoolean(false)
+    private val reviewTurns = ConcurrentHashMap.newKeySet<String>()
+    private val reviewResultsPersisted = ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var reviewStarting = false
+    private val _review = MutableStateFlow(CodexReviewUiState())
+    val review: StateFlow<CodexReviewUiState> = _review.asStateFlow()
     private val _capabilities = MutableStateFlow(CodexCapabilitiesUiState(connected = true))
     val capabilities: StateFlow<CodexCapabilitiesUiState> = _capabilities.asStateFlow()
     val tokenUsage: StateFlow<CodexTokenUsageTelemetry> = session.tokenUsageTracker.state
@@ -91,6 +96,32 @@ class CodexChatRuntime(
         check(activeTurnId == null) { "A Codex turn is already running" }
         check(capabilityBusy.compareAndSet(false, true)) { "Another Codex operation is already running" }
         try { block() } finally { capabilityBusy.set(false) }
+    }
+
+    /** Starts a stable native inline review under the same operation/turn admission gate. */
+    suspend fun startReview(target: CodexAppServerReviewTarget): CodexAppServerReviewStartResult {
+        check(activeTurnId == null) { "A Codex turn is already running" }
+        check(capabilityBusy.compareAndSet(false, true)) { "Another Codex operation is already running" }
+        reviewStarting = true
+        _review.value = CodexReviewUiState(starting = true, targetSummary = target.summary())
+        try {
+            val result = session.startReview(target)
+            reviewTurns.add(result.turn.id)
+            _review.value = CodexReviewUiState(activeTurnId = result.turn.id, targetSummary = target.summary())
+            acceptStartResponse(result.turn.id, result.turn.status)
+            return result
+        } catch (cancelled: CancellationException) {
+            _review.value = CodexReviewUiState(error = "Review canceled")
+            throw cancelled
+        } catch (failure: Throwable) {
+            val message = if (failure is CodexAppServerResponseException && failure.error.code == -32601L)
+                "Native code review is not supported by this App Server" else failure.safeMessage()
+            _review.value = CodexReviewUiState(error = message)
+            throw failure
+        } finally {
+            reviewStarting = false
+            capabilityBusy.set(false)
+        }
     }
 
     suspend fun refreshSkills(forceReload: Boolean = true) = capabilityOperation {
@@ -276,6 +307,7 @@ class CodexChatRuntime(
             when (event) {
                 is CodexAppServerTurnEvent.TurnStarted -> {
                     val turn = record(event.turn.id)
+                    if (reviewStarting) reviewTurns.add(event.turn.id)
                     if (!terminalClaimed.contains(event.turn.id) && (activeTurnId == null || activeTurnId == event.turn.id)) {
                         activeTurnId = event.turn.id
                         interruptWhenKnown(event.turn.id)
@@ -287,7 +319,7 @@ class CodexChatRuntime(
                     if (!terminalClaimed.contains(event.turnId) && (activeTurnId == null || activeTurnId == event.turnId)) activeTurnId = event.turnId
                     val key = event.turnId to event.itemId
                     val accumulated = text.compute(key) { _, old -> old.orEmpty() + event.delta }!!
-                    onAgentText(event.turnId, event.itemId, accumulated)
+                    if (!reviewStarting && event.turnId !in reviewTurns) onAgentText(event.turnId, event.itemId, accumulated)
                 }
                 is CodexAppServerTurnEvent.TurnCompleted -> terminal(event.turn.id, event.turn.status, event.turn)
                 is CodexAppServerTurnEvent.ReasoningSummaryTextDelta -> {
@@ -300,6 +332,7 @@ class CodexChatRuntime(
                     publishActivity(event.turnId)
                 }
                 is CodexAppServerTurnEvent.ItemStarted -> {
+                    if (event.item is CodexAppServerItemSnapshot.EnteredReviewMode) reviewTurns.add(event.turnId)
                     when (val item = event.item) {
                         is CodexAppServerItemSnapshot.CommandExecution -> commands[item.id] = item
                         is CodexAppServerItemSnapshot.FileChange -> files[item.id] = item
@@ -312,6 +345,10 @@ class CodexChatRuntime(
                         is CodexAppServerItemSnapshot.CommandExecution -> commands[item.id] = item
                         is CodexAppServerItemSnapshot.FileChange -> files[item.id] = item
                         else -> Unit
+                    }
+                    if (item is CodexAppServerItemSnapshot.ExitedReviewMode && reviewResultsPersisted.add(event.turnId)) {
+                        reviewTurns.add(event.turnId)
+                        onAgentText(event.turnId, item.id, item.review)
                     }
                     publishActivity(event.turnId)
                 }
@@ -427,6 +464,7 @@ class CodexChatRuntime(
         reasoning.keys.removeAll { it.first == turnId }
         commands.clear(); files.clear(); turnDiff = null; terminalInteractions.clear()
         stopController.finishTurn(turnId)
+        if (turnId in reviewTurns) _review.value = _review.value.copy(activeTurnId = null)
         // Keep a small terminal-id window so delayed duplicate notifications remain idempotent.
     }
 
@@ -471,6 +509,22 @@ data class CodexCapabilitiesUiState(
     val requirementsLoaded: Boolean = false,
     val requirementsError: String? = null,
 )
+
+data class CodexReviewUiState(
+    val starting: Boolean = false,
+    val activeTurnId: String? = null,
+    val targetSummary: String? = null,
+    val error: String? = null,
+) {
+    val inProgress: Boolean get() = starting || activeTurnId != null
+}
+
+private fun CodexAppServerReviewTarget.summary(): String = when (this) {
+    CodexAppServerReviewTarget.UncommittedChanges -> "Working tree"
+    is CodexAppServerReviewTarget.BaseBranch -> "Base branch: $branch"
+    is CodexAppServerReviewTarget.Commit -> "Commit: $sha"
+    is CodexAppServerReviewTarget.Custom -> "Custom review"
+}
 
 internal fun applyMcpOAuthCompletion(state: CodexCapabilitiesUiState, event: CodexAppServerMcpEvent.OAuthLoginCompleted): CodexCapabilitiesUiState {
     if (state.pendingMcpServer != event.name) return state

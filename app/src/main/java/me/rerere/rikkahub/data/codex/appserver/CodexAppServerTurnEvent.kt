@@ -44,6 +44,8 @@ sealed interface CodexAppServerItemSnapshot {
 
     data class CommandExecution(override val id: String, val command: String, val cwd: String, val processId: String?, val source: CodexAppServerCommandExecutionSource, val status: CodexAppServerCommandExecutionStatus, val commandActions: List<CodexAppServerCommandAction>, val aggregatedOutput: String?, val exitCode: Int?, val durationMs: Long?, val pluginId: String?, val scriptPath: String?, override val raw: JsonObject) : CodexAppServerItemSnapshot { override val type = "commandExecution" }
     data class FileChange(override val id: String, val changes: List<CodexAppServerFileUpdateChange>, val status: CodexAppServerPatchApplyStatus, override val raw: JsonObject) : CodexAppServerItemSnapshot { override val type = "fileChange" }
+    data class EnteredReviewMode(override val id: String, val review: String, override val raw: JsonObject) : CodexAppServerItemSnapshot { override val type = "enteredReviewMode" }
+    data class ExitedReviewMode(override val id: String, val review: String, override val raw: JsonObject) : CodexAppServerItemSnapshot { override val type = "exitedReviewMode" }
 
     data class Other(
         override val id: String,
@@ -126,6 +128,8 @@ internal fun decodeItemSnapshot(raw: JsonObject): CodexAppServerItemSnapshot {
         "reasoning" -> CodexAppServerItemSnapshot.Reasoning(id, raw.stringListOrEmpty("summary"), raw.stringListOrEmpty("content"), raw)
         "commandExecution" -> decodeCommandExecution(id, raw)
         "fileChange" -> CodexAppServerItemSnapshot.FileChange(id, decodeChanges(raw["changes"]), decodePatchStatus(raw.requiredString("item.status", "status")), raw)
+        "enteredReviewMode" -> CodexAppServerItemSnapshot.EnteredReviewMode(id, raw.requiredString("item.review", "review"), raw)
+        "exitedReviewMode" -> CodexAppServerItemSnapshot.ExitedReviewMode(id, raw.requiredString("item.review", "review"), raw)
         else -> CodexAppServerItemSnapshot.Other(id, type, raw)
     }
 }

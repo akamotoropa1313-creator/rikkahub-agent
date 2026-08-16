@@ -28,6 +28,48 @@ class CodexAppServerTurnApiTest {
     private val codec = CodexAppServerJsonRpc()
 
     @Test
+    fun `stage 22 review targets use exact native inline wire and decode response`() = runBlocking {
+        fixture().use { f ->
+            val api = CodexAppServerReviewApi(f.connection)
+            val targets = listOf(
+                CodexAppServerReviewTarget.UncommittedChanges to buildJsonObject { put("type", "uncommittedChanges") },
+                CodexAppServerReviewTarget.BaseBranch("main") to buildJsonObject { put("type", "baseBranch"); put("branch", "main") },
+                CodexAppServerReviewTarget.Commit("abc", "Fix") to buildJsonObject { put("type", "commit"); put("sha", "abc"); put("title", "Fix") },
+                CodexAppServerReviewTarget.Commit("def") to buildJsonObject { put("type", "commit"); put("sha", "def") },
+                CodexAppServerReviewTarget.Custom("Audit security") to buildJsonObject { put("type", "custom"); put("instructions", "Audit security") },
+            )
+            targets.forEachIndexed { index, (target, expected) ->
+                val call = async { api.startReview("thread-1", target) }
+                val raw = codec.json.parseToJsonElement(f.transport.takeClientLine()).jsonObject
+                assertEquals("review/start", raw["method"]!!.jsonPrimitive.content)
+                assertEquals(buildJsonObject {
+                    put("threadId", "thread-1"); put("target", expected); put("delivery", "inline")
+                }, raw["params"]!!.jsonObject)
+                val request = decodeRequest(raw.toString())
+                f.respond(request, buildJsonObject {
+                    put("turn", buildJsonObject { put("id", "review-$index"); put("status", "inProgress") })
+                    put("reviewThreadId", "thread-1")
+                })
+                assertEquals("review-$index", call.await().turn.id)
+            }
+        }
+    }
+
+    @Test
+    fun `stage 22 review mode items are typed preserve raw and reject malformed known fields`() {
+        val enteredRaw = buildJsonObject { put("id", "in"); put("type", "enteredReviewMode"); put("review", "starting"); put("future", 1) }
+        val exitedRaw = buildJsonObject { put("id", "out"); put("type", "exitedReviewMode"); put("review", "final review"); put("future", true) }
+        val entered = decodeItemSnapshot(enteredRaw) as CodexAppServerItemSnapshot.EnteredReviewMode
+        val exited = decodeItemSnapshot(exitedRaw) as CodexAppServerItemSnapshot.ExitedReviewMode
+        assertEquals("starting", entered.review); assertSame(enteredRaw, entered.raw)
+        assertEquals("final review", exited.review); assertSame(exitedRaw, exited.raw)
+        assertTrue(decodeItemSnapshot(buildJsonObject { put("id", "x"); put("type", "futureReview") }) is CodexAppServerItemSnapshot.Other)
+        expect<CodexAppServerTurnProtocolException> {
+            decodeItemSnapshot(buildJsonObject { put("id", "bad"); put("type", "exitedReviewMode"); put("review", 1) })
+        }
+    }
+
+    @Test
     fun `stage 8 notifications remain simultaneously raw and typed while deprecated output stays raw only`() = runBlocking {
         fixture().use { f ->
             val raw = mutableListOf<CodexAppServerEvent.UnknownNotification>()
