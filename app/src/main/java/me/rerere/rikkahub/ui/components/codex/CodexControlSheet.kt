@@ -19,6 +19,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import me.rerere.rikkahub.service.CodexCapabilitiesUiState
 import me.rerere.rikkahub.service.CodexConversationUiState
+import me.rerere.rikkahub.service.threadHistoryRefreshSearchTerm
+import me.rerere.rikkahub.service.threadHistorySubmittedSearchTerm
 import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
 import me.rerere.rikkahub.data.codex.appserver.CodexMcpAuthStatus
 import me.rerere.rikkahub.data.model.Assistant
@@ -72,7 +74,7 @@ fun CodexControlSheet(
     val serviceTierModel = serviceTierCatalogModel(assistant.codexModel, capabilities.models)
     LazyColumn(
         modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
-        contentPadding = PaddingValues(20.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { Text("Codex Control Center", style = MaterialTheme.typography.headlineSmall) }
@@ -101,19 +103,46 @@ fun CodexControlSheet(
                     }
                 } else {
                     Text("Browse persisted App Server threads without switching this conversation.")
-                    if (history.loaded) OutlinedTextField(
-                        value = historySearch, onValueChange = { historySearch = it }, modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Search") }, singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { onLoadThreadHistory(historySearch, false) }),
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(modifier = Modifier.heightIn(min = 44.dp), enabled = capabilities.connected && !history.loading && !operationBusy,
-                            onClick = { onLoadThreadHistory(historySearch.takeIf(String::isNotBlank), false) }) {
-                            Text(if (history.loaded) "Refresh" else "Load history")
+                    if (history.loaded) {
+                        OutlinedTextField(
+                            value = historySearch,
+                            onValueChange = { historySearch = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Search") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(
+                                onSearch = { onLoadThreadHistory(threadHistorySubmittedSearchTerm(historySearch), false) },
+                            ),
+                        )
+                        if (history.searchTerm.isNotEmpty()) {
+                            Text(
+                                "Active filter: ${history.searchTerm}",
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
-                        if (history.loaded) Button(modifier = Modifier.heightIn(min = 44.dp), enabled = capabilities.connected && !history.loading && !operationBusy,
-                            onClick = { onLoadThreadHistory(historySearch.takeIf(String::isNotBlank), false) }) { Text("Search") }
+                    }
+                    val historyControlsEnabled = capabilities.connected && !history.loading && !operationBusy
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                            enabled = historyControlsEnabled,
+                            onClick = {
+                                onLoadThreadHistory(
+                                    if (history.loaded) threadHistoryRefreshSearchTerm(history) else null,
+                                    false,
+                                )
+                            },
+                        ) { Text(if (history.loaded) "Refresh current results" else "Load history") }
+                        if (history.loaded) {
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                                enabled = historyControlsEnabled,
+                                onClick = { onLoadThreadHistory(threadHistorySubmittedSearchTerm(historySearch), false) },
+                            ) { Text(if (historySearch.isBlank()) "Clear search" else "Search") }
+                        }
                     }
                     if (history.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
                     history.error?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 4, overflow = TextOverflow.Ellipsis) }
@@ -124,10 +153,17 @@ fun CodexControlSheet(
                             supportingContent = { Text(listOfNotNull(thread.preview, thread.recencyAt?.toString(), thread.status?.wireValue, thread.modelProvider).joinToString(" · "), maxLines = 2, overflow = TextOverflow.Ellipsis) },
                             trailingContent = { if (thread.id == connection.threadId) Text("Current", color = MaterialTheme.colorScheme.primary) },
                         )
-                        TextButton(modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp), enabled = !operationBusy, onClick = { onReadHistoryThread(thread.id) }) { Text("View details") }
+                        TextButton(
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                            enabled = capabilities.connected && !history.detailLoading && !operationBusy,
+                            onClick = { onReadHistoryThread(thread.id) },
+                        ) { Text("View details") }
                     }
-                    Button(modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp), enabled = history.nextCursor != null && !history.loading && !operationBusy,
-                        onClick = { onLoadThreadHistory(history.searchTerm.takeIf(String::isNotBlank), true) }) { Text("Load more") }
+                    Button(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                        enabled = capabilities.connected && history.nextCursor != null && !history.loading && !operationBusy,
+                        onClick = { onLoadThreadHistory(threadHistoryRefreshSearchTerm(history), true) },
+                    ) { Text("Load more") }
                 }
             }
         }

@@ -144,14 +144,20 @@ class CodexChatRuntime(
 
     suspend fun loadThreadHistory(searchTerm: String? = null, loadMore: Boolean = false) = capabilityOperation {
         val old = _capabilities.value.threadHistory
-        val cursor = if (loadMore) old.nextCursor else null
-        _capabilities.value = _capabilities.value.copy(threadHistory = old.copy(loading = true, error = null, searchTerm = searchTerm.orEmpty()))
+        val request = resolveThreadHistoryRequest(old, searchTerm, loadMore)
+        _capabilities.value = _capabilities.value.copy(
+            threadHistory = old.copy(loading = true, error = null, searchTerm = request.searchTerm.orEmpty()),
+        )
         try {
-            val page = session.threadApi.listThreads(cursor = cursor, cwd = session.effectiveCwd, searchTerm = searchTerm)
+            val page = session.threadApi.listThreads(
+                cursor = request.cursor,
+                cwd = session.effectiveCwd,
+                searchTerm = request.searchTerm,
+            )
             val merged = if (loadMore) (old.threads + page.data).distinctBy { it.id } else page.data
             _capabilities.value = _capabilities.value.copy(threadHistory = old.copy(
                 loaded = true, loading = false, threads = merged, nextCursor = page.nextCursor,
-                backwardsCursor = page.backwardsCursor, error = null, searchTerm = searchTerm.orEmpty(),
+                backwardsCursor = page.backwardsCursor, error = null, searchTerm = request.searchTerm.orEmpty(),
             ))
         } catch (cancelled: CancellationException) {
             _capabilities.value = _capabilities.value.copy(threadHistory = old.copy(loading = false))
