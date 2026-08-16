@@ -180,7 +180,9 @@ internal fun decodeTurnSnapshot(raw: JsonObject): CodexAppServerTurnSnapshot {
         startedAt = raw.optionalTurnLong("startedAt"),
         completedAt = raw.optionalTurnLong("completedAt"),
         durationMs = raw.optionalTurnLong("durationMs"),
-        itemsView = decodeItemsView(raw.optionalTurnString("itemsView") ?: "notLoaded"),
+        // App Server's serde default is Full; this also matches payloads from servers that
+        // predate the explicit itemsView field and returned the complete items array.
+        itemsView = decodeItemsView(raw.optionalTurnString("itemsView") ?: "full"),
         raw = raw,
     )
 }
@@ -211,20 +213,59 @@ private fun JsonObject.optionalTurnError(): CodexAppServerTurnError? {
     val info = error["codexErrorInfo"]?.takeUnless { it === JsonNull }?.let(::decodeErrorInfo)
     return CodexAppServerTurnError(error.requiredString("turn.error.message", "message"), info, error.optionalTurnString("additionalDetails"), error)
 }
-private val knownErrorCategories = setOf("contextWindowExceeded", "sessionBudgetExceeded", "usageLimitExceeded", "serverOverloaded", "cyberPolicy", "internalServerError", "unauthorized", "badRequest", "threadRollbackFailed", "sandboxError", "other", "httpError", "streamError")
-private fun decodeErrorInfo(raw: JsonElement): CodexAppServerErrorInfo {
-    val category = when (raw) {
-        is JsonPrimitive -> raw.takeIf { it.isString }?.contentOrNull
-        is JsonObject -> (raw["type"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
-            ?: raw.keys.singleOrNull()
-        else -> null
-    } ?: return CodexAppServerErrorInfo.Unknown(raw)
-    if (category !in knownErrorCategories) return CodexAppServerErrorInfo.Unknown(raw)
-    val status = (raw as? JsonObject)?.get("httpStatusCode")?.let {
-        if (it === JsonNull) null else (it as? JsonPrimitive)?.takeUnless { value -> value.isString }?.intOrNull
-            ?: throw CodexAppServerTurnProtocolException("httpStatusCode must be an integer or null")
+
+private val knownSimpleErrorCategories = setOf(
+    "contextWindowExceeded",
+    "sessionBudgetExceeded",
+    "usageLimitExceeded",
+    "serverOverloaded",
+    "cyberPolicy",
+    "internalServerError",
+    "unauthorized",
+    "badRequest",
+    "threadRollbackFailed",
+    "sandboxError",
+    "other",
+)
+private val knownHttpErrorCategories = setOf(
+    "httpConnectionFailed",
+    "responseStreamConnectionFailed",
+    "responseStreamDisconnected",
+    "responseTooManyFailedAttempts",
+)
+private const val ACTIVE_TURN_NOT_STEERABLE = "activeTurnNotSteerable"
+
+private fun decodeErrorInfo(raw: JsonElement): CodexAppServerErrorInfo = when (raw) {
+    is JsonPrimitive -> {
+        val category = raw.takeIf { it.isString }?.contentOrNull
+            ?: return CodexAppServerErrorInfo.Unknown(raw)
+        if (category in knownSimpleErrorCategories) CodexAppServerErrorInfo.Known(category, null, raw)
+        else CodexAppServerErrorInfo.Unknown(raw)
     }
-    return CodexAppServerErrorInfo.Known(category, status, raw)
+    is JsonObject -> {
+        val tagged = raw.entries.singleOrNull() ?: return CodexAppServerErrorInfo.Unknown(raw)
+        val category = tagged.key
+        when {
+            category in knownHttpErrorCategories -> {
+                val payload = tagged.value as? JsonObject
+                    ?: throw CodexAppServerTurnProtocolException("$category payload must be an object")
+                val statusElement = payload["httpStatusCode"]
+                    ?: throw CodexAppServerTurnProtocolException("$category.httpStatusCode must be present")
+                val status = if (statusElement === JsonNull) null else
+                    (statusElement as? JsonPrimitive)?.takeUnless { it.isString }?.intOrNull
+                        ?: throw CodexAppServerTurnProtocolException("$category.httpStatusCode must be an integer or null")
+                CodexAppServerErrorInfo.Known(category, status, raw)
+            }
+            category == ACTIVE_TURN_NOT_STEERABLE -> {
+                if (tagged.value !is JsonObject) {
+                    throw CodexAppServerTurnProtocolException("$category payload must be an object")
+                }
+                CodexAppServerErrorInfo.Known(category, null, raw)
+            }
+            else -> CodexAppServerErrorInfo.Unknown(raw)
+        }
+    }
+    else -> CodexAppServerErrorInfo.Unknown(raw)
 }
 
 internal fun decodeTurnStatus(value: String): CodexAppServerTurnStatus = when (value) {
