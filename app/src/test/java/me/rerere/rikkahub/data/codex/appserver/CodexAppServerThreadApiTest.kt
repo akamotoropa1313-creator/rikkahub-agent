@@ -26,7 +26,7 @@ class CodexAppServerThreadApiTest {
     private val codec = CodexAppServerJsonRpc()
 
     @Test
-    fun `history list strictly decodes metadata status cursors and preserves future fields`() {
+    fun `history list strictly decodes metadata status cursors and preserves future fields`() = runBlocking {
         val page = decodeThreadList(buildJsonObject {
             put("data", JsonArray(listOf(buildJsonObject {
                 put("id", "t1"); put("preview", "hello"); put("createdAt", 123L); put("recencyAt", JsonNull)
@@ -44,6 +44,49 @@ class CodexAppServerThreadApiTest {
                 put("data", JsonArray(listOf(buildJsonObject { put("id", "t"); put("createdAt", invalid) })))
             }) }
         }
+        expect<CodexAppServerThreadProtocolException> { decodeThreadList(buildJsonObject {
+            put("data", JsonArray(listOf(buildJsonObject { put("id", "t"); put("status", "active") })))
+        }) }
+        expect<CodexAppServerThreadProtocolException> { decodeThreadList(buildJsonObject {
+            put("data", JsonArray(listOf(buildJsonObject {
+                put("id", "t"); put("status", buildJsonObject { put("type", "active") })
+            })))
+        }) }
+        val futureStatus = decodeThreadList(buildJsonObject {
+            put("data", JsonArray(listOf(buildJsonObject {
+                put("id", "future"); put("status", buildJsonObject { put("type", "futureStatus"); put("newField", true) })
+            })))
+        }).data.single().status
+        assertTrue(futureStatus is CodexAppServerThreadStatus.Unknown)
+    }
+
+    @Test
+    fun `persisted user message decodes known inputs and preserves future inputs`() = runBlocking {
+        val item = decodeItemSnapshot(buildJsonObject {
+            put("id", "user-1")
+            put("type", "userMessage")
+            put("clientId", "client-1")
+            put("content", JsonArray(listOf(
+                buildJsonObject {
+                    put("type", "text"); put("text", "What changed?"); put("text_elements", JsonArray(emptyList()))
+                },
+                buildJsonObject { put("type", "image"); put("url", "data:image/png;base64,AA==") },
+                buildJsonObject { put("type", "futureInput"); put("future", true) },
+            )))
+        })
+        val user = item as CodexAppServerItemSnapshot.UserMessage
+        assertEquals("client-1", user.clientId)
+        assertEquals("What changed?", (user.content[0] as CodexAppServerUserInput.Text).text)
+        assertTrue(user.content[1] is CodexAppServerUserInput.Image)
+        assertTrue(user.content[2] is CodexAppServerUserInput.Other)
+
+        expect<CodexAppServerTurnProtocolException> { decodeItemSnapshot(buildJsonObject {
+            put("id", "bad"); put("type", "userMessage"); put("clientId", JsonNull); put("content", "bad")
+        }) }
+        expect<CodexAppServerTurnProtocolException> { decodeItemSnapshot(buildJsonObject {
+            put("id", "bad"); put("type", "userMessage"); put("clientId", JsonNull)
+            put("content", JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", 3); put("text_elements", JsonArray(emptyList())) })))
+        }) }
     }
 
     @Test
