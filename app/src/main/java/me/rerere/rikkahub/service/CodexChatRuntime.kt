@@ -55,18 +55,13 @@ class CodexChatRuntime(
     private val _capabilities = MutableStateFlow(CodexCapabilitiesUiState(connected = true))
     val capabilities: StateFlow<CodexCapabilitiesUiState> = _capabilities.asStateFlow()
 
+    private val completedAccountLoginIds = ConcurrentHashMap.newKeySet<String>()
     private val accountCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.accountApi.events.collect { event ->
             when (event) {
                 is CodexAppServerAccountEvent.LoginCompleted -> {
-                    val pending = _capabilities.value.pendingLoginId
-                    if (event.loginId == null || pending == null || event.loginId == pending) {
-                        _capabilities.value = _capabilities.value.copy(
-                            pendingLoginId = if (event.success) null else pending,
-                            accountStatus = if (event.success) "Sign-in completed" else event.error ?: "Sign-in failed",
-                            accountError = event.error,
-                        )
-                    }
+                    event.loginId?.let(completedAccountLoginIds::add)
+                    _capabilities.value = applyAccountLoginCompletion(_capabilities.value, event)
                 }
                 is CodexAppServerAccountEvent.MalformedNotification ->
                     _capabilities.value = _capabilities.value.copy(accountError = event.cause.message ?: "Malformed account event")
@@ -77,13 +72,8 @@ class CodexChatRuntime(
     private val mcpCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.mcpApi.events.collect { event ->
             when (event) {
-                is CodexAppServerMcpEvent.OAuthLoginCompleted -> if (event.name == _capabilities.value.pendingMcpServer) {
-                    _capabilities.value = _capabilities.value.copy(
-                        pendingMcpServer = if (event.success) null else event.name,
-                        mcpStatus = if (event.success) "${event.name} sign-in completed" else event.error ?: "${event.name} sign-in failed",
-                        mcpError = event.error,
-                    )
-                }
+                is CodexAppServerMcpEvent.OAuthLoginCompleted ->
+                    _capabilities.value = applyMcpOAuthCompletion(_capabilities.value, event)
                 is CodexAppServerMcpEvent.MalformedNotification ->
                     _capabilities.value = _capabilities.value.copy(mcpError = event.cause.message ?: "Malformed MCP event")
                 is CodexAppServerMcpEvent.ToolCallProgress -> Unit
@@ -127,7 +117,7 @@ class CodexChatRuntime(
         _capabilities.value = _capabilities.value.copy(accountSubmitting = true, accountError = null)
         try {
             val pending = CodexAppServerOAuthHandoff(session.accountApi, launcher).beginChatGptLogin()
-            if (_capabilities.value.accountStatus != "Sign-in completed")
+            if (!completedAccountLoginIds.remove(pending.loginId))
                 _capabilities.value = _capabilities.value.copy(pendingLoginId = pending.loginId)
         } catch (failure: CodexAppServerBrowserLaunchException) {
             _capabilities.value = _capabilities.value.copy(pendingLoginId = failure.loginId, accountError = failure.safeMessage()); throw failure
@@ -397,6 +387,25 @@ data class CodexCapabilitiesUiState(
     val mcpStatus: String? = null,
     val mcpError: String? = null,
 )
+
+internal fun applyMcpOAuthCompletion(state: CodexCapabilitiesUiState, event: CodexAppServerMcpEvent.OAuthLoginCompleted): CodexCapabilitiesUiState {
+    if (state.pendingMcpServer != event.name) return state
+    return state.copy(
+        pendingMcpServer = null,
+        mcpStatus = if (event.success) "${event.name} sign-in completed" else event.error ?: "${event.name} sign-in failed",
+        mcpError = event.error,
+    )
+}
+
+internal fun applyAccountLoginCompletion(state: CodexCapabilitiesUiState, event: CodexAppServerAccountEvent.LoginCompleted): CodexCapabilitiesUiState {
+    val pending = state.pendingLoginId
+    if (event.loginId != null && pending != null && event.loginId != pending) return state
+    return state.copy(
+        pendingLoginId = null,
+        accountStatus = if (event.success) "Sign-in completed" else event.error ?: "Sign-in failed",
+        accountError = event.error,
+    )
+}
 
 private fun Throwable.safeMessage(): String = message?.replace(Regex("https?://\\S+"), "<redacted>") ?: this::class.simpleName.orEmpty()
 
