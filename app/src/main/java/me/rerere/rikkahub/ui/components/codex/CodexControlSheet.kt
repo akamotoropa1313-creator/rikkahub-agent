@@ -24,7 +24,7 @@ fun CodexControlSheet(
     connection: CodexConversationUiState,
     capabilities: CodexCapabilitiesUiState,
     assistant: Assistant,
-    onUpdateAssistant: (Assistant) -> Unit,
+    onUpdateAssistant: ((Assistant) -> Assistant) -> Unit,
     hasBinding: Boolean,
     onRefreshAccount: () -> Unit,
     onRefreshModels: () -> Unit,
@@ -95,7 +95,7 @@ fun CodexControlSheet(
                 trailingContent = {
                     TextButton(
                         enabled = validEfforts,
-                        onClick = { onUpdateAssistant(applyCodexModelSelection(assistant, model)) },
+                        onClick = { onUpdateAssistant { latest -> applyCodexModelSelection(latest, model) } },
                     ) {
                         Text(if (assistant.codexModel == model.model) "Selected" else "Select")
                     }
@@ -104,7 +104,7 @@ fun CodexControlSheet(
         }
         selectedModel?.let { selected ->
             items(selected.supportedReasoningEfforts, key = { it.reasoningEffort }) { effort ->
-                TextButton(onClick = { onUpdateAssistant(assistant.copy(codexReasoningEffort = effort.reasoningEffort)) }) {
+                TextButton(onClick = { onUpdateAssistant { it.copy(codexReasoningEffort = effort.reasoningEffort) } }) {
                     Text(
                         (if (assistant.codexReasoningEffort == effort.reasoningEffort) "✓ " else "") +
                             effort.reasoningEffort + " · " + effort.description,
@@ -115,7 +115,7 @@ fun CodexControlSheet(
                 Text("Reasoning summary")
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     CodexReasoningSummaryPreference.entries.forEach { value ->
-                        TextButton(onClick = { onUpdateAssistant(assistant.copy(codexReasoningSummary = value)) }) {
+                        TextButton(onClick = { onUpdateAssistant { it.copy(codexReasoningSummary = value) } }) {
                             Text((if (assistant.codexReasoningSummary == value) "✓ " else "") + value.name.lowercase())
                         }
                     }
@@ -125,7 +125,7 @@ fun CodexControlSheet(
                     CodexPersonalityPreference.entries.forEach { value ->
                         TextButton(
                             enabled = selected.supportsPersonality,
-                            onClick = { onUpdateAssistant(assistant.copy(codexPersonality = value)) },
+                            onClick = { onUpdateAssistant { it.copy(codexPersonality = value) } },
                         ) {
                             Text((if (assistant.codexPersonality == value) "✓ " else "") + value.name.lowercase())
                         }
