@@ -157,7 +157,7 @@ internal fun decodeItemSnapshot(raw: JsonObject): CodexAppServerItemSnapshot {
 }
 
 private fun decodeUserMessage(id: String, raw: JsonObject): CodexAppServerItemSnapshot.UserMessage {
-    val clientId = raw.requiredNullableString("item.clientId", "clientId")
+    val clientId = raw.optionalString("clientId")
     val content = (raw["content"] as? JsonArray ?: malformed("item.content must be an array")).mapIndexed { index, element ->
         decodeUserInput(element as? JsonObject ?: malformed("item.content[$index] must be an object"), index)
     }
@@ -169,7 +169,11 @@ private fun decodeUserInput(raw: JsonObject, index: Int): CodexAppServerUserInpu
     return when (val type = raw.requiredString("$prefix.type", "type")) {
         "text" -> CodexAppServerUserInput.Text(
             raw.requiredString("$prefix.text", "text"),
-            raw["text_elements"] as? JsonArray ?: malformed("$prefix.text_elements must be an array"),
+            when (val textElements = raw["text_elements"]) {
+                null -> JsonArray(emptyList())
+                is JsonArray -> textElements
+                else -> malformed("$prefix.text_elements must be an array")
+            },
             raw,
         )
         "image" -> CodexAppServerUserInput.Image(raw.requiredString("$prefix.url", "url"), raw.optionalString("detail"), raw)
