@@ -8,6 +8,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -108,6 +109,29 @@ class CodexChatRuntime(
             _capabilities.value = _capabilities.value.copy(modelsLoading = false, modelsError = failure.safeMessage())
             throw failure
         }
+    }
+
+    /** Explicit-only, partial-success configuration diagnostics. Existing snapshots survive errors. */
+    suspend fun refreshConfigDiagnostics() = capabilityOperation {
+        _capabilities.value = _capabilities.value.copy(
+            configLoading = true, configError = null,
+            requirementsLoading = true, requirementsError = null,
+        )
+        val result = session.configApi.readDiagnostics(session.effectiveCwd)
+        result.config.fold(
+            onSuccess = { _capabilities.value = _capabilities.value.copy(configLoading = false, effectiveConfig = it) },
+            onFailure = { failure ->
+                if (failure is CancellationException) throw failure
+                _capabilities.value = _capabilities.value.copy(configLoading = false, configError = capabilityError(failure))
+            },
+        )
+        result.requirements.fold(
+            onSuccess = { value -> _capabilities.value = _capabilities.value.copy(requirementsLoading = false, requirements = value, requirementsLoaded = true) },
+            onFailure = { failure ->
+                if (failure is CancellationException) throw failure
+                _capabilities.value = _capabilities.value.copy(requirementsLoading = false, requirementsError = capabilityError(failure))
+            },
+        )
     }
 
     suspend fun setSkillEnabled(skill: CodexSkillMetadata, enabled: Boolean) = capabilityOperation {
@@ -439,6 +463,13 @@ data class CodexCapabilitiesUiState(
     val pendingMcpServer: String? = null,
     val mcpStatus: String? = null,
     val mcpError: String? = null,
+    val configLoading: Boolean = false,
+    val effectiveConfig: CodexEffectiveConfigSnapshot? = null,
+    val configError: String? = null,
+    val requirementsLoading: Boolean = false,
+    val requirements: CodexConfigRequirementsSnapshot? = null,
+    val requirementsLoaded: Boolean = false,
+    val requirementsError: String? = null,
 )
 
 internal fun applyMcpOAuthCompletion(state: CodexCapabilitiesUiState, event: CodexAppServerMcpEvent.OAuthLoginCompleted): CodexCapabilitiesUiState {
@@ -461,6 +492,10 @@ internal fun applyAccountLoginCompletion(state: CodexCapabilitiesUiState, event:
 }
 
 private fun Throwable.safeMessage(): String = message?.replace(Regex("https?://\\S+"), "<redacted>") ?: this::class.simpleName.orEmpty()
+
+private fun capabilityError(failure: Throwable): String =
+    if (failure is CodexAppServerResponseException && failure.error.code == -32601L) "Not supported by this App Server"
+    else failure.safeMessage()
 
 internal class CodexTurnStopController {
     private val stopRequested = AtomicBoolean(false)

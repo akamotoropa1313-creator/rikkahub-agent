@@ -26,6 +26,7 @@ open class CodexAppServerConversationSession internal constructor(
     val connection: CodexAppServerConnection,
     private val bindingRepository: CodexAppServerSessionBindingRepository,
     val tokenUsageTracker: CodexTokenUsageTracker = CodexTokenUsageTracker(connection, binding.threadId),
+    val effectiveCwd: String? = null,
 ) : Closeable {
     val conversationId: String get() = binding.conversationId
     val workspaceId: String get() = binding.workspaceId
@@ -39,6 +40,7 @@ open class CodexAppServerConversationSession internal constructor(
     val mcpApi = CodexAppServerMcpApi(connection)
     val accountApi = CodexAppServerAccountApi(connection)
     val modelApi = CodexAppServerModelApi(connection)
+    val configApi = CodexAppServerConfigApi(connection)
 
     private val terminated = AtomicBoolean(false)
     private val job = SupervisorJob()
@@ -196,6 +198,7 @@ class CodexAppServerConversationSessionOpener(
         require(!workspaceCwd.startsWith('/') && !workspaceCwd.startsWith('\\')) { "workspaceCwd must be relative" }
         require(workspaceCwd.split('/', '\\').none { it == ".." }) { "workspaceCwd must stay inside the workspace" }
 
+        val effectiveCwd = resolveCodexEffectiveCwd(workspace.root, workspaceCwd)
         val connection = connectionFactory.create(workspace.root, workspaceCwd)
         var transferred = false
         try {
@@ -206,7 +209,7 @@ class CodexAppServerConversationSessionOpener(
             val binding = repository.createPersistentThreadBinding(
                 conversationId, workspaceId, workspaceCwd, started.thread,
             )
-            val session = CodexAppServerConversationSession(binding, connection, repository)
+            val session = CodexAppServerConversationSession(binding, connection, repository, effectiveCwd = effectiveCwd)
             transferred = true
             return CodexAppServerConversationSessionOpenResult.Started(session, started)
         } finally {

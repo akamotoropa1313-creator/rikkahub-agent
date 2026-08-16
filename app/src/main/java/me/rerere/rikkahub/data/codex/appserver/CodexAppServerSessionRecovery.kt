@@ -22,7 +22,8 @@ class CodexAppServerRecoveredSession internal constructor(
     val resumeResult: CodexAppServerThreadOpenResult,
     repository: CodexAppServerSessionBindingRepository,
     usageTracker: CodexTokenUsageTracker,
-) : CodexAppServerConversationSession(binding, connection, repository, usageTracker)
+    effectiveCwd: String?,
+) : CodexAppServerConversationSession(binding, connection, repository, usageTracker, effectiveCwd)
 
 class CodexAppServerSessionRecovery(
     private val repository: CodexAppServerSessionBindingRepository,
@@ -46,6 +47,7 @@ class CodexAppServerSessionRecovery(
                 binding, CodexAppServerStaleBindingReason.MissingWorkspace,
             )
 
+        val effectiveCwd = resolveCodexEffectiveCwd(workspace.root, binding.workspaceCwd)
         val connection = connectionFactory.create(workspace.root, binding.workspaceCwd)
         var ownershipTransferred = false
         var usageTracker: CodexTokenUsageTracker? = null
@@ -61,6 +63,7 @@ class CodexAppServerSessionRecovery(
                 resumed,
                 repository,
                 checkNotNull(usageTracker),
+                effectiveCwd,
             )
             ownershipTransferred = true
             return CodexAppServerSessionRecoveryResult.Recovered(session)

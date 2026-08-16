@@ -4,9 +4,26 @@ import me.rerere.rikkahub.data.model.Assistant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 class CodexSafetyPreferencePolicyTest {
+    @Test
+    fun `managed sandbox diagnostics warn without mutating preferences`() {
+        val restricted = me.rerere.rikkahub.data.codex.appserver.CodexConfigRequirementsSnapshot(
+            allowedSandboxModes = listOf(
+                me.rerere.rikkahub.data.codex.appserver.CodexDiagnosticSandboxMode("read-only"),
+                me.rerere.rikkahub.data.codex.appserver.CodexDiagnosticSandboxMode("workspace-write"),
+            ),
+        )
+        assertNull(managedSandboxWarning("danger-full-access", false, restricted))
+        assertNull(managedSandboxWarning("danger-full-access", true, null))
+        assertNull(managedSandboxWarning("danger-full-access", true, me.rerere.rikkahub.data.codex.appserver.CodexConfigRequirementsSnapshot()))
+        assertNull(managedSandboxWarning("workspace-write", true, restricted))
+        assertNotNull(managedSandboxWarning("danger-full-access", true, restricted))
+        assertNull(managedSandboxWarning(null, true, restricted))
+        assertNull(managedSandboxWarning("future-mode", true, restricted))
+    }
     @Test fun warningAndConfirmationStatesArePure() {
         val base = Assistant()
         assertEquals(

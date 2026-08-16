@@ -22,6 +22,8 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.CodexPersonalityPreference
 import me.rerere.rikkahub.data.model.CodexReasoningSummaryPreference
 import me.rerere.rikkahub.data.codex.appserver.CodexTokenUsageTelemetry
+import me.rerere.rikkahub.data.codex.appserver.CodexEffectiveConfigSnapshot
+import me.rerere.rikkahub.data.codex.appserver.CodexConfigRequirementsSnapshot
 
 /** Explicit control plane for the existing conversation-owned Codex runtime. Opening it sends no RPC. */
 @Composable
@@ -33,6 +35,7 @@ fun CodexControlSheet(
     hasBinding: Boolean,
     onRefreshAccount: () -> Unit,
     onRefreshModels: () -> Unit,
+    onRefreshConfigDiagnostics: () -> Unit,
     onRefreshSkills: () -> Unit,
     onRefreshMcp: () -> Unit,
     onReloadMcp: () -> Unit,
@@ -81,6 +84,45 @@ fun CodexControlSheet(
             }
         }
         item {
+            Section("Configuration & policy") {
+                Text("These are App Server base and managed settings. RikkaHub thread and turn overrides may differ.")
+                Button(
+                    onClick = onRefreshConfigDiagnostics,
+                    enabled = capabilities.connected && !capabilities.configLoading && !capabilities.requirementsLoading && !operationBusy,
+                ) { Text(if (capabilities.effectiveConfig == null && !capabilities.requirementsLoaded) "Load configuration" else "Refresh diagnostics") }
+                if (capabilities.configLoading || capabilities.requirementsLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                capabilities.configError?.let { Text("Configuration: $it", color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+                capabilities.requirementsError?.let { Text("Managed requirements: $it", color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+                capabilities.effectiveConfig?.let { config ->
+                    Text(if (config.threadAgnostic) "Base App Server configuration · Thread-agnostic configuration" else "Base App Server configuration", style = MaterialTheme.typography.titleMedium)
+                    configRow("Model", config.model, config, "model")
+                    configRow("Model provider", config.modelProvider, config, "model_provider")
+                    configRow("Model context window", config.modelContextWindow?.toString(), config, "model_context_window")
+                    configRow("Auto compact limit", config.modelAutoCompactTokenLimit?.toString(), config, "model_auto_compact_token_limit")
+                    configRow("Sandbox default", config.sandboxMode?.let { if (it.known) it.wireValue else "${it.wireValue} (unknown)" }, config, "sandbox_mode")
+                    configRow("Workspace-write network access", config.sandboxWorkspaceWrite?.networkAccess?.enabledLabel(), config, "sandbox_workspace_write.network_access")
+                    config.sandboxWorkspaceWrite?.writableRootsCount?.let { Text("Writable roots: $it") }
+                    configRow("Web search", config.webSearch, config, "web_search")
+                    configRow("Reasoning effort", config.modelReasoningEffort, config, "model_reasoning_effort")
+                    configRow("Reasoning summary", config.modelReasoningSummary, config, "model_reasoning_summary")
+                    configRow("Verbosity", config.modelVerbosity, config, "model_verbosity")
+                    configRow("Service tier", config.serviceTier, config, "service_tier")
+                    configRow("Analytics", config.analyticsEnabled?.enabledLabel(), config, "analytics.enabled")
+                }
+                if (capabilities.requirementsLoaded) {
+                    Text("Managed requirements", style = MaterialTheme.typography.titleMedium)
+                    capabilities.requirements?.let { requirements ->
+                        requirements.allowedSandboxModes?.let { Text("Allowed sandbox modes: " + it.joinToString(" · ") { mode -> mode.wireValue }) }
+                        requirements.allowedWebSearchModes?.let { Text("Allowed web search: " + it.joinToString(" · ")) }
+                        requirements.newThread?.model?.let { Text("Managed new-thread model: $it") }
+                        requirements.newThread?.modelReasoningEffort?.let { Text("Managed new-thread effort: $it") }
+                        requirements.newThread?.serviceTier?.let { Text("Managed new-thread service tier: $it") }
+                        requirements.featureRequirements?.forEach { (feature, required) -> Text("$feature = required ${if (required) "enabled" else "disabled"}") }
+                    } ?: Text("No managed requirements reported")
+                }
+            }
+        }
+        item {
             Section("Safety & permissions") {
                 Text("Sandbox", style = MaterialTheme.typography.titleMedium)
                 Text("Server setting omits the override. On an existing thread a previous override may be sticky; Reset is required to return completely to server configuration.")
@@ -98,6 +140,9 @@ fun CodexControlSheet(
                     else -> "The App Server setting is used when no explicit override is selected."
                 })
                 if (!codexSandboxKnown(assistant.codexSandboxMode)) Text("Unsupported saved sandbox preference '${assistant.codexSandboxMode}' is preserved and will not be sent.", color = MaterialTheme.colorScheme.error)
+                managedSandboxWarning(assistant.codexSandboxMode, capabilities.requirementsLoaded, capabilities.requirements)?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                }
                 Text("Approval", style = MaterialTheme.typography.titleMedium)
                 listOf(null to "Server setting", "untrusted" to "Untrusted", "on-request" to "On request", "never" to "Never").forEach { (value, label) ->
                     TextButton(onClick = {
@@ -366,6 +411,31 @@ private fun connectionLabel(state: CodexConversationUiState, bound: Boolean) = w
     is CodexConversationUiState.Failed -> "Failed: ${state.message}"
     is CodexConversationUiState.StaleBinding -> "Failed: ${state.reason}"
     is CodexConversationUiState.WorkspaceMismatch -> "Failed: workspace mismatch"
+}
+
+@Composable
+private fun configRow(label: String, value: String?, config: CodexEffectiveConfigSnapshot, originKey: String) {
+    value ?: return
+    val origin = config.origins[originKey]?.source?.label
+    Text(if (origin == null) "$label: $value" else "$label: $value · $origin", maxLines = 2, overflow = TextOverflow.Ellipsis)
+}
+
+private fun Boolean.enabledLabel() = if (this) "Enabled" else "Disabled"
+
+internal fun managedSandboxWarning(
+    savedMode: String?,
+    requirementsLoaded: Boolean,
+    requirements: CodexConfigRequirementsSnapshot?,
+): String? {
+    if (!requirementsLoaded || savedMode !in setOf("read-only", "workspace-write", "danger-full-access")) return null
+    val allowed = requirements?.allowedSandboxModes ?: return null
+    if (allowed.any { it.wireValue == savedMode }) return null
+    val label = when (savedMode) {
+        "read-only" -> "Read only"
+        "workspace-write" -> "Workspace write"
+        else -> "Full access"
+    }
+    return "Managed policy currently does not allow $label. The saved preference is unchanged; the App Server remains authoritative."
 }
 
 internal fun codexReconnectEligible(
