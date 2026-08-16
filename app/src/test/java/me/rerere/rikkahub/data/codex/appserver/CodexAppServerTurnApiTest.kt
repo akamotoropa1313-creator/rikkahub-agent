@@ -67,6 +67,7 @@ class CodexAppServerTurnApiTest {
         expect<CodexAppServerTurnProtocolException> {
             decodeItemSnapshot(buildJsonObject { put("id", "bad"); put("type", "exitedReviewMode"); put("review", 1) })
         }
+        Unit
     }
 
     @Test
