@@ -128,7 +128,7 @@ class CodexChatRuntime(
                     _capabilities.value = _capabilities.value.copy(pendingLoginId = loginId)
                 },
             )
-        } catch (failure: CodexAppServerBrowserLaunchException) {
+        } catch (failure: CodexAppServerLoginHandoffException) {
             accountLoginCorrelation.resolveStart(
                 failure.loginId,
                 onCompletion = { completion ->
