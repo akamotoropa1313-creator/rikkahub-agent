@@ -22,6 +22,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerLocalState
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerJsonRpc
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerRequestDispatcher
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTransport
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTransportEvent
@@ -37,13 +38,27 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CodexReviewRuntimeTest {
+    private val codec = CodexAppServerJsonRpc()
+
     @Test
     fun `review canonical exit text is persisted once and draft agent deltas are suppressed`() = runBlocking {
         val persisted = CopyOnWriteArrayList<Triple<String, String, String>>()
         val harness = harness(this) { turnId, itemId, text -> persisted += Triple(turnId, itemId, text) }
         try {
-            harness.transport.emit(notification("turn/started", turnParams("inProgress")))
-            await { harness.runtime.state.value is CodexConversationUiState.Running }
+            val start = async(start = CoroutineStart.UNDISPATCHED) {
+                harness.runtime.startReview(CodexAppServerReviewTarget.UncommittedChanges)
+            }
+            val request = (codec.decode(harness.transport.takeClientLine()).getOrThrow() as JsonRpcMessage.Request).value
+            assertEquals("review/start", request.method)
+            harness.transport.emit(codec.encode(JsonRpcResponse(
+                request.id,
+                reviewResult("turn-1", "inProgress", "thread-1"),
+            )))
+            assertEquals("turn-1", start.await().turn.id)
+            await {
+                harness.runtime.activeTurnId() == "turn-1" &&
+                    harness.runtime.state.value is CodexConversationUiState.Running
+            }
 
             harness.transport.emit(notification("item/started", itemParams(enteredReview("review-enter"), "startedAtMs", 10)))
             harness.transport.emit(notification("item/agentMessage/delta", deltaParams("draft-message", "draft review text")))
@@ -68,7 +83,18 @@ class CodexReviewRuntimeTest {
     fun `approval during review remains on the same ordinary turn lifecycle`() = runBlocking {
         val harness = harness(this) { _, _, _ -> }
         try {
-            harness.transport.emit(notification("turn/started", turnParams("inProgress")))
+            val start = async(start = CoroutineStart.UNDISPATCHED) {
+                harness.runtime.startReview(CodexAppServerReviewTarget.UncommittedChanges)
+            }
+            val request = (codec.decode(harness.transport.takeClientLine()).getOrThrow() as JsonRpcMessage.Request).value
+            assertEquals("review/start", request.method)
+            harness.transport.emit(codec.encode(JsonRpcResponse(
+                request.id,
+                reviewResult("turn-1", "inProgress", "thread-1"),
+            )))
+            assertEquals("turn-1", start.await().turn.id)
+            await { harness.runtime.activeTurnId() == "turn-1" }
+
             harness.transport.emit(notification("item/started", itemParams(enteredReview("review-enter"), "startedAtMs", 10)))
             await { harness.runtime.state.value is CodexConversationUiState.Running }
 
@@ -135,7 +161,6 @@ class CodexReviewRuntimeTest {
             CodexAppServerRequestDispatcher(transport),
             CodexAppServerClientInfo(version = "test"),
         )
-        val codec = CodexAppServerJsonRpc()
         val initializing = scope.async(start = CoroutineStart.UNDISPATCHED) { connection.initialize() }
         val initRequest = (codec.decode(transport.takeClientLine()).getOrThrow() as JsonRpcMessage.Request).value
         transport.emit(codec.encode(JsonRpcResponse(initRequest.id, buildJsonObject {
@@ -210,9 +235,12 @@ class CodexReviewRuntimeTest {
         return "{\"id\":$encoded,\"method\":${JsonPrimitive(method)},\"params\":$params}"
     }
 
-    private fun turnParams(status: String) = buildJsonObject {
-        put("threadId", "thread-1")
-        put("turn", buildJsonObject { put("id", "turn-1"); put("status", status) })
+    private fun reviewResult(turnId: String, status: String, reviewThreadId: String) = buildJsonObject {
+        put("turn", buildJsonObject {
+            put("id", turnId)
+            put("status", status)
+        })
+        put("reviewThreadId", reviewThreadId)
     }
 
     private fun enteredReview(id: String) = buildJsonObject {
