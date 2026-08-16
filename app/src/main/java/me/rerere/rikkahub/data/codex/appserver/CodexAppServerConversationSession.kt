@@ -37,6 +37,7 @@ open class CodexAppServerConversationSession internal constructor(
     val skillsApi = CodexAppServerSkillsApi(connection)
     val mcpApi = CodexAppServerMcpApi(connection)
     val accountApi = CodexAppServerAccountApi(connection)
+    val modelApi = CodexAppServerModelApi(connection)
 
     private val terminated = AtomicBoolean(false)
     private val job = SupervisorJob()
