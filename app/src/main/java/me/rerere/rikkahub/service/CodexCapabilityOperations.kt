@@ -22,7 +22,7 @@ suspend fun <T> runCodexMcpOAuthBegin(
  */
 internal class CodexAccountLoginCorrelation {
     private var awaitingStartId = false
-    private var anonymousCompletion: CodexAppServerAccountEvent.LoginCompleted? = null
+    private var anonymousCompletionSeen = false
     private val completionsById = linkedMapOf<String, CodexAppServerAccountEvent.LoginCompleted>()
 
     @Synchronized
@@ -47,7 +47,7 @@ internal class CodexAccountLoginCorrelation {
         }
         val id = event.loginId
         if (id == null) {
-            anonymousCompletion = event
+            anonymousCompletionSeen = true
             apply(event)
         } else {
             completionsById[id] = event
@@ -69,8 +69,12 @@ internal class CodexAccountLoginCorrelation {
     ) {
         check(awaitingStartId) { "No Codex account login start is awaiting correlation" }
         awaitingStartId = false
-        val completion = completionsById[loginId] ?: anonymousCompletion
-        if (completion != null) onCompletion(completion) else onPending(loginId)
+        val exact = completionsById[loginId]
+        when {
+            exact != null -> onCompletion(exact)
+            anonymousCompletionSeen -> Unit // already applied when the anonymous terminal arrived
+            else -> onPending(loginId)
+        }
         clearBuffered()
     }
 
@@ -82,10 +86,10 @@ internal class CodexAccountLoginCorrelation {
     }
 
     @Synchronized
-    internal fun bufferedCountForTest(): Int = completionsById.size + if (anonymousCompletion != null) 1 else 0
+    internal fun bufferedCountForTest(): Int = completionsById.size + if (anonymousCompletionSeen) 1 else 0
 
     private fun clearBuffered() {
-        anonymousCompletion = null
+        anonymousCompletionSeen = false
         completionsById.clear()
     }
 
