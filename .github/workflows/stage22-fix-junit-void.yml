@@ -37,3 +37,5 @@ jobs:
           git add app/src/test/java/me/rerere/rikkahub/data/codex/appserver/CodexAppServerTurnApiTest.kt
           git commit -m 'test(codex): make review item test return Unit'
           git push origin HEAD:codex/-stage22
+
+# trigger
