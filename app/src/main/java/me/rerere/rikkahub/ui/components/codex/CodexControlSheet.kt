@@ -29,6 +29,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexEffectiveConfigSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexConfigRequirementsSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerItemSnapshot
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerUserInput
 import me.rerere.rikkahub.service.CodexReviewUiState
 import me.rerere.rikkahub.service.CodexReviewAction
 
@@ -508,6 +509,10 @@ private val CodexConversationUiState.threadId: String? get() = when (this) {
 }
 
 private fun historyItemText(item: CodexAppServerItemSnapshot): String = when (item) {
+    is CodexAppServerItemSnapshot.UserMessage -> {
+        val content = item.content.joinToString("\n", transform = ::historyUserInputText).ifBlank { "[empty message]" }
+        "User: $content"
+    }
     is CodexAppServerItemSnapshot.AgentMessage -> "Agent: ${item.text}"
     is CodexAppServerItemSnapshot.Reasoning -> "Reasoning: ${(item.summary + item.content).joinToString("\n")}"
     is CodexAppServerItemSnapshot.CommandExecution -> "Command: ${item.command}${item.aggregatedOutput?.let { "\n$it" }.orEmpty()}"
@@ -515,6 +520,17 @@ private fun historyItemText(item: CodexAppServerItemSnapshot): String = when (it
     is CodexAppServerItemSnapshot.EnteredReviewMode -> "Entered review mode: ${item.review}"
     is CodexAppServerItemSnapshot.ExitedReviewMode -> "Exited review mode: ${item.review}"
     is CodexAppServerItemSnapshot.Other -> "${item.type} item"
+}
+
+private fun historyUserInputText(input: CodexAppServerUserInput): String = when (input) {
+    is CodexAppServerUserInput.Text -> input.text
+    is CodexAppServerUserInput.Image -> "[Image]"
+    is CodexAppServerUserInput.LocalImage -> "[Local image: ${input.path.substringAfterLast('/').ifBlank { "image" }}]"
+    is CodexAppServerUserInput.Audio -> "[Audio]"
+    is CodexAppServerUserInput.LocalAudio -> "[Local audio: ${input.path.substringAfterLast('/').ifBlank { "audio" }}]"
+    is CodexAppServerUserInput.Skill -> "[Skill: ${input.name}]"
+    is CodexAppServerUserInput.Mention -> "@${input.name}"
+    is CodexAppServerUserInput.Other -> "[${input.type}]"
 }
 
 @Composable
