@@ -185,12 +185,8 @@ private fun decodeHistoryTurns(raw: JsonObject): List<CodexAppServerHistoryTurn>
 }.orEmpty()
 
 private fun decodeThreadStatus(value: JsonElement): CodexAppServerThreadStatus {
-    if (value is JsonPrimitive && value.isString) return when (value.content) {
-        "notLoaded" -> CodexAppServerThreadStatus.NotLoaded; "idle" -> CodexAppServerThreadStatus.Idle
-        "systemError" -> CodexAppServerThreadStatus.SystemError
-        else -> CodexAppServerThreadStatus.Unknown(value.content, value)
-    }
-    val objectValue = value as? JsonObject ?: throw CodexAppServerThreadProtocolException("thread.status must be a string or object")
+    val objectValue = value as? JsonObject
+        ?: throw CodexAppServerThreadProtocolException("thread.status must be an object")
     val type = objectValue.requiredThreadString("type")
     if (type != "active") return when (type) {
         "notLoaded" -> CodexAppServerThreadStatus.NotLoaded
