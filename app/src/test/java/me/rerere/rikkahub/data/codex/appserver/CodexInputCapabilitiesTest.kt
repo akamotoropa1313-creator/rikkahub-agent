@@ -9,18 +9,28 @@ class CodexInputCapabilitiesTest {
         id, wire, wire, "", false, emptyList(), "medium", false, default, JsonObject(emptyMap()), modalities,
     )
 
-    @Test fun `capabilities preserve unknown and resolve model wire name`() {
-        val models = listOf(model("selected", "wire-a", false, listOf("text", "future", "image")))
+    @Test fun `capabilities preserve future modality order and resolve by wire model name`() {
+        val models = listOf(model("selected", "wire-a", false, listOf("text", "future", "image", "audio")))
         assertEquals(CodexInputCapability.Supported, codexInputCapability("wire-a", models, "image"))
-        assertEquals(CodexInputCapability.Unsupported, codexInputCapability("wire-a", models, "audio"))
+        assertEquals(CodexInputCapability.Supported, codexInputCapability("wire-a", models, "audio"))
+        assertEquals(CodexInputCapability.Unsupported, codexInputCapability("wire-a", models, "video"))
         assertEquals(CodexInputCapability.Unknown, codexInputCapability("selected", models, "image"))
-        assertEquals(listOf("text", "future", "image"), models.single().inputModalities)
+        assertEquals(CodexInputCapability.Unsupported, codexInputCapability("selected", models, "audio"))
+        assertEquals(listOf("text", "future", "image", "audio"), models.single().inputModalities)
     }
 
-    @Test fun `missing saved model does not fall back but null selection uses explicit default`() {
+    @Test fun `unreported image stays unknown while unreported audio fails closed`() {
+        val legacy = listOf(model("id", "default-wire", true, null))
+        assertEquals(CodexInputCapability.Unknown, codexInputCapability(null, null, "image"))
+        assertEquals(CodexInputCapability.Unsupported, codexInputCapability(null, null, "audio"))
+        assertEquals(CodexInputCapability.Unknown, codexInputCapability(null, legacy, "image"))
+        assertEquals(CodexInputCapability.Unsupported, codexInputCapability(null, legacy, "audio"))
+    }
+
+    @Test fun `missing saved model does not fall back but explicit default is used when selection is null`() {
         val models = listOf(model("id", "default-wire", true, listOf("text", "audio")))
-        assertEquals(CodexInputCapability.Unknown, codexInputCapability("gone", models, "audio"))
+        assertEquals(CodexInputCapability.Unknown, codexInputCapability("gone", models, "image"))
+        assertEquals(CodexInputCapability.Unsupported, codexInputCapability("gone", models, "audio"))
         assertEquals(CodexInputCapability.Supported, codexInputCapability(null, models, "audio"))
-        assertEquals(CodexInputCapability.Unknown, codexInputCapability(null, null, "audio"))
     }
 }
