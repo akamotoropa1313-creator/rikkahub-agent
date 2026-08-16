@@ -14,7 +14,15 @@ class CodexAppServerOAuthHandoff(
     suspend fun beginChatGptLogin(): CodexAppServerPendingChatGptLogin {
         val started = accountApi.startChatGptLogin()
         val authUrl = started.authUrlForLaunch()
-        validateCodexAppServerAuthUrl(authUrl)
+        try {
+            validateCodexAppServerAuthUrl(authUrl)
+        } catch (cause: CodexAppServerInvalidAuthUrlException) {
+            throw CodexAppServerLoginHandoffException(
+                started.loginId,
+                "Unable to use the ChatGPT sign-in URL; the pending login may be canceled explicitly",
+                cause,
+            )
+        }
         try {
             launcher.launch(authUrl)
         } catch (cancelled: CancellationException) {
@@ -26,9 +34,19 @@ class CodexAppServerOAuthHandoff(
     }
 }
 
+open class CodexAppServerLoginHandoffException(
+    val loginId: String,
+    message: String,
+    cause: Throwable,
+) : Exception(message, cause)
+
 class CodexAppServerInvalidAuthUrlException(message: String) : IllegalArgumentException(message)
-class CodexAppServerBrowserLaunchException(val loginId: String, cause: Throwable) :
-    Exception("Unable to open ChatGPT sign-in; the pending login may be canceled explicitly", cause)
+class CodexAppServerBrowserLaunchException(loginId: String, cause: Throwable) :
+    CodexAppServerLoginHandoffException(
+        loginId,
+        "Unable to open ChatGPT sign-in; the pending login may be canceled explicitly",
+        cause,
+    )
 
 fun validateCodexAppServerAuthUrl(value: String) {
     val uri = try { URI(value) } catch (_: Exception) { throw CodexAppServerInvalidAuthUrlException("Malformed authentication URL") }
