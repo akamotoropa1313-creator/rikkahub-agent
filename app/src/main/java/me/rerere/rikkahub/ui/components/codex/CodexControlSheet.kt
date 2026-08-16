@@ -41,6 +41,7 @@ fun CodexControlSheet(
     onReconnect: () -> Unit,
 ) {
     val selectedModel = selectedCodexModel(assistant.codexModel, capabilities.models)
+    val serviceTierModel = serviceTierCatalogModel(assistant.codexModel, capabilities.models)
     LazyColumn(
         modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
         contentPadding = PaddingValues(20.dp),
@@ -108,6 +109,37 @@ fun CodexControlSheet(
                 },
             )
         }
+        item {
+            Text("Service tier", style = MaterialTheme.typography.titleMedium)
+            Text("Server setting omits the override. On an existing thread, the server-side tier may remain sticky. Default explicitly requests the default tier on the next turn.")
+            TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = null) } }) {
+                Text((if (assistant.codexServiceTier == null) "✓ " else "") + "Server setting")
+            }
+            TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = "default") } }) {
+                Text((if (assistant.codexServiceTier == "default") "✓ " else "") + "Default")
+            }
+            serviceTierModel?.let { tierModel ->
+                codexServiceTierOptions(tierModel).forEach { tier ->
+                    TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = tier.id) } }) {
+                        Text((if (assistant.codexServiceTier == tier.id) "✓ " else "") + tier.name + " · " + tier.description)
+                    }
+                }
+                tierModel.defaultServiceTier?.let { default ->
+                    val label = codexServiceTierOptions(tierModel).firstOrNull { it.id == default }?.name ?: default
+                    Text("Catalog default: $label")
+                }
+            }
+            val savedTier = assistant.codexServiceTier
+            if (savedTier != null && savedTier != "default") {
+                when {
+                    serviceTierModel == null -> Text("Tier support not confirmed in the current model catalog")
+                    serviceTierModel.serviceTiers == null && serviceTierModel.additionalSpeedTiers == null ->
+                        Text("Tier support not reported by this App Server; the saved exact tier will be preserved")
+                    codexServiceTierOptions(serviceTierModel).none { it.id == savedTier } ->
+                        Text("Tier is not supported by the selected Codex model", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
         selectedModel?.let { selected ->
             items(selected.supportedReasoningEfforts, key = { it.reasoningEffort }) { effort ->
                 TextButton(onClick = { onUpdateAssistant { it.copy(codexReasoningEffort = effort.reasoningEffort) } }) {
@@ -118,27 +150,6 @@ fun CodexControlSheet(
                 }
             }
             item {
-                Text("Service tier", style = MaterialTheme.typography.titleMedium)
-                Text("Server setting omits the override. On an existing thread, the server-side tier may remain sticky. Default explicitly requests the default tier on the next turn.")
-                TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = null) } }) {
-                    Text((if (assistant.codexServiceTier == null) "✓ " else "") + "Server setting")
-                }
-                TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = "default") } }) {
-                    Text((if (assistant.codexServiceTier == "default") "✓ " else "") + "Default")
-                }
-                codexServiceTierOptions(selected).forEach { tier ->
-                    TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = tier.id) } }) {
-                        Text((if (assistant.codexServiceTier == tier.id) "✓ " else "") + tier.name + " · " + tier.description)
-                    }
-                }
-                selected.defaultServiceTier?.let { default ->
-                    val label = codexServiceTierOptions(selected).firstOrNull { it.id == default }?.name ?: default
-                    Text("Catalog default: $label")
-                }
-                val savedTier = assistant.codexServiceTier
-                if (savedTier != null && savedTier != "default" && codexServiceTierOptions(selected).none { it.id == savedTier }) {
-                    Text("Tier support not confirmed in the current model catalog", color = MaterialTheme.colorScheme.error)
-                }
                 Text("Reasoning summary")
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     CodexReasoningSummaryPreference.entries.forEach { value ->
