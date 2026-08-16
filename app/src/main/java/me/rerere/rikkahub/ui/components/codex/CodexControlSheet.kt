@@ -26,6 +26,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexEffectiveConfigSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexConfigRequirementsSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
 import me.rerere.rikkahub.service.CodexReviewUiState
+import me.rerere.rikkahub.service.CodexReviewAction
 
 /** Explicit control plane for the existing conversation-owned Codex runtime. Opening it sends no RPC. */
 @Composable
@@ -33,7 +34,7 @@ fun CodexControlSheet(
     connection: CodexConversationUiState,
     capabilities: CodexCapabilitiesUiState,
     review: CodexReviewUiState,
-    onStartReview: (CodexAppServerReviewTarget) -> Unit,
+    onStartReview: (CodexReviewAction) -> Unit,
     assistant: Assistant,
     onUpdateAssistant: ((Assistant) -> Assistant) -> Unit,
     hasBinding: Boolean,
@@ -144,16 +145,23 @@ fun CodexControlSheet(
                     "Commit" -> { OutlinedTextField(sha, { sha = it }, Modifier.fillMaxWidth(), label = { Text("Commit SHA") }, singleLine = true); OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("Title (optional)") }) }
                     "Custom" -> OutlinedTextField(instructions, { instructions = it }, Modifier.fillMaxWidth().heightIn(min = 120.dp), label = { Text("Review instructions") }, minLines = 4)
                 }
-                if (review.inProgress) Text("Review in progress · ${review.targetSummary.orEmpty()}")
+                if (review.inProgress) {
+                    Text("Review in progress · ${review.targetSummary.orEmpty()}")
+                    Button(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                        enabled = capabilities.connected,
+                        onClick = { onStartReview(CodexReviewAction.Stop) },
+                    ) { Text("Stop review") }
+                }
                 review.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 val valid = when (reviewKind) { "Base branch" -> branch.isNotBlank(); "Commit" -> sha.isNotBlank(); "Custom" -> instructions.isNotBlank(); else -> true }
-                Button(modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp), enabled = valid && !review.inProgress && !operationBusy, onClick = {
-                    onStartReview(when (reviewKind) {
+                Button(modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp), enabled = capabilities.connected && valid && !review.inProgress && !operationBusy, onClick = {
+                    onStartReview(CodexReviewAction.Start(when (reviewKind) {
                         "Base branch" -> CodexAppServerReviewTarget.BaseBranch(branch)
                         "Commit" -> CodexAppServerReviewTarget.Commit(sha, title.takeIf(String::isNotBlank))
                         "Custom" -> CodexAppServerReviewTarget.Custom(instructions)
                         else -> CodexAppServerReviewTarget.UncommittedChanges
-                    })
+                    }))
                 }) { Text("Start review") }
             }
         }
