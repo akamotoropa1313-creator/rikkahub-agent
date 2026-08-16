@@ -2,29 +2,25 @@ package me.rerere.rikkahub.data.codex.appserver
 
 enum class CodexInputCapability { Supported, Unsupported, Unknown }
 
-/** Resolves by the wire `model` value, never the catalog presentation id. */
+/**
+ * Resolves by the wire `model` value, never the catalog presentation id.
+ *
+ * Image support predates `inputModalities`, so missing capability data remains Unknown and the
+ * existing image path may continue. Audio is newer: until the selected model explicitly reports
+ * `audio`, it is treated as Unsupported for turn preflight. This keeps older App Servers from ever
+ * receiving an `audio`/`localAudio` variant they cannot decode.
+ */
 fun codexInputCapability(
     savedModel: String?,
     catalog: List<CodexAppServerModel>?,
     modality: String,
 ): CodexInputCapability {
-    if (catalog == null) return CodexInputCapability.Unknown
+    fun unreported(): CodexInputCapability =
+        if (modality == "audio") CodexInputCapability.Unsupported else CodexInputCapability.Unknown
+
+    if (catalog == null) return unreported()
     val model = if (savedModel != null) catalog.firstOrNull { it.model == savedModel }
     else catalog.firstOrNull { it.isDefault }
-    val modalities = model?.inputModalities ?: return CodexInputCapability.Unknown
+    val modalities = model?.inputModalities ?: return unreported()
     return if (modality in modalities) CodexInputCapability.Supported else CodexInputCapability.Unsupported
-}
-
-/**
- * Stage17 send policy. Images predate modality reporting and therefore remain allowed when support
- * is unknown. Audio is newer and must be explicitly reported as supported before any staging or
- * turn/start serialization occurs, so older App Servers fail closed instead of receiving an
- * unknown `audio`/`localAudio` wire variant.
- */
-fun codexInputAllowedForTurn(capability: CodexInputCapability, modality: String): Boolean = when {
-    capability == CodexInputCapability.Supported -> true
-    capability == CodexInputCapability.Unsupported -> false
-    modality == "image" -> true
-    modality == "audio" -> false
-    else -> false
 }
