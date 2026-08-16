@@ -27,7 +27,7 @@ class CodexAppServerModelApiTest {
     private val codec = CodexAppServerJsonRpc()
 
     @Test
-    fun `exact request preserves open effort order and raw fields`() = runBlocking {
+    fun `exact request preserves open effort order and raw fields`() = runBlocking<Unit> {
         fixture().use { f ->
             val call = async { f.api.list("cursor", 7, false) }
             val raw = codec.json.parseToJsonElement(f.transport.takeClientLine()).jsonObject
@@ -57,7 +57,7 @@ class CodexAppServerModelApiTest {
     }
 
     @Test
-    fun `default params are empty and includeHidden remains opt in`() = runBlocking {
+    fun `default params are empty and includeHidden remains opt in`() = runBlocking<Unit> {
         fixture().use { f ->
             val call = async { f.api.list() }
             val request = f.request()
@@ -68,7 +68,7 @@ class CodexAppServerModelApiTest {
     }
 
     @Test
-    fun `visible pagination preserves server page and effort ordering`() = runBlocking {
+    fun `visible pagination preserves server page and effort ordering`() = runBlocking<Unit> {
         fixture().use { f ->
             val call = async { f.api.listAllVisible() }
             val first = f.request()
@@ -85,7 +85,7 @@ class CodexAppServerModelApiTest {
     }
 
     @Test
-    fun `pagination detects repeated cursor and page cap`() = runBlocking {
+    fun `pagination detects repeated cursor and page cap`() = runBlocking<Unit> {
         fixture().use { f ->
             val call = async { f.api.listAllVisible() }
             val first = f.request()
@@ -102,7 +102,7 @@ class CodexAppServerModelApiTest {
     }
 
     @Test
-    fun `malformed catalog fields fail explicitly`() = runBlocking {
+    fun `malformed catalog fields fail explicitly`() = runBlocking<Unit> {
         supervisorScope {
             val malformed = listOf<JsonElement>(
                 JsonNull,
@@ -127,7 +127,7 @@ class CodexAppServerModelApiTest {
     }
 
     @Test
-    fun `rpc errors propagate without being rewritten`() = runBlocking {
+    fun `rpc errors propagate without being rewritten`() = runBlocking<Unit> {
         supervisorScope {
             fixture().use { f ->
                 val call = async { f.api.list() }
@@ -142,7 +142,7 @@ class CodexAppServerModelApiTest {
     }
 
     @Test
-    fun `timeout and cancellation clean dispatcher pending requests without retry`() = runBlocking {
+    fun `timeout and cancellation clean dispatcher pending requests without retry`() = runBlocking<Unit> {
         fixture().use { f ->
             val before = f.transport.successfulWriteCount()
             val timed = async { f.api.list(timeout = 10.milliseconds) }
@@ -160,7 +160,7 @@ class CodexAppServerModelApiTest {
     }
 
     @Test
-    fun `invalid limits fail before writing`() = runBlocking {
+    fun `invalid limits fail before writing`() = runBlocking<Unit> {
         fixture().use { f ->
             val before = f.transport.successfulWriteCount()
             expect<IllegalArgumentException> { f.api.list(limit = 0) }
