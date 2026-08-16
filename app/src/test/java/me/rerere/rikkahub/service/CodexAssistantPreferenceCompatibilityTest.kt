@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.service
 
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.CodexPersonalityPreference
