@@ -1,0 +1,39 @@
+name: Stage22 one-shot JUnit void fix
+
+on:
+  push:
+    branches:
+      - codex/-stage22
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/-stage22
+          fetch-depth: 0
+      - name: Make Stage22 review item test return Unit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('app/src/test/java/me/rerere/rikkahub/data/codex/appserver/CodexAppServerTurnApiTest.kt')
+          text = path.read_text()
+          old = '''        expect<CodexAppServerTurnProtocolException> {\n            decodeItemSnapshot(buildJsonObject { put("id", "bad"); put("type", "exitedReviewMode"); put("review", 1) })\n        }\n    }\n\n    @Test\n    fun `stage 8 notifications remain simultaneously raw and typed while deprecated output stays raw only`() = runBlocking {'''
+          new = '''        expect<CodexAppServerTurnProtocolException> {\n            decodeItemSnapshot(buildJsonObject { put("id", "bad"); put("type", "exitedReviewMode"); put("review", 1) })\n        }\n        Unit\n    }\n\n    @Test\n    fun `stage 8 notifications remain simultaneously raw and typed while deprecated output stays raw only`() = runBlocking {'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one target, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/test/java/me/rerere/rikkahub/data/codex/appserver/CodexAppServerTurnApiTest.kt
+          git commit -m 'test(codex): make review item test return Unit'
+          git push origin HEAD:codex/-stage22
