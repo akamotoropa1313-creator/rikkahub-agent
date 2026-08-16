@@ -26,7 +26,10 @@ class CodexAppServerOAuthHandoff(
         try {
             launcher.launch(authUrl)
         } catch (cancelled: CancellationException) {
-            throw cancelled
+            // account/login/start already succeeded, so plain cancellation would lose the only
+            // correlation key for a still-live server-side login. Preserve the ID while retaining
+            // coroutine cancellation semantics; the runtime can publish/cancel this exact attempt.
+            throw CodexAppServerLoginHandoffCancellationException(started.loginId, cancelled)
         } catch (cause: Throwable) {
             throw CodexAppServerBrowserLaunchException(started.loginId, cause)
         }
@@ -39,6 +42,14 @@ open class CodexAppServerLoginHandoffException(
     message: String,
     cause: Throwable,
 ) : Exception(message, cause)
+
+/** Cancellation after account/login/start: still carries the live server-side login ID. */
+class CodexAppServerLoginHandoffCancellationException(
+    val loginId: String,
+    cause: CancellationException,
+) : CancellationException("ChatGPT sign-in launcher was canceled after login start") {
+    init { initCause(cause) }
+}
 
 class CodexAppServerInvalidAuthUrlException(message: String) : IllegalArgumentException(message)
 class CodexAppServerBrowserLaunchException(loginId: String, cause: Throwable) :

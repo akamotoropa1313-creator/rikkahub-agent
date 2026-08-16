@@ -18,6 +18,7 @@ class CodexAccountLoginCorrelationTest {
         assertNull(pending)
         assertEquals("denied", applied?.error)
         assertEquals(0, correlation.bufferedCountForTest())
+        assertTrue(correlation.isTerminalForTest("login-1"))
     }
 
     @Test fun `exact completion before start resolves only matching login`() {
@@ -33,6 +34,7 @@ class CodexAccountLoginCorrelationTest {
         assertEquals("login-1", applied?.loginId)
         assertTrue(applied?.success == true)
         assertEquals(0, correlation.bufferedCountForTest())
+        assertTrue(correlation.isTerminalForTest("login-1"))
     }
 
     @Test fun `mismatched completion cannot suppress pending start`() {
@@ -43,6 +45,7 @@ class CodexAccountLoginCorrelationTest {
         correlation.onCompletion(event("other", false, "unrelated")) { applied = it }
         correlation.resolveStart("login-1", { applied = it }, { pending = it })
         assertEquals("login-1", pending)
+        assertEquals("login-1", correlation.activeLoginIdForTest())
         assertNull(applied)
         assertEquals(0, correlation.bufferedCountForTest())
     }
@@ -53,7 +56,6 @@ class CodexAccountLoginCorrelationTest {
         var applied: CodexAppServerAccountEvent.LoginCompleted? = null
         correlation.beginAttempt()
         correlation.onCompletion(event(null, true, null)) { applied = it }
-        // Browser failure exposes the exact login ID after account/login/start succeeded.
         correlation.resolveStart("login-browser", { applied = it }, { pending = it })
         assertNull(pending)
         assertTrue(applied?.success == true)
@@ -72,6 +74,44 @@ class CodexAccountLoginCorrelationTest {
         assertTrue(correlation.bufferedCountForTest() <= 8)
         correlation.resolveStart("login-real", {}, {})
         assertEquals(0, correlation.bufferedCountForTest())
+    }
+
+    @Test fun `canceled login ignores delayed completion`() {
+        val correlation = CodexAccountLoginCorrelation()
+        var applied: CodexAppServerAccountEvent.LoginCompleted? = null
+        correlation.beginAttempt()
+        correlation.resolveStart("login-1", { applied = it }, {})
+        correlation.markCanceled("login-1")
+        correlation.onCompletion(event("login-1", true, null)) { applied = it }
+        assertNull(applied)
+        assertTrue(correlation.isTerminalForTest("login-1"))
+        assertNull(correlation.activeLoginIdForTest())
+    }
+
+    @Test fun `old completion cannot overwrite a new attempt`() {
+        val correlation = CodexAccountLoginCorrelation()
+        val applied = mutableListOf<String?>()
+        correlation.beginAttempt()
+        correlation.resolveStart("login-old", { applied += it.loginId }, {})
+        correlation.markCanceled("login-old")
+
+        correlation.beginAttempt()
+        correlation.onCompletion(event("login-old", true, null)) { applied += it.loginId }
+        correlation.resolveStart("login-new", { applied += it.loginId }, {})
+        assertTrue(applied.isEmpty())
+        assertEquals("login-new", correlation.activeLoginIdForTest())
+    }
+
+    @Test fun `matching completion after start is terminal once`() {
+        val correlation = CodexAccountLoginCorrelation()
+        val applied = mutableListOf<String?>()
+        correlation.beginAttempt()
+        correlation.resolveStart("login-1", { applied += it.loginId }, {})
+        correlation.onCompletion(event("login-1", true, null)) { applied += it.loginId }
+        correlation.onCompletion(event("login-1", true, null)) { applied += it.loginId }
+        assertEquals(listOf("login-1"), applied)
+        assertNull(correlation.activeLoginIdForTest())
+        assertTrue(correlation.isTerminalForTest("login-1"))
     }
 
     private fun event(loginId: String?, success: Boolean, error: String?) =
