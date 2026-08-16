@@ -78,6 +78,7 @@ import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.codex.CodexControlSheet
+import me.rerere.rikkahub.ui.components.codex.codexComposerLabel
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.useCropLauncher
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
@@ -123,27 +124,23 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
 
-    // Handle back press when drawer is open
     BackHandler(enabled = drawerState.isOpen) {
         scope.launch {
             drawerState.close()
         }
     }
 
-    // Hide keyboard when drawer is open
     LaunchedEffect(drawerState.isOpen) {
         if (drawerState.isOpen) {
             softwareKeyboardController?.hide()
         }
     }
 
-    @Suppress("DEPRECATION")  // LocalWindowInfo replaces this in a future Compose bump
+    @Suppress("DEPRECATION")
     val windowAdaptiveInfo = currentWindowDpSize()
     val isBigScreen =
         windowAdaptiveInfo.width > windowAdaptiveInfo.height && windowAdaptiveInfo.width >= 1100.dp
 
-    // 进入大屏（永久抽屉）模式时重置抽屉状态为关闭，
-    // 避免从横屏旋转回竖屏后，模态抽屉残留为打开状态且无法关闭（#1304）
     LaunchedEffect(isBigScreen) {
         if (isBigScreen && drawerState.isOpen) {
             drawerState.close()
@@ -152,7 +149,6 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
 
     val inputState = vm.inputState
 
-    // 初始化输入状态（处理传入的 files 和 text 参数）
     LaunchedEffect(files, text) {
         if (files.isNotEmpty()) {
             val localFiles = filesManager.createChatFilesByContents(files)
@@ -342,94 +338,108 @@ private fun ChatPageContent(
             bottomBar = {
                 Column {
                     selectedCodexSkill?.let { skill ->
-                        TextButton(onClick = { vm.selectCodexSkill(null) }) { Text("${skill.name}  ×") }
+                        TextButton(onClick = { vm.selectCodexSkill(null) }) {
+                            Text("${skill.name}  ×", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
-                ChatInput(
-                    state = inputState,
-                    loading = loadingJob != null,
-                    settings = setting,
-                    hazeState = hazeState,
-                    completionProviders = completionProviders,
-                    onCancelClick = {
-                        vm.stopGeneration()
-                    },
-                    enableSearch = enableWebSearch,
-                    onToggleSearch = {
-                        val current = setting.getCurrentAssistant()
-                        vm.updateSettings(
-                            setting.copy(
-                                assistants = setting.assistants.map { assistant ->
-                                    if (assistant.id == current.id) {
-                                        assistant.copy(enableWebSearch = !enableWebSearch)
-                                    } else {
-                                        assistant
+                    if (assistant.codexAppServerEnabled) {
+                        TextButton(
+                            onClick = { showCodexControls = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = codexComposerLabel(assistant, codexCapabilities.models),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    ChatInput(
+                        state = inputState,
+                        loading = loadingJob != null,
+                        settings = setting,
+                        hazeState = hazeState,
+                        completionProviders = completionProviders,
+                        onCancelClick = {
+                            vm.stopGeneration()
+                        },
+                        enableSearch = enableWebSearch,
+                        onToggleSearch = {
+                            val current = setting.getCurrentAssistant()
+                            vm.updateSettings(
+                                setting.copy(
+                                    assistants = setting.assistants.map { assistant ->
+                                        if (assistant.id == current.id) {
+                                            assistant.copy(enableWebSearch = !enableWebSearch)
+                                        } else {
+                                            assistant
+                                        }
                                     }
+                                )
+                            )
+                        },
+                        onSendClick = {
+                            if (currentChatModel == null && !assistant.codexAppServerEnabled) {
+                                toaster.show(
+                                    context.getString(R.string.chat_select_model_first),
+                                    type = ToastType.Error,
+                                )
+                                return@ChatInput
+                            }
+                            if (inputState.isEditing()) {
+                                vm.handleMessageEdit(
+                                    parts = inputState.getContents(),
+                                    messageId = inputState.editingMessage!!,
+                                )
+                            } else {
+                                vm.handleMessageSend(inputState.getContents())
+                                scope.launch {
+                                    chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
                                 }
-                            )
-                        )
-                    },
-                    onSendClick = {
-                        if (currentChatModel == null && !assistant.codexAppServerEnabled) {
-                            toaster.show(
-                                context.getString(R.string.chat_select_model_first),
-                                type = ToastType.Error,
-                            )
-                            return@ChatInput
-                        }
-                        if (inputState.isEditing()) {
-                            vm.handleMessageEdit(
-                                parts = inputState.getContents(),
-                                messageId = inputState.editingMessage!!,
-                            )
-                        } else {
-                            vm.handleMessageSend(inputState.getContents())
-                            scope.launch {
-                                chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
                             }
-                        }
-                        inputState.clearInput()
-                    },
-                    onLongSendClick = {
-                        if (inputState.isEditing()) {
-                            vm.handleMessageEdit(
-                                parts = inputState.getContents(),
-                                messageId = inputState.editingMessage!!,
-                            )
-                        } else {
-                            vm.handleMessageSend(content = inputState.getContents(), answer = false)
-                            scope.launch {
-                                chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
+                            inputState.clearInput()
+                        },
+                        onLongSendClick = {
+                            if (inputState.isEditing()) {
+                                vm.handleMessageEdit(
+                                    parts = inputState.getContents(),
+                                    messageId = inputState.editingMessage!!,
+                                )
+                            } else {
+                                vm.handleMessageSend(content = inputState.getContents(), answer = false)
+                                scope.launch {
+                                    chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
+                                }
                             }
-                        }
-                        inputState.clearInput()
-                    },
-                    onUpdateChatModel = {
-                        vm.setChatModel(assistant = setting.getCurrentAssistant(), model = it)
-                    },
-                    onUpdateAssistant = {
-                        vm.updateSettings(
-                            setting.copy(
-                                assistants = setting.assistants.map { assistant ->
-                                    if (assistant.id == it.id) {
-                                        it
-                                    } else {
-                                        assistant
+                            inputState.clearInput()
+                        },
+                        onUpdateChatModel = {
+                            vm.setChatModel(assistant = setting.getCurrentAssistant(), model = it)
+                        },
+                        onUpdateAssistant = {
+                            vm.updateSettings(
+                                setting.copy(
+                                    assistants = setting.assistants.map { assistant ->
+                                        if (assistant.id == it.id) {
+                                            it
+                                        } else {
+                                            assistant
+                                        }
                                     }
-                                }
+                                )
                             )
-                        )
-                    },
-                    onUpdateSearchService = { index ->
-                        vm.updateSettings(
-                            setting.copy(
-                                searchServiceSelected = index
+                        },
+                        onUpdateSearchService = { index ->
+                            vm.updateSettings(
+                                setting.copy(
+                                    searchServiceSelected = index
+                                )
                             )
-                        )
-                    },
-                    onMoreClick = {
-                        showFilesSheet = true
-                    },
-                )
+                        },
+                        onMoreClick = {
+                            showFilesSheet = true
+                        },
+                    )
                 }
             },
             containerColor = Color.Transparent,
@@ -529,7 +539,26 @@ private fun ChatPageContent(
         }
         if (showCodexControls) {
             ModalBottomSheet(onDismissRequest = { showCodexControls = false }) {
-                CodexControlSheet(codexState, codexCapabilities, assistant, vm::updateCodexPreferences, hasCodexBinding, vm::refreshCodexAccount, vm::refreshCodexModels, vm::refreshCodexSkills, vm::refreshCodexMcp, vm::reloadCodexMcp, vm::beginCodexAccountLogin, vm::cancelCodexAccountLogin, vm::logoutCodexAccount, vm::setCodexSkillEnabled, { vm.selectCodexSkill(it); showCodexControls = false }, vm::beginCodexMcpOAuth, codexOperationBusy, vm::reconnectCodexSession)
+                CodexControlSheet(
+                    connection = codexState,
+                    capabilities = codexCapabilities,
+                    assistant = assistant,
+                    onUpdateAssistant = { transform -> vm.updateCodexPreferences(transform) },
+                    hasBinding = hasCodexBinding,
+                    onRefreshAccount = vm::refreshCodexAccount,
+                    onRefreshModels = vm::refreshCodexModels,
+                    onRefreshSkills = vm::refreshCodexSkills,
+                    onRefreshMcp = vm::refreshCodexMcp,
+                    onReloadMcp = vm::reloadCodexMcp,
+                    onSignIn = vm::beginCodexAccountLogin,
+                    onCancelSignIn = vm::cancelCodexAccountLogin,
+                    onLogout = vm::logoutCodexAccount,
+                    onSetSkillEnabled = vm::setCodexSkillEnabled,
+                    onUseSkill = { vm.selectCodexSkill(it); showCodexControls = false },
+                    onMcpSignIn = vm::beginCodexMcpOAuth,
+                    operationBusy = codexOperationBusy,
+                    onReconnect = vm::reconnectCodexSession,
+                )
             }
         }
     }
@@ -626,7 +655,6 @@ private fun ChatFilesPickerSheet(
                     val tempFile = File(context.appTempFolder, "pick_temp_${System.currentTimeMillis()}.jpg")
                     runCatching {
                         val source = selectedUris.first()
-                        // HEIF/HEIC（尤其 HDR HEIF）交给 UCrop 前先解码转为 JPEG，规避裁剪解码失败
                         val converted = ImageUtils.isHeifImage(context, source) &&
                             ImageUtils.convertHeifToJpeg(context, source, tempFile)
                         if (!converted) {
