@@ -56,7 +56,7 @@ class CodexAppServerTurnApiTest {
     }
 
     @Test
-    fun `stage 22 review mode items are typed preserve raw and reject malformed known fields`() {
+    fun `stage 22 review mode items are typed preserve raw and reject malformed known fields`() = runBlocking {
         val enteredRaw = buildJsonObject { put("id", "in"); put("type", "enteredReviewMode"); put("review", "starting"); put("future", 1) }
         val exitedRaw = buildJsonObject { put("id", "out"); put("type", "exitedReviewMode"); put("review", "final review"); put("future", true) }
         val entered = decodeItemSnapshot(enteredRaw) as CodexAppServerItemSnapshot.EnteredReviewMode
