@@ -86,18 +86,20 @@ class CodexAppServerModelApiTest {
 
     @Test
     fun `pagination detects repeated cursor and page cap`() = runBlocking<Unit> {
-        fixture().use { f ->
-            val call = async { f.api.listAllVisible() }
-            val first = f.request()
-            f.respond(first, page("again"))
-            val second = f.request()
-            f.respond(second, page("again"))
-            expect<CodexAppServerModelProtocolException> { call.await() }
-        }
-        fixture().use { f ->
-            val call = async { f.api.listAllVisible(maxPages = 1) }
-            f.respond(f.request(), page("more"))
-            expect<CodexAppServerModelProtocolException> { call.await() }
+        supervisorScope {
+            fixture().use { f ->
+                val call = async { f.api.listAllVisible() }
+                val first = f.request()
+                f.respond(first, page("again"))
+                val second = f.request()
+                f.respond(second, page("again"))
+                expect<CodexAppServerModelProtocolException> { call.await() }
+            }
+            fixture().use { f ->
+                val call = async { f.api.listAllVisible(maxPages = 1) }
+                f.respond(f.request(), page("more"))
+                expect<CodexAppServerModelProtocolException> { call.await() }
+            }
         }
     }
 
