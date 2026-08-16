@@ -85,6 +85,7 @@ class ProotShellRunner(
         context: WorkspaceShellContext,
         proot: File,
     ): List<String> {
+        val effectiveCwd = resolveWorkspaceRootfsCwd(context.cwd)
         val command = mutableListOf(
             proot.absolutePath,
             "--root-id",
@@ -93,7 +94,7 @@ class ProotShellRunner(
             "-r",
             context.linuxDir.absolutePath,
             "-w",
-            context.prootCwd(),
+            effectiveCwd,
             "-b",
             "${context.filesDir.absolutePath}:$WORKSPACE_DIR",
         )
@@ -126,19 +127,10 @@ class ProotShellRunner(
             // 命令通过位置参数传入, 避免任何转义; eval "$2" 对命令文本只求值一次, 等价于 bash -c "$cmd"
             "cd -- \"\$1\" && eval \"\$2\"",
             "rikkahub",
-            context.prootCwd(),
+            effectiveCwd,
             context.command,
         )
         return command
-    }
-
-    private fun WorkspaceShellContext.prootCwd(): String {
-        val normalized = cwd.trim().trim('/')
-        return if (normalized.isBlank()) {
-            WORKSPACE_DIR
-        } else {
-            "$WORKSPACE_DIR/$normalized"
-        }
     }
 
     private fun File.hasUsableRootfs(): Boolean =

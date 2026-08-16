@@ -56,17 +56,50 @@ class CodexAppServerConfigApiTest {
                     put("forced_chatgpt_workspace_id", sentinel); put("approval_policy", sentinel); put("apps", sentinel); put("secret_future", sentinel)
                 }
                 putJsonObject("origins") {
-                    putJsonObject("model") { putJsonObject("source") { put("type", "user"); put("path", "/secret/config.toml") } }
-                    putJsonObject("model_provider") { putJsonObject("source") { put("type", "project") } }
-                    putJsonObject("model_context_window") { putJsonObject("source") { put("type", "mdm") } }
-                    putJsonObject("sandbox_mode") { putJsonObject("source") { put("type", "system") } }
-                    putJsonObject("web_search") { putJsonObject("source") { put("type", "enterpriseManaged") } }
-                    putJsonObject("service_tier") { putJsonObject("source") { put("type", "sessionFlags") } }
-                    putJsonObject("model_reasoning_effort") { putJsonObject("source") { put("type", "legacyManagedConfigTomlFromFile") } }
-                    putJsonObject("model_reasoning_summary") { putJsonObject("source") { put("type", "legacyManagedConfigTomlFromMdm") } }
-                    putJsonObject("model_verbosity") { putJsonObject("source") { put("type", "packagedDefaults") } }
-                    putJsonObject("analytics.enabled") { putJsonObject("source") { put("type", "futureSource"); put("path", "/private") } }
-                    putJsonObject("instructions") { putJsonObject("source") { put("type", "project") } }
+                    putJsonObject("model") {
+                        putJsonObject("name") { put("type", "user"); put("file", "/secret/config.toml"); put("profile", JsonNull) }
+                        put("version", "v-user")
+                    }
+                    putJsonObject("model_provider") {
+                        putJsonObject("name") { put("type", "project"); put("dotCodexFolder", "/secret/project/.codex") }
+                        put("version", "v-project")
+                    }
+                    putJsonObject("model_context_window") {
+                        putJsonObject("name") { put("type", "mdm"); put("domain", "private.example"); put("key", "secret-key") }
+                        put("version", "v-mdm")
+                    }
+                    putJsonObject("sandbox_mode") {
+                        putJsonObject("name") { put("type", "system"); put("file", "/secret/system/config.toml") }
+                        put("version", "v-system")
+                    }
+                    putJsonObject("web_search") {
+                        putJsonObject("name") { put("type", "enterpriseManaged"); put("id", "private-id"); put("name", "Admin policy") }
+                        put("version", "v-enterprise")
+                    }
+                    putJsonObject("service_tier") {
+                        putJsonObject("name") { put("type", "sessionFlags") }
+                        put("version", "v-session")
+                    }
+                    putJsonObject("model_reasoning_effort") {
+                        putJsonObject("name") { put("type", "legacyManagedConfigTomlFromFile"); put("file", "/secret/managed_config.toml") }
+                        put("version", "v-legacy-file")
+                    }
+                    putJsonObject("model_reasoning_summary") {
+                        putJsonObject("name") { put("type", "legacyManagedConfigTomlFromMdm") }
+                        put("version", "v-legacy-mdm")
+                    }
+                    putJsonObject("model_verbosity") {
+                        putJsonObject("name") { put("type", "packagedDefaults"); put("file", "/secret/package/defaults.toml") }
+                        put("version", "v-packaged")
+                    }
+                    putJsonObject("analytics.enabled") {
+                        putJsonObject("name") { put("type", "futureSource"); put("path", "/private") }
+                        put("version", "v-future")
+                    }
+                    putJsonObject("instructions") {
+                        putJsonObject("name") { put("type", "project"); put("dotCodexFolder", "/secret/project/.codex") }
+                        put("version", "v-secret")
+                    }
                 }
                 putJsonArray("layers") { addJsonObject { put("config", sentinel) } }
             })
@@ -85,6 +118,7 @@ class CodexAppServerConfigApiTest {
             assertEquals(CodexConfigLayerSource.UNKNOWN, snapshot.origins["analytics.enabled"]!!.source)
             assertFalse(snapshot.sandboxMode!!.known)
             assertFalse(snapshot.toString().contains(sentinel)); assertFalse(snapshot.toString().contains("/secret"))
+            assertFalse(snapshot.toString().contains("private.example")); assertFalse(snapshot.toString().contains("secret-key"))
         }
     }
 
@@ -108,21 +142,61 @@ class CodexAppServerConfigApiTest {
 
     @Test fun `numeric strings and decimals are rejected without response disclosure`() = runBlocking {
         fixture().use { f ->
-            val call = async { f.api.readConfig("/workspace") }; val request = f.request()
-            f.respond(request, buildJsonObject { putJsonObject("config") { put("model_context_window", "200000"); put("secret", "DO_NOT_LEAK") } })
-            val failure = assertFails { call.await() }
-            assertFalse(failure.message.orEmpty().contains("DO_NOT_LEAK"))
+            val stringFailure = configDecodeFailure(f, JsonPrimitive("200000"), "STRING_SECRET")
+            assertFalse(stringFailure.message.orEmpty().contains("STRING_SECRET"))
+            val decimalFailure = configDecodeFailure(f, JsonPrimitive(200000.5), "DECIMAL_SECRET")
+            assertFalse(decimalFailure.message.orEmpty().contains("DECIMAL_SECRET"))
+            assertTrue(f.connection.state.value is CodexAppServerConnectionState.Ready)
         }
     }
 
-    @Test fun `effective cwd resolver preserves workspace namespace and rejects traversal`() {
-        assertEquals("/workspace/project/src", resolveCodexEffectiveCwd("/workspace/project", "src"))
-        assertEquals("/workspace/project", resolveCodexEffectiveCwd("/workspace/project/", ""))
-        assertNull(resolveCodexEffectiveCwd("workspace/project", "src"))
-        assertThrows(IllegalArgumentException::class.java) { resolveCodexEffectiveCwd("/workspace", "../secret") }
+    @Test fun `effective cwd resolver uses the same proot workspace namespace for storage keys`() {
+        assertEquals("/workspace/src", resolveCodexEffectiveCwd("550e8400-e29b-41d4-a716-446655440000", "src"))
+        assertEquals("/workspace", resolveCodexEffectiveCwd("workspace-storage-key", ""))
+        assertEquals("/workspace/.", resolveCodexEffectiveCwd("workspace-storage-key", "."))
+        assertThrows(IllegalArgumentException::class.java) { resolveCodexEffectiveCwd("workspace-storage-key", "../secret") }
+        assertThrows(IllegalArgumentException::class.java) { resolveCodexEffectiveCwd("workspace-storage-key", "/absolute") }
     }
 
-    private suspend fun assertFails(block: suspend () -> Unit): Throwable = try { block(); fail("expected failure"); error("unreachable") } catch (t: Throwable) { t.cause ?: t }
+    @Test fun `diagnostics cancellation is propagated and leaves connection ready`() = runBlocking {
+        fixture().use { f ->
+            val call = async { f.api.readDiagnostics("/workspace") }
+            val first = f.request()
+            val second = f.request()
+            assertEquals(setOf("config/read", "configRequirements/read"), setOf(first.method, second.method))
+            call.cancel()
+            try {
+                call.await()
+                fail("expected cancellation")
+            } catch (_: CancellationException) {
+                // Expected: cancellation must never be converted into a capability-local Result.failure.
+            }
+            assertTrue(f.connection.state.value is CodexAppServerConnectionState.Ready)
+        }
+    }
+
+    private suspend fun configDecodeFailure(
+        f: Fixture,
+        fieldValue: JsonElement,
+        secret: String,
+    ): CodexAppServerConfigProtocolException = supervisorScope {
+        val call = async { f.api.readConfig("/workspace") }
+        val request = f.request()
+        f.respond(request, buildJsonObject {
+            putJsonObject("config") {
+                put("model_context_window", fieldValue)
+                put("secret", secret)
+            }
+        })
+        try {
+            call.await()
+            fail("expected protocol failure")
+            throw AssertionError("unreachable")
+        } catch (failure: CodexAppServerConfigProtocolException) {
+            failure
+        }
+    }
+
     private suspend fun fixture(): Fixture {
         val transport = FakeCodexAppServerTransport(); val dispatcher = CodexAppServerRequestDispatcher(transport)
         val connection = CodexAppServerConnection(dispatcher, CodexAppServerClientInfo("test", "Test", "1"))

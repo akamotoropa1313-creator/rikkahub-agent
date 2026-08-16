@@ -1,9 +1,11 @@
 package me.rerere.rikkahub.data.codex.appserver
 
-import kotlinx.serialization.SerializationException
-import kotlinx.serialization.json.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.supervisorScope
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.*
+import me.rerere.workspace.resolveWorkspaceRootfsCwd
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -89,8 +91,8 @@ class CodexAppServerConfigApi(private val connection: CodexAppServerConnection) 
         decodeRequirements(connection.sendRequestAfterReady("configRequirements/read", null, timeout))
 
     suspend fun readDiagnostics(absoluteCwd: String?): CodexConfigDiagnosticsResult = supervisorScope {
-        val config = async { runCatching { readConfig(absoluteCwd) } }
-        val requirements = async { runCatching { readRequirements() } }
+        val config = async { captureResult { readConfig(absoluteCwd) } }
+        val requirements = async { captureResult { readRequirements() } }
         CodexConfigDiagnosticsResult(config.await(), requirements.await())
     }
 
@@ -134,14 +136,11 @@ class CodexAppServerConfigApi(private val connection: CodexAppServerConnection) 
     }
 
     private fun decodeSource(metadata: JsonElement): CodexConfigLayerSource {
-        val objectValue = metadata as? JsonObject ?: return CodexConfigLayerSource.UNKNOWN
-        val sourceElement = objectValue["source"] ?: metadata
-        val source = sourceElement as? JsonObject
-        val raw = (sourceElement as? JsonPrimitive)?.takeIf(JsonPrimitive::isString)?.content
-            ?: source?.optionalString("type") ?: source?.optionalString("kind")
-            ?: objectValue.optionalString("type") ?: objectValue.optionalString("kind")
-            ?: return CodexConfigLayerSource.UNKNOWN
-        return when (raw.replace("_", "").replace("-", "").lowercase()) {
+        val metadataObject = metadata as? JsonObject ?: return CodexConfigLayerSource.UNKNOWN
+        val name = metadataObject["name"] as? JsonObject ?: return CodexConfigLayerSource.UNKNOWN
+        val type = name["type"] as? JsonPrimitive ?: return CodexConfigLayerSource.UNKNOWN
+        if (!type.isString) return CodexConfigLayerSource.UNKNOWN
+        return when (type.content.replace("_", "").replace("-", "").lowercase()) {
             "mdm" -> CodexConfigLayerSource.MDM
             "system" -> CodexConfigLayerSource.SYSTEM
             "enterprisemanaged" -> CodexConfigLayerSource.ENTERPRISE_MANAGED
@@ -153,6 +152,14 @@ class CodexAppServerConfigApi(private val connection: CodexAppServerConnection) 
             "packageddefaults" -> CodexConfigLayerSource.PACKAGED_DEFAULTS
             else -> CodexConfigLayerSource.UNKNOWN
         }
+    }
+
+    private suspend fun <T> captureResult(block: suspend () -> T): Result<T> = try {
+        Result.success(block())
+    } catch (failure: CancellationException) {
+        throw failure
+    } catch (failure: Throwable) {
+        Result.failure(failure)
     }
 
     private fun fail(message: String): Nothing = throw CodexAppServerConfigProtocolException(message)
@@ -180,11 +187,13 @@ class CodexAppServerConfigApi(private val connection: CodexAppServerConnection) 
     }
 }
 
-/** Pure workspace-namespace resolver shared by process setup and config/read. */
-fun resolveCodexEffectiveCwd(workspaceRoot: String, workspaceCwd: String): String? {
+/**
+ * Resolves the same PRoot-visible absolute CWD used by the App Server process.
+ * [workspaceRoot] is a storage key in normal RikkaHub workspaces, not a filesystem path.
+ */
+fun resolveCodexEffectiveCwd(workspaceRoot: String, workspaceCwd: String): String {
+    require(workspaceRoot.isNotBlank()) { "workspace root must not be blank" }
     require(!workspaceCwd.startsWith('/') && !workspaceCwd.startsWith('\\')) { "workspaceCwd must be relative" }
     require(workspaceCwd.split('/', '\\').none { it == ".." }) { "workspaceCwd must stay inside the workspace" }
-    if (!workspaceRoot.startsWith('/')) return null
-    return if (workspaceCwd.isBlank() || workspaceCwd == ".") workspaceRoot.trimEnd('/').ifEmpty { "/" }
-    else workspaceRoot.trimEnd('/') + "/" + workspaceCwd.trimStart('/')
+    return resolveWorkspaceRootfsCwd(workspaceCwd)
 }
