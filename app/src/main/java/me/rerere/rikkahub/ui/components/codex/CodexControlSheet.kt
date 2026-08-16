@@ -10,6 +10,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import me.rerere.rikkahub.service.CodexCapabilitiesUiState
 import me.rerere.rikkahub.service.CodexConversationUiState
+import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
+import me.rerere.rikkahub.data.codex.appserver.CodexMcpAuthStatus
 
 /** Explicit control plane for the existing conversation-owned Codex runtime. Opening it sends no RPC. */
 @Composable
@@ -21,6 +23,12 @@ fun CodexControlSheet(
     onRefreshSkills: () -> Unit,
     onRefreshMcp: () -> Unit,
     onReloadMcp: () -> Unit,
+    onSignIn: () -> Unit,
+    onCancelSignIn: () -> Unit,
+    onLogout: () -> Unit,
+    onSetSkillEnabled: (CodexSkillMetadata, Boolean) -> Unit,
+    onUseSkill: (CodexSkillMetadata) -> Unit,
+    onMcpSignIn: (String) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
@@ -31,10 +39,15 @@ fun CodexControlSheet(
         item { Section("Connection") { Text(connectionLabel(connection, hasBinding)) } }
         item {
             Section("Account") {
-                Text(capabilities.accountStatus ?: capabilities.accountError ?: "Not loaded")
-                Button(onClick = onRefreshAccount, enabled = capabilities.connected && !capabilities.accountLoading) {
-                    if (capabilities.accountLoading) CircularProgressIndicator(Modifier.size(18.dp)) else Text("Refresh")
-                }
+                CodexAccountCard(
+                    snapshot = capabilities.account,
+                    loginPending = capabilities.pendingLoginId != null,
+                    onSignIn = onSignIn, onCancelSignIn = onCancelSignIn,
+                    onRefresh = onRefreshAccount, onLogout = onLogout,
+                    enabled = capabilities.connected && !capabilities.accountLoading,
+                    submitting = capabilities.accountSubmitting,
+                    statusMessage = capabilities.accountError ?: capabilities.accountStatus,
+                )
             }
         }
         item {
@@ -50,7 +63,12 @@ fun CodexControlSheet(
                 ListItem(
                     headlineContent = { Text(skill.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     supportingContent = { Text(skill.shortDescription ?: skill.description, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                    trailingContent = { Text(if (skill.enabled) "Enabled" else "Disabled") },
+                    trailingContent = {
+                        Row {
+                            TextButton(onClick = { onSetSkillEnabled(skill, !skill.enabled) }, enabled = capabilities.skillUpdatingPath == null) { Text(if (skill.enabled) "Disable" else "Enable") }
+                            TextButton(onClick = { onUseSkill(skill) }, enabled = skill.enabled) { Text("Use") }
+                        }
+                    },
                 )
             }
             items(group.errors, key = { it.path }) { Text(it.message, color = MaterialTheme.colorScheme.error) }
@@ -68,6 +86,7 @@ fun CodexControlSheet(
             ListItem(
                 headlineContent = { Text(server.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 supportingContent = { Text("${server.authStatus.wireValue} · ${server.tools.size} tools · ${server.resources.size} resources") },
+                trailingContent = { if (server.authStatus is CodexMcpAuthStatus.NotLoggedIn) TextButton(onClick = { onMcpSignIn(server.name) }, enabled = capabilities.pendingMcpServer == null) { Text("Sign in") } },
             )
         }
     }

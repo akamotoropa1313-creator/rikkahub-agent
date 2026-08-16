@@ -60,9 +60,9 @@ class CodexAppServerOAuthHandoffTest {
     }
 
     @Test fun `url policy permits https and loopback only without rewriting`() {
-        listOf("https://example.test/auth?state=secret", "http://localhost:1455/callback", "http://127.0.0.1/x", "http://[::1]/x").forEach(::validateAuthUrl)
+        listOf("https://example.test/auth?state=secret", "http://localhost:1455/callback", "http://127.0.0.1/x", "http://[::1]/x").forEach(::validateCodexAppServerAuthUrl)
         listOf("not a url", "/relative", "rikkahub://oauth", "http://example.test/auth").forEach { value ->
-            expectSync<CodexAppServerInvalidAuthUrlException> { validateAuthUrl(value) }
+            expectSync<CodexAppServerInvalidAuthUrlException> { validateCodexAppServerAuthUrl(value) }
         }
     }
 

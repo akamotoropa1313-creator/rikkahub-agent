@@ -2,6 +2,7 @@ package me.rerere.rikkahub.ui.pages.chat
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -9,6 +10,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.net.toUri
+import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
@@ -81,13 +84,16 @@ class ChatVM(
 
     val codexState: StateFlow<CodexConversationUiState> = chatService.getCodexStateFlow(_conversationId)
     val codexCapabilities = chatService.getCodexCapabilitiesStateFlow(_conversationId)
+    private val _selectedCodexSkill = MutableStateFlow<CodexSkillMetadata?>(null)
+    val selectedCodexSkill: StateFlow<CodexSkillMetadata?> = _selectedCodexSkill
+    fun selectCodexSkill(skill: CodexSkillMetadata?) { _selectedCodexSkill.value = skill }
     val codexEnabled: StateFlow<Boolean> = kotlinx.coroutines.flow.combine(conversation, settingsStore.settingsFlow) { conversation, settings ->
         (settings.getAssistantById(conversation.assistantId) ?: settings.getCurrentAssistant()).codexAppServerEnabled
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _hasCodexBinding = MutableStateFlow(false)
     val hasCodexBinding: StateFlow<Boolean> = _hasCodexBinding
-    fun resetCodexSession() { viewModelScope.launch {
+    fun resetCodexSession() { _selectedCodexSkill.value = null; viewModelScope.launch {
         chatService.resetCodexSession(_conversationId)
         _hasCodexBinding.value = false
     } }
@@ -96,6 +102,12 @@ class ChatVM(
     fun refreshCodexAccount() { viewModelScope.launch { runCatching { chatService.refreshCodexAccount(_conversationId) } } }
     fun refreshCodexMcp() { viewModelScope.launch { runCatching { chatService.refreshCodexMcp(_conversationId) } } }
     fun reloadCodexMcp() { viewModelScope.launch { runCatching { chatService.reloadCodexMcp(_conversationId) } } }
+    private val codexAuthLauncher = CodexAppServerAuthUrlLauncher { url -> context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    fun setCodexSkillEnabled(skill: CodexSkillMetadata, enabled: Boolean) { viewModelScope.launch { runCatching { chatService.setCodexSkillEnabled(_conversationId, skill, enabled) } } }
+    fun beginCodexAccountLogin() { viewModelScope.launch { runCatching { chatService.beginCodexAccountLogin(_conversationId, codexAuthLauncher) } } }
+    fun cancelCodexAccountLogin() { viewModelScope.launch { runCatching { chatService.cancelCodexAccountLogin(_conversationId) } } }
+    fun logoutCodexAccount() { viewModelScope.launch { runCatching { chatService.logoutCodexAccount(_conversationId) } } }
+    fun beginCodexMcpOAuth(name: String) { viewModelScope.launch { runCatching { chatService.beginCodexMcpOAuth(_conversationId, name, codexAuthLauncher) } } }
     fun respondCodexCommandApproval(id: JsonRpcId, decision: CodexAppServerCommandApprovalDecision) {
         viewModelScope.launch { chatService.respondCodexCommandApproval(_conversationId, id, decision) }
     }
@@ -116,6 +128,7 @@ class ChatVM(
             chatService.initializeConversation(_conversationId)
             _hasCodexBinding.value = chatService.hasCodexBinding(_conversationId)
         }
+        viewModelScope.launch { codexEnabled.collect { if (!it) _selectedCodexSkill.value = null } }
         viewModelScope.launch {
             codexState.collect { state ->
                 if (state is CodexConversationUiState.Ready || state is CodexConversationUiState.Running ||
@@ -210,9 +223,13 @@ class ChatVM(
      * @param answer 是否触发消息生成，如果为false，则仅添加消息到消息列表中
      */
     fun handleMessageSend(content: List<UIMessagePart>,answer: Boolean = true) {
-        if (content.isEmptyInputMessage()) return
-
-        chatService.sendMessage(_conversationId, content, answer)
+        val skill = _selectedCodexSkill.value
+        if (content.isEmptyInputMessage() && skill == null) return
+        if (skill != null && answer) {
+            val prompt = content.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
+            chatService.sendCodexSkillMessage(_conversationId, skill, prompt)
+            _selectedCodexSkill.value = null
+        } else chatService.sendMessage(_conversationId, content, answer)
     }
 
     fun handleMessageEdit(parts: List<UIMessagePart>, messageId: Uuid) {

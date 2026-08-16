@@ -35,6 +35,18 @@ import kotlin.uuid.Uuid
 
 class CodexConversationSessionIntegrationTest {
     @Test
+    fun `conversation operation lease rejects capability and send in both orders`() = runBlocking {
+        val owner = owner(this)
+        assertTrue(owner.tryBeginCodexOperation()) // capability-first
+        assertTrue(owner.isCodexOperationActive)
+        assertTrue(!owner.tryBeginCodexOperation()) // send rejected
+        owner.endCodexOperation()
+        assertTrue(owner.tryBeginCodexOperation()) // send-first
+        assertTrue(!owner.tryBeginCodexOperation()) // capability rejected
+        owner.endCodexOperation()
+    }
+
+    @Test
     fun `conversation session forwards asynchronous runtime states`() = runBlocking {
         val owner = owner(this)
         val harness = harness(this, threadId = "thread-forward")

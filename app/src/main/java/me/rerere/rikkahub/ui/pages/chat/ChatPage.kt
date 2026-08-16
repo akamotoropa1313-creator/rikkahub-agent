@@ -298,6 +298,7 @@ private fun ChatPageContent(
     var showFilesSheet by remember { mutableStateOf(false) }
     var showCodexControls by remember { mutableStateOf(false) }
     val codexCapabilities by vm.codexCapabilities.collectAsStateWithLifecycle()
+    val selectedCodexSkill by vm.selectedCodexSkill.collectAsStateWithLifecycle()
 
     val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
         assistant.workspaceId?.let { workspaceId ->
@@ -338,6 +339,10 @@ private fun ChatPageContent(
                 )
             },
             bottomBar = {
+                Column {
+                    selectedCodexSkill?.let { skill ->
+                        TextButton(onClick = { vm.selectCodexSkill(null) }) { Text("${skill.name}  ×") }
+                    }
                 ChatInput(
                     state = inputState,
                     loading = loadingJob != null,
@@ -424,6 +429,7 @@ private fun ChatPageContent(
                         showFilesSheet = true
                     },
                 )
+                }
             },
             containerColor = Color.Transparent,
         ) { innerPadding ->
@@ -521,7 +527,7 @@ private fun ChatPageContent(
         }
         if (showCodexControls) {
             ModalBottomSheet(onDismissRequest = { showCodexControls = false }) {
-                CodexControlSheet(codexState, codexCapabilities, hasCodexBinding, vm::refreshCodexAccount, vm::refreshCodexSkills, vm::refreshCodexMcp, vm::reloadCodexMcp)
+                CodexControlSheet(codexState, codexCapabilities, hasCodexBinding, vm::refreshCodexAccount, vm::refreshCodexSkills, vm::refreshCodexMcp, vm::reloadCodexMcp, vm::beginCodexAccountLogin, vm::cancelCodexAccountLogin, vm::logoutCodexAccount, vm::setCodexSkillEnabled, { vm.selectCodexSkill(it); showCodexControls = false }, vm::beginCodexMcpOAuth)
             }
         }
     }

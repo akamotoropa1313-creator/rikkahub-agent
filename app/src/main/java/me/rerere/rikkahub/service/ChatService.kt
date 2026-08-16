@@ -773,25 +773,34 @@ class ChatService(
     suspend fun hasCodexBinding(conversationId: Uuid): Boolean =
         codexBindingRepository?.getBinding(conversationId.toString()) != null
 
-    private fun requireCodexRuntime(id: Uuid) = checkNotNull(sessions[id]?.codexRuntime) { "Reconnect Codex before using controls" }
-    suspend fun refreshCodexSkills(id: Uuid) = requireCodexRuntime(id).refreshSkills(true)
-    suspend fun setCodexSkillEnabled(id: Uuid, skill: CodexSkillMetadata, enabled: Boolean) = requireCodexRuntime(id).setSkillEnabled(skill, enabled)
-    suspend fun refreshCodexAccount(id: Uuid) = requireCodexRuntime(id).refreshAccount()
-    suspend fun beginCodexAccountLogin(id: Uuid, launcher: CodexAppServerAuthUrlLauncher) = requireCodexRuntime(id).beginAccountLogin(launcher)
-    suspend fun cancelCodexAccountLogin(id: Uuid) = requireCodexRuntime(id).cancelAccountLogin()
-    suspend fun logoutCodexAccount(id: Uuid) = requireCodexRuntime(id).logoutAccount()
-    suspend fun refreshCodexMcp(id: Uuid) = requireCodexRuntime(id).refreshMcp()
-    suspend fun reloadCodexMcp(id: Uuid) = requireCodexRuntime(id).reloadMcp()
-    suspend fun beginCodexMcpOAuth(id: Uuid, name: String, launcher: CodexAppServerAuthUrlLauncher) = requireCodexRuntime(id).beginMcpOAuth(name, launcher)
+    private suspend fun <T> withCodexCapabilityLease(id: Uuid, block: suspend (CodexChatRuntime) -> T): T {
+        val owner = getOrCreateSession(id)
+        check(owner.tryBeginCodexOperation()) { "Another Codex operation is already running" }
+        try { return block(checkNotNull(owner.codexRuntime) { "Reconnect Codex before using controls" }) }
+        finally { owner.endCodexOperation() }
+    }
+    suspend fun refreshCodexSkills(id: Uuid) = withCodexCapabilityLease(id) { it.refreshSkills(true) }
+    suspend fun setCodexSkillEnabled(id: Uuid, skill: CodexSkillMetadata, enabled: Boolean) = withCodexCapabilityLease(id) { it.setSkillEnabled(skill, enabled) }
+    suspend fun refreshCodexAccount(id: Uuid) = withCodexCapabilityLease(id) { it.refreshAccount() }
+    suspend fun beginCodexAccountLogin(id: Uuid, launcher: CodexAppServerAuthUrlLauncher) = withCodexCapabilityLease(id) { it.beginAccountLogin(launcher) }
+    suspend fun cancelCodexAccountLogin(id: Uuid) = withCodexCapabilityLease(id) { it.cancelAccountLogin() }
+    suspend fun logoutCodexAccount(id: Uuid) = withCodexCapabilityLease(id) { it.logoutAccount() }
+    suspend fun refreshCodexMcp(id: Uuid) = withCodexCapabilityLease(id) { it.refreshMcp() }
+    suspend fun reloadCodexMcp(id: Uuid) = withCodexCapabilityLease(id) { it.reloadMcp() }
+    suspend fun beginCodexMcpOAuth(id: Uuid, name: String, launcher: CodexAppServerAuthUrlLauncher) = withCodexCapabilityLease(id) { it.beginMcpOAuth(name, launcher) }
 
     suspend fun resetCodexSession(conversationId: Uuid) {
-        codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {
-            sessions[conversationId]?.replaceCodexRuntime(null)
-            checkNotNull(codexBindingRepository) { "Codex binding repository is unavailable" }.clearBinding(conversationId.toString())
-            getOrCreateSession(conversationId).publishCodexState(CodexConversationUiState.Disconnected)
-            val prefix = "$conversationId:"
-            codexMessageIds.keys.removeAll { it.startsWith(prefix) }
-        }
+        val owner = getOrCreateSession(conversationId)
+        check(owner.tryBeginCodexOperation()) { "Another Codex operation is already running" }
+        try {
+            codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {
+                owner.replaceCodexRuntime(null)
+                checkNotNull(codexBindingRepository) { "Codex binding repository is unavailable" }.clearBinding(conversationId.toString())
+                owner.publishCodexState(CodexConversationUiState.Disconnected)
+                val prefix = "$conversationId:"
+                codexMessageIds.keys.removeAll { it.startsWith(prefix) }
+            }
+        } finally { owner.endCodexOperation() }
     }
 
     /**

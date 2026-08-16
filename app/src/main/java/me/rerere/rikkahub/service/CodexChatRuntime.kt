@@ -167,7 +167,7 @@ class CodexChatRuntime(
         _capabilities.value = _capabilities.value.copy(pendingMcpServer = name, mcpError = null)
         try {
             val result = session.mcpApi.beginOAuthLogin(name, threadId = session.threadId)
-            launcher.launch(result.authorizationUrlForLaunch())
+            result.authorizationUrlForLaunch().also(::validateCodexAppServerAuthUrl).let(launcher::launch)
         } catch (failure: Throwable) { _capabilities.value = _capabilities.value.copy(mcpError = failure.safeMessage()); throw failure }
     }
 
