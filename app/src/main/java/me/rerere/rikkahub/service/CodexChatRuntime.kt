@@ -59,15 +59,10 @@ class CodexChatRuntime(
     private val accountCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.accountApi.events.collect { event ->
             when (event) {
-                is CodexAppServerAccountEvent.LoginCompleted -> {
-                    val buffered = accountLoginCorrelation.bufferIfAwaiting(event)
-                    // A nullable loginId belongs to the sole in-flight login and can be applied
-                    // immediately. A non-null early completion is held until start returns so an
-                    // unrelated login cannot overwrite this conversation's account state.
-                    if (!buffered || event.loginId == null) {
-                        _capabilities.value = applyAccountLoginCompletion(_capabilities.value, event)
+                is CodexAppServerAccountEvent.LoginCompleted ->
+                    accountLoginCorrelation.onCompletion(event) { completion ->
+                        _capabilities.value = applyAccountLoginCompletion(_capabilities.value, completion)
                     }
-                }
                 is CodexAppServerAccountEvent.MalformedNotification ->
                     _capabilities.value = _capabilities.value.copy(accountError = event.cause.message ?: "Malformed account event")
                 is CodexAppServerAccountEvent.Updated -> Unit
@@ -119,27 +114,35 @@ class CodexChatRuntime(
     }
 
     suspend fun beginAccountLogin(launcher: CodexAppServerAuthUrlLauncher) = capabilityOperation {
-        accountLoginCorrelation.beginAttempt()
-        _capabilities.value = _capabilities.value.copy(accountSubmitting = true, accountError = null)
+        accountLoginCorrelation.beginAttempt {
+            _capabilities.value = _capabilities.value.copy(accountSubmitting = true, accountError = null)
+        }
         try {
             val pending = CodexAppServerOAuthHandoff(session.accountApi, launcher).beginChatGptLogin()
-            val earlyCompletion = accountLoginCorrelation.resolveStart(pending.loginId)
-            _capabilities.value = if (earlyCompletion != null) {
-                applyAccountLoginCompletion(_capabilities.value, earlyCompletion)
-            } else {
-                _capabilities.value.copy(pendingLoginId = pending.loginId)
-            }
+            accountLoginCorrelation.resolveStart(
+                pending.loginId,
+                onCompletion = { completion ->
+                    _capabilities.value = applyAccountLoginCompletion(_capabilities.value, completion)
+                },
+                onPending = { loginId ->
+                    _capabilities.value = _capabilities.value.copy(pendingLoginId = loginId)
+                },
+            )
         } catch (failure: CodexAppServerBrowserLaunchException) {
-            val earlyCompletion = accountLoginCorrelation.resolveStart(failure.loginId)
-            _capabilities.value = if (earlyCompletion != null) {
-                applyAccountLoginCompletion(_capabilities.value, earlyCompletion)
-            } else {
-                _capabilities.value.copy(pendingLoginId = failure.loginId, accountError = failure.safeMessage())
-            }
+            accountLoginCorrelation.resolveStart(
+                failure.loginId,
+                onCompletion = { completion ->
+                    _capabilities.value = applyAccountLoginCompletion(_capabilities.value, completion)
+                },
+                onPending = { loginId ->
+                    _capabilities.value = _capabilities.value.copy(pendingLoginId = loginId, accountError = failure.safeMessage())
+                },
+            )
             throw failure
         } catch (failure: Throwable) {
-            accountLoginCorrelation.abortAttempt()
-            _capabilities.value = _capabilities.value.copy(accountError = failure.safeMessage())
+            accountLoginCorrelation.abortAttempt {
+                _capabilities.value = _capabilities.value.copy(accountError = failure.safeMessage())
+            }
             throw failure
         } finally { _capabilities.value = _capabilities.value.copy(accountSubmitting = false) }
     }
