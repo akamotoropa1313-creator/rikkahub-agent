@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.JsonPrimitive
@@ -102,14 +103,15 @@ class CodexReviewStartRaceTest {
     fun `review method not found is local unsupported state and keeps connection usable`() = runBlocking {
         val harness = harness(this) { _, _, _ -> }
         try {
-            val call = async(start = CoroutineStart.UNDISPATCHED) { harness.runtime.startReview(CodexAppServerReviewTarget.UncommittedChanges) }
-            val request = decodeRequest(harness.transport.takeClientLine())
-            harness.transport.injectServerLine(codec.encode(JsonRpcErrorResponse(
-                request.id,
-                JsonRpcError(-32601L, "method not found"),
-            )))
-
-            val failure = expect<CodexAppServerResponseException> { call.await() }
+            val failure = supervisorScope {
+                val call = async(start = CoroutineStart.UNDISPATCHED) { harness.runtime.startReview(CodexAppServerReviewTarget.UncommittedChanges) }
+                val request = decodeRequest(harness.transport.takeClientLine())
+                harness.transport.injectServerLine(codec.encode(JsonRpcErrorResponse(
+                    request.id,
+                    JsonRpcError(-32601L, "method not found"),
+                )))
+                expect<CodexAppServerResponseException> { call.await() }
+            }
             assertEquals(-32601L, failure.error.code)
             assertEquals("Native code review is not supported by this App Server", harness.runtime.review.value.error)
             assertTrue(harness.runtime.capabilities.value.connected)
