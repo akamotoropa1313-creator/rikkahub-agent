@@ -295,6 +295,7 @@ private fun ChatPageContent(
     var showFilesSheet by remember { mutableStateOf(false) }
     var showCodexControls by remember { mutableStateOf(false) }
     val codexCapabilities by vm.codexCapabilities.collectAsStateWithLifecycle()
+    val codexReview by vm.codexReview.collectAsStateWithLifecycle()
     val codexOperationBusy by vm.codexOperationBusy.collectAsStateWithLifecycle()
     val selectedCodexSkill by vm.selectedCodexSkill.collectAsStateWithLifecycle()
 
@@ -560,6 +561,8 @@ private fun ChatPageContent(
                 CodexControlSheet(
                     connection = codexState,
                     capabilities = codexCapabilities,
+                    review = codexReview,
+                    onStartReview = vm::startCodexReview,
                     assistant = assistant,
                     onUpdateAssistant = { transform -> vm.updateCodexPreferences(transform) },
                     hasBinding = hasCodexBinding,

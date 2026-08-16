@@ -92,16 +92,20 @@ class ConversationSession(
         private set
     private var codexStateJob: Job? = null
     private var codexCapabilitiesJob: Job? = null
+    private var codexReviewJob: Job? = null
     private val _codexState = MutableStateFlow<CodexConversationUiState>(CodexConversationUiState.Disconnected)
     val codexState: StateFlow<CodexConversationUiState> = _codexState.asStateFlow()
     private val _codexCapabilities = MutableStateFlow(CodexCapabilitiesUiState())
     val codexCapabilities: StateFlow<CodexCapabilitiesUiState> = _codexCapabilities.asStateFlow()
+    private val _codexReview = MutableStateFlow(CodexReviewUiState())
+    val codexReview: StateFlow<CodexReviewUiState> = _codexReview.asStateFlow()
 
     @Synchronized fun replaceCodexRuntime(runtime: CodexChatRuntime?) {
         val previous = codexRuntime
         codexRuntime = runtime
         codexStateJob?.cancel()
         codexCapabilitiesJob?.cancel()
+        codexReviewJob?.cancel()
         codexStateJob = runtime?.let { installed ->
             scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
                 installed.state.collect { _codexState.value = it }
@@ -112,7 +116,10 @@ class ConversationSession(
                 installed.capabilities.collect { _codexCapabilities.value = it }
             }
         }
-        if (runtime == null) _codexCapabilities.value = CodexCapabilitiesUiState()
+        codexReviewJob = runtime?.let { installed -> scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            installed.review.collect { _codexReview.value = it }
+        } }
+        if (runtime == null) { _codexCapabilities.value = CodexCapabilitiesUiState(); _codexReview.value = CodexReviewUiState() }
         if (runtime == null && previous == null) _codexState.value = CodexConversationUiState.Disconnected
         if (previous !== runtime) previous?.close()
     }
@@ -124,6 +131,7 @@ class ConversationSession(
         codexStateJob = null
         codexCapabilitiesJob?.cancel()
         codexCapabilitiesJob = null
+        codexReviewJob?.cancel(); codexReviewJob = null; _codexReview.value = CodexReviewUiState()
         _codexCapabilities.value = CodexCapabilitiesUiState()
         if (!preserveState) _codexState.value = CodexConversationUiState.Disconnected
         return true

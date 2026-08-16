@@ -124,6 +124,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability
 import me.rerere.rikkahub.data.codex.appserver.codexInputCapability
 import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
@@ -271,6 +272,8 @@ class ChatService(
 
     fun getCodexCapabilitiesStateFlow(conversationId: Uuid): StateFlow<CodexCapabilitiesUiState> =
         getOrCreateSession(conversationId).codexCapabilities
+    fun getCodexReviewStateFlow(conversationId: Uuid): StateFlow<CodexReviewUiState> =
+        getOrCreateSession(conversationId).codexReview
     fun getCodexOperationBusyFlow(conversationId: Uuid): StateFlow<Boolean> =
         getOrCreateSession(conversationId).codexOperationBusy
 
@@ -840,6 +843,10 @@ class ChatService(
     suspend fun refreshCodexSkills(id: Uuid) = withCodexCapabilityLease(id) { it.refreshSkills(true) }
     suspend fun refreshCodexModels(id: Uuid) = withCodexCapabilityLease(id) { it.refreshModels() }
     suspend fun refreshCodexConfigDiagnostics(id: Uuid) = withCodexCapabilityLease(id) { it.refreshConfigDiagnostics() }
+    suspend fun startCodexReview(id: Uuid, target: CodexAppServerReviewTarget) = withCodexCapabilityLease(id) { runtime ->
+        val result = runtime.startReview(target)
+        try { runtime.awaitTurnTerminal(result.turn.id) } finally { runtime.finishTurn(result.turn.id) }
+    }
     suspend fun setCodexSkillEnabled(id: Uuid, skill: CodexSkillMetadata, enabled: Boolean) = withCodexCapabilityLease(id) { it.setSkillEnabled(skill, enabled) }
     suspend fun refreshCodexAccount(id: Uuid) = withCodexCapabilityLease(id) { it.refreshAccount() }
     suspend fun beginCodexAccountLogin(id: Uuid, launcher: CodexAppServerAuthUrlLauncher) = withCodexCapabilityLease(id) { it.beginAccountLogin(launcher) }

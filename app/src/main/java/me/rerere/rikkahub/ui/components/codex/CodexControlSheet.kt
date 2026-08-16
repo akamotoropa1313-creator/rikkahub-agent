@@ -24,12 +24,17 @@ import me.rerere.rikkahub.data.model.CodexReasoningSummaryPreference
 import me.rerere.rikkahub.data.codex.appserver.CodexTokenUsageTelemetry
 import me.rerere.rikkahub.data.codex.appserver.CodexEffectiveConfigSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexConfigRequirementsSnapshot
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
+import me.rerere.rikkahub.service.CodexReviewUiState
+import me.rerere.rikkahub.service.CodexReviewAction
 
 /** Explicit control plane for the existing conversation-owned Codex runtime. Opening it sends no RPC. */
 @Composable
 fun CodexControlSheet(
     connection: CodexConversationUiState,
     capabilities: CodexCapabilitiesUiState,
+    review: CodexReviewUiState,
+    onStartReview: (CodexReviewAction) -> Unit,
     assistant: Assistant,
     onUpdateAssistant: ((Assistant) -> Assistant) -> Unit,
     hasBinding: Boolean,
@@ -49,6 +54,11 @@ fun CodexControlSheet(
     onReconnect: () -> Unit,
 ) {
     var pendingSafety by remember { mutableStateOf<Pair<String?, String?>?>(null) }
+    var reviewKind by remember { mutableStateOf("Working tree") }
+    var branch by remember { mutableStateOf("") }
+    var sha by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("") }
+    var instructions by remember { mutableStateOf("") }
     val selectedModel = selectedCodexModel(assistant.codexModel, capabilities.models)
     val serviceTierModel = serviceTierCatalogModel(assistant.codexModel, capabilities.models)
     LazyColumn(
@@ -120,6 +130,39 @@ fun CodexControlSheet(
                         requirements.featureRequirements?.forEach { (feature, required) -> Text("$feature = required ${if (required) "enabled" else "disabled"}") }
                     } ?: Text("No managed requirements reported")
                 }
+            }
+        }
+        item {
+            Section("Code review") {
+                Text("Run a native inline review on this conversation's bound thread.")
+                listOf("Working tree", "Base branch", "Commit", "Custom").forEach { kind ->
+                    TextButton(modifier = Modifier.heightIn(min = 44.dp), onClick = { reviewKind = kind }) {
+                        Text((if (reviewKind == kind) "✓ " else "") + kind)
+                    }
+                }
+                when (reviewKind) {
+                    "Base branch" -> OutlinedTextField(branch, { branch = it }, Modifier.fillMaxWidth(), label = { Text("Branch") }, singleLine = true)
+                    "Commit" -> { OutlinedTextField(sha, { sha = it }, Modifier.fillMaxWidth(), label = { Text("Commit SHA") }, singleLine = true); OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("Title (optional)") }) }
+                    "Custom" -> OutlinedTextField(instructions, { instructions = it }, Modifier.fillMaxWidth().heightIn(min = 120.dp), label = { Text("Review instructions") }, minLines = 4)
+                }
+                if (review.inProgress) {
+                    Text("Review in progress · ${review.targetSummary.orEmpty()}")
+                    Button(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                        enabled = capabilities.connected,
+                        onClick = { onStartReview(CodexReviewAction.Stop) },
+                    ) { Text("Stop review") }
+                }
+                review.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                val valid = when (reviewKind) { "Base branch" -> branch.isNotBlank(); "Commit" -> sha.isNotBlank(); "Custom" -> instructions.isNotBlank(); else -> true }
+                Button(modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp), enabled = capabilities.connected && valid && !review.inProgress && !operationBusy, onClick = {
+                    onStartReview(CodexReviewAction.Start(when (reviewKind) {
+                        "Base branch" -> CodexAppServerReviewTarget.BaseBranch(branch)
+                        "Commit" -> CodexAppServerReviewTarget.Commit(sha, title.takeIf(String::isNotBlank))
+                        "Custom" -> CodexAppServerReviewTarget.Custom(instructions)
+                        else -> CodexAppServerReviewTarget.UncommittedChanges
+                    }))
+                }) { Text("Start review") }
             }
         }
         item {

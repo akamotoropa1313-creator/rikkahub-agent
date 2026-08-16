@@ -46,6 +46,8 @@ import me.rerere.rikkahub.data.repository.FavoriteRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.service.CodexConversationUiState
+import me.rerere.rikkahub.service.CodexReviewAction
+import me.rerere.rikkahub.service.CodexReviewServiceOwner
 import me.rerere.rikkahub.ui.hooks.writeStringPreference
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.rikkahub.utils.UiState
@@ -82,6 +84,7 @@ class ChatVM(
 
     val codexState: StateFlow<CodexConversationUiState> = chatService.getCodexStateFlow(_conversationId)
     val codexCapabilities = chatService.getCodexCapabilitiesStateFlow(_conversationId)
+    val codexReview = chatService.getCodexReviewStateFlow(_conversationId)
     val codexOperationBusy = chatService.getCodexOperationBusyFlow(_conversationId)
     private val _selectedCodexSkill = MutableStateFlow<CodexSkillMetadata?>(null)
     val selectedCodexSkill: StateFlow<CodexSkillMetadata?> = _selectedCodexSkill
@@ -101,6 +104,12 @@ class ChatVM(
     fun refreshCodexSkills() { viewModelScope.launch { runCatching { chatService.refreshCodexSkills(_conversationId) } } }
     fun refreshCodexModels() { viewModelScope.launch { runCatching { chatService.refreshCodexModels(_conversationId) } } }
     fun refreshCodexConfigDiagnostics() { viewModelScope.launch { runCatching { chatService.refreshCodexConfigDiagnostics(_conversationId) } } }
+    fun startCodexReview(action: CodexReviewAction) {
+        when (action) {
+            is CodexReviewAction.Start -> CodexReviewServiceOwner.start(chatService, _conversationId, action.target)
+            CodexReviewAction.Stop -> CodexReviewServiceOwner.stop(chatService, _conversationId)
+        }
+    }
 
     /** Apply only a Codex preference delta against the newest Assistant inside SettingsStore.update. */
     fun updateCodexPreferences(transform: (Assistant) -> Assistant) {
@@ -174,7 +183,6 @@ class ChatVM(
     val currentChatModel = settings.map { settings ->
         settings.getCurrentChatModel()
     }.stateIn(viewModelScope, SharingStarted.Lazily, null)
-
     val errors: StateFlow<List<ChatError>> = chatService.errors
 
     fun dismissError(id: Uuid) = chatService.dismissError(id)
