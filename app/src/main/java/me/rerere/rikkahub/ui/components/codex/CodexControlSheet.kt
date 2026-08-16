@@ -7,6 +7,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -40,6 +44,7 @@ fun CodexControlSheet(
     operationBusy: Boolean,
     onReconnect: () -> Unit,
 ) {
+    var pendingSafety by remember { mutableStateOf<Pair<String?, String?>?>(null) }
     val selectedModel = selectedCodexModel(assistant.codexModel, capabilities.models)
     val serviceTierModel = serviceTierCatalogModel(assistant.codexModel, capabilities.models)
     LazyColumn(
@@ -48,6 +53,41 @@ fun CodexControlSheet(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { Text("Codex Control Center", style = MaterialTheme.typography.headlineSmall) }
+        item {
+            Section("Safety & permissions") {
+                Text("Sandbox", style = MaterialTheme.typography.titleMedium)
+                Text("Server setting omits the override. On an existing thread a previous override may be sticky; Reset is required to return completely to server configuration.")
+                listOf(null to "Server setting", "read-only" to "Read only", "workspace-write" to "Workspace write", "danger-full-access" to "Full access").forEach { (value, label) ->
+                    TextButton(onClick = {
+                        val confirmation = codexSafetyConfirmation(assistant, sandbox = value)
+                        if (confirmation == CodexSafetyConfirmation.NONE) onUpdateAssistant { it.copy(codexSandboxMode = value) }
+                        else pendingSafety = value to assistant.codexApprovalPolicy
+                    }) { Text((if (assistant.codexSandboxMode == value) "✓ " else "") + label) }
+                }
+                Text(when (assistant.codexSandboxMode) {
+                    "read-only" -> "Codex can read project files but writes are restricted."
+                    "workspace-write" -> "Codex can modify files allowed by the workspace sandbox."
+                    "danger-full-access" -> "Removes Codex sandbox restrictions for the environment available to the App Server."
+                    else -> "The App Server setting is used when no explicit override is selected."
+                })
+                if (!codexSandboxKnown(assistant.codexSandboxMode)) Text("Unsupported saved sandbox preference '${assistant.codexSandboxMode}' is preserved and will not be sent.", color = MaterialTheme.colorScheme.error)
+                Text("Approval", style = MaterialTheme.typography.titleMedium)
+                listOf(null to "Server setting", "untrusted" to "Untrusted", "on-request" to "On request", "never" to "Never").forEach { (value, label) ->
+                    TextButton(onClick = {
+                        val confirmation = codexSafetyConfirmation(assistant, approval = value)
+                        if (confirmation == CodexSafetyConfirmation.NONE) onUpdateAssistant { it.copy(codexApprovalPolicy = value) }
+                        else pendingSafety = assistant.codexSandboxMode to value
+                    }) { Text((if (assistant.codexApprovalPolicy == value) "✓ " else "") + label) }
+                }
+                Text(when (assistant.codexApprovalPolicy) {
+                    "untrusted" -> "Only known-safe read-only commands are automatically approved; other operations may request approval."
+                    "on-request" -> "Codex decides when it needs to ask for approval."
+                    "never" -> "Codex does not ask for approval; blocked operations fail instead. This does not itself mean Full access."
+                    else -> "Server approval policy is used when no explicit override is selected."
+                })
+                if (!codexApprovalKnown(assistant.codexApprovalPolicy)) Text("Unsupported saved approval preference '${assistant.codexApprovalPolicy}' is preserved and will not be sent.", color = MaterialTheme.colorScheme.error)
+            }
+        }
         item {
             Section("Model & behavior") {
                 Text("Codex model", style = MaterialTheme.typography.titleMedium)
@@ -257,6 +297,20 @@ fun CodexControlSheet(
                 },
             )
         }
+    }
+    pendingSafety?.let { pending ->
+        val kind = codexSafetyConfirmation(assistant, pending.first, pending.second)
+        AlertDialog(
+            onDismissRequest = { pendingSafety = null },
+            title = { Text(if (kind == CodexSafetyConfirmation.CRITICAL) "Critical safety warning" else "Confirm safety setting") },
+            text = { Text(when (kind) {
+                CodexSafetyConfirmation.CRITICAL -> "Full access + Never removes the normal sandbox restriction while also disabling approval prompts. Codex may modify data available in its execution environment without asking."
+                CodexSafetyConfirmation.FULL_ACCESS -> "Sandbox restrictions are removed. Codex may modify data available inside its execution environment. Enable only when you intentionally want unrestricted execution."
+                else -> "Approval prompts are disabled. Operations blocked by the sandbox or policy may fail rather than ask. This does not itself mean Full access."
+            }) },
+            confirmButton = { TextButton(onClick = { onUpdateAssistant { it.copy(codexSandboxMode = pending.first, codexApprovalPolicy = pending.second) }; pendingSafety = null }) { Text("Confirm") } },
+            dismissButton = { TextButton(onClick = { pendingSafety = null }) { Text("Cancel") } },
+        )
     }
 }
 

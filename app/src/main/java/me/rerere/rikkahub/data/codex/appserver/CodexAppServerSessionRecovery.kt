@@ -28,7 +28,10 @@ class CodexAppServerSessionRecovery(
     private val localState: CodexAppServerLocalState,
     private val connectionFactory: CodexAppServerConnectionCreator,
 ) {
-    suspend fun recover(conversationId: String): CodexAppServerSessionRecoveryResult {
+    suspend fun recover(
+        conversationId: String,
+        overrides: CodexAppServerThreadResumeParams = CodexAppServerThreadResumeParams(),
+    ): CodexAppServerSessionRecoveryResult {
         require(conversationId.isNotBlank()) { "conversationId must not be blank" }
         val binding = repository.getBinding(conversationId)
             ?: return CodexAppServerSessionRecoveryResult.NotBound
@@ -46,7 +49,7 @@ class CodexAppServerSessionRecovery(
         var ownershipTransferred = false
         try {
             connection.initialize()
-            val resumed = CodexAppServerThreadApi(connection).resumeThread(binding.threadId)
+            val resumed = CodexAppServerThreadApi(connection).resumeThread(binding.threadId, overrides)
             val resumedAtMs = repository.markResumed(binding.conversationId, binding.threadId)
             val session = CodexAppServerRecoveredSession(
                 binding.copy(lastResumedAtMs = resumedAtMs, updatedAtMs = resumedAtMs),

@@ -145,10 +145,13 @@ class CodexAppServerConversationSessionOpener(
     private val recovery: CodexAppServerSessionRecovery,
 ) {
     /** Recovery-only entry point: never creates a thread or binding. */
-    suspend fun recoverBound(conversationId: String): CodexAppServerConversationSessionOpenResult {
+    suspend fun recoverBound(
+        conversationId: String,
+        overrides: CodexAppServerThreadResumeParams = CodexAppServerThreadResumeParams(),
+    ): CodexAppServerConversationSessionOpenResult {
         require(conversationId.isNotBlank())
         val binding = repository.getBinding(conversationId) ?: error("Codex conversation is not bound")
-        return when (val recovered = recovery.recover(conversationId)) {
+        return when (val recovered = recovery.recover(conversationId, overrides)) {
             CodexAppServerSessionRecoveryResult.NotBound -> error("Binding disappeared while reconnecting")
             is CodexAppServerSessionRecoveryResult.Recovered -> CodexAppServerConversationSessionOpenResult.Recovered(recovered.session)
             is CodexAppServerSessionRecoveryResult.StaleBinding -> CodexAppServerConversationSessionOpenResult.StaleBinding(recovered.binding, recovered.reason)
@@ -165,7 +168,18 @@ class CodexAppServerConversationSessionOpener(
         require(workspaceId.isNotBlank()) { "workspaceId must not be blank" }
 
         if (repository.getBinding(conversationId) != null) {
-            return when (val recovered = recovery.recover(conversationId)) {
+            val resumeOverrides = CodexAppServerThreadResumeParams(
+                model = overrides.model,
+                modelProvider = overrides.modelProvider,
+                cwd = overrides.cwd,
+                config = overrides.config,
+                baseInstructions = overrides.baseInstructions,
+                developerInstructions = overrides.developerInstructions,
+                personality = overrides.personality,
+                sandbox = overrides.sandbox,
+                approvalPolicy = overrides.approvalPolicy,
+            )
+            return when (val recovered = recovery.recover(conversationId, resumeOverrides)) {
                 CodexAppServerSessionRecoveryResult.NotBound -> error("Binding disappeared while opening session")
                 is CodexAppServerSessionRecoveryResult.Recovered ->
                     CodexAppServerConversationSessionOpenResult.Recovered(recovered.session)

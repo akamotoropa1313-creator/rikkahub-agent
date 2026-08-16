@@ -24,6 +24,8 @@ class CodexAssistantPreferenceCompatibilityTest {
         assertNull(legacy.codexReasoningSummary)
         assertNull(legacy.codexPersonality)
         assertNull(legacy.codexServiceTier)
+        assertNull(legacy.codexSandboxMode)
+        assertNull(legacy.codexApprovalPolicy)
     }
 
     @Test

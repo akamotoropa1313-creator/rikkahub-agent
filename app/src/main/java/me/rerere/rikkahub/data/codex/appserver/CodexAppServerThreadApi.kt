@@ -20,6 +20,8 @@ data class CodexAppServerThreadStartParams(
     val personality: CodexAppServerPersonality? = null,
     val ephemeral: Boolean? = null,
     val serviceTier: String? = null,
+    val sandbox: CodexAppServerSandboxMode? = null,
+    val approvalPolicy: CodexAppServerApprovalPolicy? = null,
 )
 
 /** Stable overrides shared by v2 `thread/resume`; the thread id is supplied separately. */
@@ -31,6 +33,8 @@ data class CodexAppServerThreadResumeParams(
     val baseInstructions: String? = null,
     val developerInstructions: String? = null,
     val personality: CodexAppServerPersonality? = null,
+    val sandbox: CodexAppServerSandboxMode? = null,
+    val approvalPolicy: CodexAppServerApprovalPolicy? = null,
 )
 
 enum class CodexAppServerPersonality(val wireValue: String) {
@@ -113,6 +117,8 @@ private fun CodexAppServerThreadStartParams.toJson() = buildMap<String, JsonElem
     personality?.let { put("personality", JsonPrimitive(it.wireValue)) }
     ephemeral?.let { put("ephemeral", JsonPrimitive(it)) }
     putOptional("serviceTier", serviceTier)
+    sandbox?.let { put("sandbox", JsonPrimitive(it.wireValue)) }
+    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.wireValue)) }
 }.let(::JsonObject)
 
 private fun CodexAppServerThreadResumeParams.toJson(threadId: String) = buildMap<String, JsonElement> {
@@ -121,6 +127,8 @@ private fun CodexAppServerThreadResumeParams.toJson(threadId: String) = buildMap
     config?.let { put("config", JsonObject(it)) }; putOptional("baseInstructions", baseInstructions)
     putOptional("developerInstructions", developerInstructions)
     personality?.let { put("personality", JsonPrimitive(it.wireValue)) }
+    sandbox?.let { put("sandbox", JsonPrimitive(it.wireValue)) }
+    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.wireValue)) }
 }.let(::JsonObject)
 
 private fun MutableMap<String, JsonElement>.putOptional(name: String, value: String?) {

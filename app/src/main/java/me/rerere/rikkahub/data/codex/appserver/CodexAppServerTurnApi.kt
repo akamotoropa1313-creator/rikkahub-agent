@@ -58,6 +58,8 @@ data class CodexAppServerTurnStartParams(
     val personality: CodexAppServerPersonality? = null,
     val outputSchema: JsonElement? = null,
     val serviceTier: String? = null,
+    val approvalPolicy: CodexAppServerApprovalPolicy? = null,
+    val sandboxPolicy: CodexAppServerSandboxPolicy? = null,
 )
 
 sealed interface CodexAppServerTurnStatus {
@@ -175,6 +177,8 @@ private fun CodexAppServerTurnStartParams.toJson(
     personality?.let { put("personality", JsonPrimitive(it.wireValue)) }
     outputSchema?.let { put("outputSchema", it) }
     serviceTier?.let { put("serviceTier", JsonPrimitive(it)) }
+    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.wireValue)) }
+    sandboxPolicy?.let { put("sandboxPolicy", it.toJson()) }
 }.let(::JsonObject)
 
 private fun CodexAppServerTurnInput.toJson(): JsonObject = when (this) {

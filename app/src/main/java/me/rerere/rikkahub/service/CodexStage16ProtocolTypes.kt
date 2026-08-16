@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.service
 
 import me.rerere.rikkahub.data.codex.appserver.CodexModelCatalogKnowledge
+import me.rerere.rikkahub.data.codex.appserver.toTurnPolicy
 
 /**
  * A saved personality request is intentionally distinct from the protocol enum. The request can
@@ -33,6 +34,8 @@ internal fun CodexAppServerTurnStartParams(
     summary: CodexAppServerReasoningSummary? = null,
     personality: RequestedCodexPersonality? = null,
     serviceTier: String? = null,
+    sandbox: me.rerere.rikkahub.data.codex.appserver.CodexAppServerSandboxMode? = null,
+    approvalPolicy: me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalPolicy? = null,
 ): me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnStartParams =
     me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnStartParams(
         model = model,
@@ -40,6 +43,8 @@ internal fun CodexAppServerTurnStartParams(
         summary = summary,
         personality = personality?.value?.takeIf { CodexModelCatalogKnowledge.personalitySupported(model) },
         serviceTier = serviceTier,
+        sandboxPolicy = sandbox?.toTurnPolicy(),
+        approvalPolicy = approvalPolicy,
     )
 
 /**
@@ -55,6 +60,8 @@ internal fun CodexAppServerThreadStartParams(
     developerInstructions: String? = null,
     personality: RequestedCodexPersonality? = null,
     serviceTier: String? = null,
+    sandbox: me.rerere.rikkahub.data.codex.appserver.CodexAppServerSandboxMode? = null,
+    approvalPolicy: me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalPolicy? = null,
 ): me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams =
     me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams(
         model = model,
@@ -65,4 +72,6 @@ internal fun CodexAppServerThreadStartParams(
             "default" -> "default"
             else -> serviceTier.takeIf { CodexModelCatalogKnowledge.serviceTierConfirmed(model, it) }
         },
+        sandbox = sandbox,
+        approvalPolicy = approvalPolicy,
     )
