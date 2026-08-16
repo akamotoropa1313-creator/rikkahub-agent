@@ -60,15 +60,16 @@ class CodexAppServerOAuthHandoffTest {
         } }
     }
 
-    @Test fun `launcher cancellation propagates unchanged without side effects`() = runBlocking {
+    @Test fun `launcher cancellation remains cancellation while preserving exact live login id`() = runBlocking {
         supervisorScope { fixture().use { f ->
             val cancellation = CancellationException("caller cancelled")
             val handoff = CodexAppServerOAuthHandoff(f.api) { throw cancellation }
             val call = async { handoff.beginChatGptLogin() }; val request = f.takeRequest()
             f.respond(request, loginResult("login-cancelled", "https://example.test/auth"))
-            val observed = expect<CancellationException> { call.await() }
-            assertEquals("caller cancelled", observed.message)
-            assertFalse((observed as Throwable) is CodexAppServerBrowserLaunchException)
+            val observed = expect<CodexAppServerLoginHandoffCancellationException> { call.await() }
+            assertEquals("login-cancelled", observed.loginId)
+            assertTrue(observed is CancellationException)
+            assertEquals(cancellation, observed.cause)
             assertEquals(3, f.transport.successfulWriteCount())
             assertTrue(f.connection.state.value is CodexAppServerConnectionState.Ready)
         } }
