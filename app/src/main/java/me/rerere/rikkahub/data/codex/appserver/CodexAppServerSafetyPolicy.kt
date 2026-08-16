@@ -1,7 +1,6 @@
 package me.rerere.rikkahub.data.codex.appserver
 
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -22,18 +21,28 @@ enum class CodexAppServerSandboxMode(val wireValue: String) {
 /** Exact stable SandboxPolicy object used by turn/start. No custom fields are exposed. */
 sealed interface CodexAppServerSandboxPolicy {
     fun toJson(): JsonObject
+
     data object ReadOnly : CodexAppServerSandboxPolicy {
-        override fun toJson() = JsonObject(mapOf("type" to JsonPrimitive("readOnly")))
+        override fun toJson() = JsonObject(
+            mapOf(
+                "type" to JsonPrimitive("readOnly"),
+                "networkAccess" to JsonPrimitive(false),
+            ),
+        )
     }
+
     data object WorkspaceWrite : CodexAppServerSandboxPolicy {
-        override fun toJson() = JsonObject(mapOf(
-            "type" to JsonPrimitive("workspaceWrite"),
-            "writableRoots" to JsonArray(emptyList()),
-            "networkAccess" to JsonPrimitive(false),
-            "excludeTmpdirEnvVar" to JsonPrimitive(false),
-            "excludeSlashTmp" to JsonPrimitive(false),
-        ))
+        override fun toJson() = JsonObject(
+            mapOf(
+                "type" to JsonPrimitive("workspaceWrite"),
+                "writableRoots" to JsonArray(emptyList()),
+                "networkAccess" to JsonPrimitive(false),
+                "excludeTmpdirEnvVar" to JsonPrimitive(false),
+                "excludeSlashTmp" to JsonPrimitive(false),
+            ),
+        )
     }
+
     data object DangerFullAccess : CodexAppServerSandboxPolicy {
         override fun toJson() = JsonObject(mapOf("type" to JsonPrimitive("dangerFullAccess")))
     }
