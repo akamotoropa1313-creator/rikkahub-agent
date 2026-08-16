@@ -167,23 +167,58 @@ class CodexChatRuntime(
 
     suspend fun readHistoryThread(threadId: String) = capabilityOperation {
         val old = _capabilities.value.threadHistory
-        _capabilities.value = _capabilities.value.copy(threadHistory = old.copy(detailLoading = true, detailError = null, selectedThreadId = threadId))
+        _capabilities.value = _capabilities.value.copy(
+            threadHistory = old.copy(
+                detailLoading = true,
+                detailError = null,
+                selectedThreadId = threadId,
+                selectedThread = null,
+            ),
+        )
         try {
             val thread = session.threadApi.readThread(threadId)
-            _capabilities.value = _capabilities.value.copy(threadHistory = old.copy(selectedThreadId = threadId, selectedThread = thread, detailLoading = false))
+            val current = _capabilities.value.threadHistory
+            if (current.selectedThreadId == threadId) {
+                _capabilities.value = _capabilities.value.copy(
+                    threadHistory = current.copy(
+                        selectedThread = thread,
+                        detailLoading = false,
+                        detailError = null,
+                    ),
+                )
+            }
         } catch (cancelled: CancellationException) {
-            _capabilities.value = _capabilities.value.copy(threadHistory = old.copy(detailLoading = false))
+            val current = _capabilities.value.threadHistory
+            if (current.selectedThreadId == threadId) {
+                _capabilities.value = _capabilities.value.copy(
+                    threadHistory = current.copy(detailLoading = false),
+                )
+            }
             throw cancelled
-        }
-        catch (failure: Throwable) {
+        } catch (failure: Throwable) {
             val message = if (failure is CodexAppServerResponseException && failure.error.code == -32601L)
                 "Thread history is not supported by this App Server" else failure.safeMessage()
-            _capabilities.value = _capabilities.value.copy(threadHistory = old.copy(selectedThreadId = threadId, detailLoading = false, detailError = message))
+            val current = _capabilities.value.threadHistory
+            if (current.selectedThreadId == threadId) {
+                _capabilities.value = _capabilities.value.copy(
+                    threadHistory = current.copy(detailLoading = false, detailError = message),
+                )
+            }
             throw failure
         }
     }
 
-    fun closeHistoryThread() { _capabilities.value = _capabilities.value.copy(threadHistory = _capabilities.value.threadHistory.copy(selectedThreadId = null, selectedThread = null, detailError = null)) }
+    fun closeHistoryThread() {
+        val current = _capabilities.value.threadHistory
+        _capabilities.value = _capabilities.value.copy(
+            threadHistory = current.copy(
+                selectedThreadId = null,
+                selectedThread = null,
+                detailLoading = false,
+                detailError = null,
+            ),
+        )
+    }
 
     /** Explicit-only, partial-success configuration diagnostics. Existing snapshots survive errors. */
     suspend fun refreshConfigDiagnostics() = capabilityOperation {
