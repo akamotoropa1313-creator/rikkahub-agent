@@ -298,6 +298,7 @@ private fun ChatPageContent(
     var showFilesSheet by remember { mutableStateOf(false) }
     var showCodexControls by remember { mutableStateOf(false) }
     val codexCapabilities by vm.codexCapabilities.collectAsStateWithLifecycle()
+    val codexOperationBusy by vm.codexOperationBusy.collectAsStateWithLifecycle()
     val selectedCodexSkill by vm.selectedCodexSkill.collectAsStateWithLifecycle()
 
     val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
@@ -523,11 +524,12 @@ private fun ChatPageContent(
                 vm = vm,
                 onDismiss = { showFilesSheet = false },
                 onOpenCodexControls = { showFilesSheet = false; showCodexControls = true },
+                codexOperationBusy = codexOperationBusy,
             )
         }
         if (showCodexControls) {
             ModalBottomSheet(onDismissRequest = { showCodexControls = false }) {
-                CodexControlSheet(codexState, codexCapabilities, hasCodexBinding, vm::refreshCodexAccount, vm::refreshCodexSkills, vm::refreshCodexMcp, vm::reloadCodexMcp, vm::beginCodexAccountLogin, vm::cancelCodexAccountLogin, vm::logoutCodexAccount, vm::setCodexSkillEnabled, { vm.selectCodexSkill(it); showCodexControls = false }, vm::beginCodexMcpOAuth)
+                CodexControlSheet(codexState, codexCapabilities, hasCodexBinding, vm::refreshCodexAccount, vm::refreshCodexSkills, vm::refreshCodexMcp, vm::reloadCodexMcp, vm::beginCodexAccountLogin, vm::cancelCodexAccountLogin, vm::logoutCodexAccount, vm::setCodexSkillEnabled, { vm.selectCodexSkill(it); showCodexControls = false }, vm::beginCodexMcpOAuth, codexOperationBusy, vm::reconnectCodexSession)
             }
         }
     }
@@ -543,6 +545,7 @@ private fun ChatFilesPickerSheet(
     vm: ChatVM,
     onDismiss: () -> Unit,
     onOpenCodexControls: () -> Unit,
+    codexOperationBusy: Boolean,
 ) {
     val context = LocalContext.current
     val toaster = LocalToaster.current
@@ -724,6 +727,7 @@ private fun ChatFilesPickerSheet(
             },
             hasCodexBinding = hasCodexBinding,
             onResetCodexSession = vm::resetCodexSession,
+            codexOperationBusy = codexOperationBusy,
             onOpenCodexControls = onOpenCodexControls,
             onUpdateConversation = {
                 vm.updateConversation(it)

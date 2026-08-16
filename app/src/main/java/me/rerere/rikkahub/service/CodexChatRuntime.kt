@@ -168,7 +168,10 @@ class CodexChatRuntime(
         try {
             val result = session.mcpApi.beginOAuthLogin(name, threadId = session.threadId)
             result.authorizationUrlForLaunch().also(::validateCodexAppServerAuthUrl).let(launcher::launch)
-        } catch (failure: Throwable) { _capabilities.value = _capabilities.value.copy(mcpError = failure.safeMessage()); throw failure }
+        } catch (failure: Throwable) {
+            _capabilities.value = _capabilities.value.copy(pendingMcpServer = null, mcpError = failure.safeMessage())
+            throw failure
+        }
     }
 
     private fun record(turnId: String) = turns.computeIfAbsent(turnId) { TurnRecord() }

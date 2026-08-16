@@ -79,8 +79,10 @@ class ConversationSession(
     }
     fun releaseIdleEvictionClaim() = synchronized(sendTrackingLock) { evictionClaimed = false }
     private val codexOperationActive = AtomicBoolean(false)
-    fun tryBeginCodexOperation(): Boolean = codexOperationActive.compareAndSet(false, true)
-    fun endCodexOperation() { codexOperationActive.set(false) }
+    private val _codexOperationBusy = MutableStateFlow(false)
+    val codexOperationBusy: StateFlow<Boolean> = _codexOperationBusy.asStateFlow()
+    fun tryBeginCodexOperation(): Boolean = codexOperationActive.compareAndSet(false, true).also { if (it) _codexOperationBusy.value = true }
+    fun endCodexOperation() { codexOperationActive.set(false); _codexOperationBusy.value = false }
     val isCodexOperationActive: Boolean get() = codexOperationActive.get()
 
     // 空闲检查任务

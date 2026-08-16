@@ -84,6 +84,7 @@ class ChatVM(
 
     val codexState: StateFlow<CodexConversationUiState> = chatService.getCodexStateFlow(_conversationId)
     val codexCapabilities = chatService.getCodexCapabilitiesStateFlow(_conversationId)
+    val codexOperationBusy = chatService.getCodexOperationBusyFlow(_conversationId)
     private val _selectedCodexSkill = MutableStateFlow<CodexSkillMetadata?>(null)
     val selectedCodexSkill: StateFlow<CodexSkillMetadata?> = _selectedCodexSkill
     fun selectCodexSkill(skill: CodexSkillMetadata?) { _selectedCodexSkill.value = skill }
@@ -97,6 +98,7 @@ class ChatVM(
         chatService.resetCodexSession(_conversationId)
         _hasCodexBinding.value = false
     } }
+    fun reconnectCodexSession() { viewModelScope.launch { runCatching { chatService.reconnectCodexSession(_conversationId) } } }
     fun interruptCodexTurn() { viewModelScope.launch { chatService.stopGeneration(_conversationId) } }
     fun refreshCodexSkills() { viewModelScope.launch { runCatching { chatService.refreshCodexSkills(_conversationId) } } }
     fun refreshCodexAccount() { viewModelScope.launch { runCatching { chatService.refreshCodexAccount(_conversationId) } } }
@@ -227,8 +229,7 @@ class ChatVM(
         if (content.isEmptyInputMessage() && skill == null) return
         if (skill != null && answer) {
             val prompt = content.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
-            chatService.sendCodexSkillMessage(_conversationId, skill, prompt)
-            _selectedCodexSkill.value = null
+            chatService.sendCodexSkillMessage(_conversationId, skill, prompt) { _selectedCodexSkill.value = null }
         } else chatService.sendMessage(_conversationId, content, answer)
     }
 

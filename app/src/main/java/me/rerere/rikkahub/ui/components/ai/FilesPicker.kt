@@ -100,6 +100,7 @@ internal fun FilesPicker(
     onUpdateConversation: (Conversation) -> Unit,
     hasCodexBinding: Boolean,
     onResetCodexSession: () -> Unit,
+    codexOperationBusy: Boolean,
     onOpenCodexControls: () -> Unit,
     showInjectionSheet: Boolean,
     onShowInjectionSheetChange: (Boolean) -> Unit,
@@ -207,7 +208,7 @@ internal fun FilesPicker(
         }
 
         if (hasCodexBinding) {
-            TextButton(onClick = { confirmCodexReset = true }) { Text("Reset Codex session") }
+            TextButton(onClick = { confirmCodexReset = true }, enabled = !codexOperationBusy) { Text("Reset Codex session") }
         }
 
         if (settings.mcpServers.isNotEmpty()) {

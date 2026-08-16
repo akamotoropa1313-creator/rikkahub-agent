@@ -265,6 +265,8 @@ class ChatService(
 
     fun getCodexCapabilitiesStateFlow(conversationId: Uuid): StateFlow<CodexCapabilitiesUiState> =
         getOrCreateSession(conversationId).codexCapabilities
+    fun getCodexOperationBusyFlow(conversationId: Uuid): StateFlow<Boolean> =
+        getOrCreateSession(conversationId).codexOperationBusy
 
     /**
      * Per-conversation mutex serialising state-mutating operations: handleToolApproval,
@@ -560,10 +562,10 @@ class ChatService(
     fun sendMessage(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean = true) =
         sendMessageInternal(conversationId, content, answer, null)
 
-    fun sendCodexSkillMessage(conversationId: Uuid, skill: CodexSkillMetadata, prompt: String) =
-        sendMessageInternal(conversationId, listOf(UIMessagePart.Text(codexSkillTranscript(skill, prompt))), true, skill)
+    fun sendCodexSkillMessage(conversationId: Uuid, skill: CodexSkillMetadata, prompt: String, onAccepted: () -> Unit = {}) =
+        sendMessageInternal(conversationId, listOf(UIMessagePart.Text(codexSkillTranscript(skill, prompt))), true, skill, onAccepted)
 
-    private fun sendMessageInternal(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean, explicitSkill: CodexSkillMetadata?) {
+    private fun sendMessageInternal(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean, explicitSkill: CodexSkillMetadata?, onAccepted: () -> Unit = {}) {
         if (content.isEmptyInputMessage() && explicitSkill == null) return
         var session = getOrCreateSession(conversationId)
         val releaseForegroundWork = foregroundWorkTracker.acquire()
@@ -607,6 +609,7 @@ class ChatService(
                 if (answer && assistant.codexAppServerEnabled) {
                     validateCodexPreflight(conversationId, conversation, assistant, content)
                 }
+                onAccepted()
                 val processedContent = preprocessUserInputParts(content, assistant)
                 val withUser = conversation.copy(
                     messageNodes = conversation.messageNodes + UIMessage(
@@ -788,6 +791,49 @@ class ChatService(
     suspend fun refreshCodexMcp(id: Uuid) = withCodexCapabilityLease(id) { it.refreshMcp() }
     suspend fun reloadCodexMcp(id: Uuid) = withCodexCapabilityLease(id) { it.reloadMcp() }
     suspend fun beginCodexMcpOAuth(id: Uuid, name: String, launcher: CodexAppServerAuthUrlLauncher) = withCodexCapabilityLease(id) { it.beginMcpOAuth(name, launcher) }
+
+    suspend fun reconnectCodexSession(conversationId: Uuid) {
+        val owner = getOrCreateSession(conversationId)
+        check(owner.tryBeginCodexOperation()) { "Another Codex operation is already running" }
+        try {
+            codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {
+                check(owner.codexRuntime == null) { "Codex is already connected" }
+                ensureHydrated(conversationId)
+                val conversation = owner.state.value
+                val assistant = settingsStore.settingsFlow.first().let { it.getAssistantById(conversation.assistantId) ?: it.getCurrentAssistant() }
+                val workspaceId = assistant.workspaceId?.toString() ?: error("Codex App Server requires a workspace")
+                val binding = checkNotNull(codexBindingRepository?.getBinding(conversationId.toString())) { "Send a Codex message first to create the conversation thread." }
+                if (binding.workspaceId != workspaceId || binding.workspaceCwd != conversation.workspaceCwd.orEmpty()) {
+                    owner.publishCodexState(CodexConversationUiState.WorkspaceMismatch(binding.workspaceId, workspaceId))
+                    error("Existing Codex binding belongs to another workspace/CWD")
+                }
+                owner.publishCodexState(CodexConversationUiState.Opening)
+                when (val opened = checkNotNull(codexSessionOpener).recoverBound(conversationId.toString())) {
+                    is CodexAppServerConversationSessionOpenResult.Recovered -> installCodexRuntime(conversationId, owner, opened.session)
+                    is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
+                        owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason.toString()))
+                        error("The existing Codex binding is stale")
+                    }
+                    is CodexAppServerConversationSessionOpenResult.Started -> error("Recovery-only reconnect unexpectedly started a thread")
+                }
+            }
+        } catch (failure: Throwable) {
+            if (owner.codexState.value is CodexConversationUiState.Opening) owner.publishCodexState(CodexConversationUiState.Failed(failure.message ?: "Reconnect failed"))
+            throw failure
+        } finally { owner.endCodexOperation() }
+    }
+
+    private fun installCodexRuntime(conversationId: Uuid, owner: ConversationSession, protocolSession: me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession): CodexChatRuntime {
+        lateinit var installed: CodexChatRuntime
+        installed = CodexChatRuntime(protocolSession, appScope,
+            onAgentText = { turnId, itemId, text -> persistCodexAgentText(conversationId, turnId, itemId, text) },
+            onTurnTerminal = { persistStreamingStateNow(conversationId, updateSearchIndex = true) },
+            onInterruptFailure = { addError(it, conversationId, title = "Codex interrupt failed") },
+            onFailure = { failed, cause -> appScope.launch { owner.publishCodexState(CodexConversationUiState.Failed(cause.message ?: cause.toString())); if (owner.detachCodexRuntime(failed)) failed.close() } },
+        )
+        owner.replaceCodexRuntime(installed)
+        return installed
+    }
 
     suspend fun resetCodexSession(conversationId: Uuid) {
         val owner = getOrCreateSession(conversationId)

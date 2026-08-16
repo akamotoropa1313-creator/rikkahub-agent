@@ -29,6 +29,8 @@ fun CodexControlSheet(
     onSetSkillEnabled: (CodexSkillMetadata, Boolean) -> Unit,
     onUseSkill: (CodexSkillMetadata) -> Unit,
     onMcpSignIn: (String) -> Unit,
+    operationBusy: Boolean,
+    onReconnect: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
@@ -36,7 +38,10 @@ fun CodexControlSheet(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { Text("Codex Control Center", style = MaterialTheme.typography.headlineSmall) }
-        item { Section("Connection") { Text(connectionLabel(connection, hasBinding)) } }
+        item { Section("Connection") {
+            Text(connectionLabel(connection, hasBinding))
+            if (connection is CodexConversationUiState.Disconnected && hasBinding) Button(onClick = onReconnect, enabled = !operationBusy) { Text("Reconnect Codex") }
+        } }
         item {
             Section("Account") {
                 CodexAccountCard(
@@ -44,7 +49,7 @@ fun CodexControlSheet(
                     loginPending = capabilities.pendingLoginId != null,
                     onSignIn = onSignIn, onCancelSignIn = onCancelSignIn,
                     onRefresh = onRefreshAccount, onLogout = onLogout,
-                    enabled = capabilities.connected && !capabilities.accountLoading,
+                    enabled = capabilities.connected && !capabilities.accountLoading && !operationBusy,
                     submitting = capabilities.accountSubmitting,
                     statusMessage = capabilities.accountError ?: capabilities.accountStatus,
                 )
@@ -53,7 +58,7 @@ fun CodexControlSheet(
         item {
             Section("Codex Skills") {
                 Text("${capabilities.skillGroups.sumOf { it.skills.size }} skills")
-                Button(onClick = onRefreshSkills, enabled = capabilities.connected && !capabilities.skillsLoading) { Text("Refresh") }
+                Button(onClick = onRefreshSkills, enabled = capabilities.connected && !capabilities.skillsLoading && !operationBusy) { Text("Refresh") }
                 capabilities.skillsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
@@ -65,8 +70,8 @@ fun CodexControlSheet(
                     supportingContent = { Text(skill.shortDescription ?: skill.description, maxLines = 2, overflow = TextOverflow.Ellipsis) },
                     trailingContent = {
                         Row {
-                            TextButton(onClick = { onSetSkillEnabled(skill, !skill.enabled) }, enabled = capabilities.skillUpdatingPath == null) { Text(if (skill.enabled) "Disable" else "Enable") }
-                            TextButton(onClick = { onUseSkill(skill) }, enabled = skill.enabled) { Text("Use") }
+                            TextButton(onClick = { onSetSkillEnabled(skill, !skill.enabled) }, enabled = capabilities.skillUpdatingPath == null && !operationBusy) { Text(if (skill.enabled) "Disable" else "Enable") }
+                            TextButton(onClick = { onUseSkill(skill) }, enabled = skill.enabled && !operationBusy) { Text("Use") }
                         }
                     },
                 )
@@ -76,8 +81,8 @@ fun CodexControlSheet(
         item {
             Section("Codex MCP") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onRefreshMcp, enabled = capabilities.connected && !capabilities.mcpLoading) { Text("Refresh") }
-                    OutlinedButton(onClick = onReloadMcp, enabled = capabilities.connected && !capabilities.mcpLoading) { Text("Reload MCP") }
+                    Button(onClick = onRefreshMcp, enabled = capabilities.connected && !capabilities.mcpLoading && !operationBusy) { Text("Refresh") }
+                    OutlinedButton(onClick = onReloadMcp, enabled = capabilities.connected && !capabilities.mcpLoading && !operationBusy) { Text("Reload MCP") }
                 }
                 capabilities.mcpError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
@@ -86,7 +91,7 @@ fun CodexControlSheet(
             ListItem(
                 headlineContent = { Text(server.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 supportingContent = { Text("${server.authStatus.wireValue} · ${server.tools.size} tools · ${server.resources.size} resources") },
-                trailingContent = { if (server.authStatus is CodexMcpAuthStatus.NotLoggedIn) TextButton(onClick = { onMcpSignIn(server.name) }, enabled = capabilities.pendingMcpServer == null) { Text("Sign in") } },
+                trailingContent = { if (server.authStatus is CodexMcpAuthStatus.NotLoggedIn) TextButton(onClick = { onMcpSignIn(server.name) }, enabled = capabilities.pendingMcpServer == null && !operationBusy) { Text("Sign in") } },
             )
         }
     }
