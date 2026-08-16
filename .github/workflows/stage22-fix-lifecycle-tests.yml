@@ -1,0 +1,68 @@
+name: Stage22 one-shot lifecycle test fix
+
+on:
+  push:
+    branches:
+      - codex/-stage22
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/-stage22
+          fetch-depth: 0
+      - name: Fix deterministic review test fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          runtime = Path('app/src/test/java/me/rerere/rikkahub/service/CodexReviewRuntimeTest.kt')
+          text = runtime.read_text()
+          replacements = [
+              ('import kotlinx.coroutines.CoroutineScope\n', 'import kotlinx.coroutines.CoroutineScope\nimport kotlinx.coroutines.CoroutineStart\nimport kotlinx.coroutines.async\n'),
+              ('import me.rerere.rikkahub.data.codex.appserver.CodexAppServerLocalState\n', 'import me.rerere.rikkahub.data.codex.appserver.CodexAppServerLocalState\nimport me.rerere.rikkahub.data.codex.appserver.CodexAppServerJsonRpc\n'),
+              ('import me.rerere.rikkahub.data.codex.appserver.JsonRpcId\n', 'import me.rerere.rikkahub.data.codex.appserver.JsonRpcId\nimport me.rerere.rikkahub.data.codex.appserver.JsonRpcMessage\nimport me.rerere.rikkahub.data.codex.appserver.JsonRpcResponse\n'),
+              ('    private fun harness(\n', '    private suspend fun harness(\n'),
+              ('        val session = CodexAppServerConversationSession(binding, connection, repository)\n        return Harness(CodexChatRuntime(session, scope, onAgentText = onAgentText), transport)\n', '''        val codec = CodexAppServerJsonRpc()\n        val initializing = scope.async(start = CoroutineStart.UNDISPATCHED) { connection.initialize() }\n        val initRequest = (codec.decode(transport.takeClientLine()).getOrThrow() as JsonRpcMessage.Request).value\n        transport.emit(codec.encode(JsonRpcResponse(initRequest.id, buildJsonObject {\n            put("userAgent", "fake")\n            put("codexHome", "/tmp")\n            put("platformFamily", "unix")\n            put("platformOs", "linux")\n        })))\n        initializing.await()\n        transport.takeClientLine() // initialized notification\n\n        val session = CodexAppServerConversationSession(binding, connection, repository)\n        return Harness(CodexChatRuntime(session, scope, onAgentText = onAgentText), transport)\n'''),
+              ('        private val inbound = Channel<CodexAppServerTransportEvent>(Channel.UNLIMITED)\n        override val events: Flow<CodexAppServerTransportEvent> = inbound.receiveAsFlow()\n        override suspend fun sendLine(line: String) = Unit\n        suspend fun emit(line: String) { inbound.send(CodexAppServerTransportEvent.Line(line)) }\n', '''        private val inbound = Channel<CodexAppServerTransportEvent>(Channel.UNLIMITED)\n        private val outbound = Channel<String>(Channel.UNLIMITED)\n        override val events: Flow<CodexAppServerTransportEvent> = inbound.receiveAsFlow()\n        override suspend fun sendLine(line: String) { outbound.send(line) }\n        suspend fun takeClientLine(): String = outbound.receive()\n        suspend fun emit(line: String) { inbound.send(CodexAppServerTransportEvent.Line(line)) }\n'''),
+              ('            inbound.close()\n', '            inbound.close()\n            outbound.close()\n'),
+          ]
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'RuntimeTest replacement expected once, found {count}: {old[:80]!r}')
+              text = text.replace(old, new, 1)
+          runtime.write_text(text)
+
+          race = Path('app/src/test/java/me/rerere/rikkahub/service/CodexReviewStartRaceTest.kt')
+          text = race.read_text()
+          old = 'import kotlinx.coroutines.CoroutineScope\n'
+          if text.count(old) != 1:
+              raise SystemExit('RaceTest CoroutineScope import mismatch')
+          text = text.replace(old, old + 'import kotlinx.coroutines.CoroutineStart\n', 1)
+          old = 'val call = async {'
+          if text.count(old) != 3:
+              raise SystemExit(f'RaceTest review-call count mismatch: {text.count(old)}')
+          text = text.replace(old, 'val call = async(start = CoroutineStart.UNDISPATCHED) {')
+          old = 'val initializing = scope.async { connection.initialize() }'
+          if text.count(old) != 1:
+              raise SystemExit('RaceTest initialize call mismatch')
+          text = text.replace(old, 'val initializing = scope.async(start = CoroutineStart.UNDISPATCHED) { connection.initialize() }', 1)
+          race.write_text(text)
+          PY
+          rm .github/workflows/stage22-fix-lifecycle-tests.yml
+          git diff --check
+          git diff -- app/src/test/java/me/rerere/rikkahub/service/CodexReviewRuntimeTest.kt app/src/test/java/me/rerere/rikkahub/service/CodexReviewStartRaceTest.kt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/test/java/me/rerere/rikkahub/service/CodexReviewRuntimeTest.kt app/src/test/java/me/rerere/rikkahub/service/CodexReviewStartRaceTest.kt .github/workflows/stage22-fix-lifecycle-tests.yml
+          git commit -m 'test(codex): make review lifecycle fixtures deterministic'
+          git push origin HEAD:codex/-stage22
