@@ -77,6 +77,7 @@ import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
+import me.rerere.rikkahub.ui.components.codex.CodexControlSheet
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.useCropLauncher
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
@@ -295,6 +296,10 @@ private fun ChatPageContent(
     val hazeState = rememberHazeState()
     val assistant = setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
     var showFilesSheet by remember { mutableStateOf(false) }
+    var showCodexControls by remember { mutableStateOf(false) }
+    val codexCapabilities by vm.codexCapabilities.collectAsStateWithLifecycle()
+    val codexOperationBusy by vm.codexOperationBusy.collectAsStateWithLifecycle()
+    val selectedCodexSkill by vm.selectedCodexSkill.collectAsStateWithLifecycle()
 
     val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
         assistant.workspaceId?.let { workspaceId ->
@@ -335,6 +340,10 @@ private fun ChatPageContent(
                 )
             },
             bottomBar = {
+                Column {
+                    selectedCodexSkill?.let { skill ->
+                        TextButton(onClick = { vm.selectCodexSkill(null) }) { Text("${skill.name}  ×") }
+                    }
                 ChatInput(
                     state = inputState,
                     loading = loadingJob != null,
@@ -421,6 +430,7 @@ private fun ChatPageContent(
                         showFilesSheet = true
                     },
                 )
+                }
             },
             containerColor = Color.Transparent,
         ) { innerPadding ->
@@ -513,7 +523,14 @@ private fun ChatPageContent(
                 hasCodexBinding = hasCodexBinding,
                 vm = vm,
                 onDismiss = { showFilesSheet = false },
+                onOpenCodexControls = { showFilesSheet = false; showCodexControls = true },
+                codexOperationBusy = codexOperationBusy,
             )
+        }
+        if (showCodexControls) {
+            ModalBottomSheet(onDismissRequest = { showCodexControls = false }) {
+                CodexControlSheet(codexState, codexCapabilities, hasCodexBinding, vm::refreshCodexAccount, vm::refreshCodexSkills, vm::refreshCodexMcp, vm::reloadCodexMcp, vm::beginCodexAccountLogin, vm::cancelCodexAccountLogin, vm::logoutCodexAccount, vm::setCodexSkillEnabled, { vm.selectCodexSkill(it); showCodexControls = false }, vm::beginCodexMcpOAuth, codexOperationBusy, vm::reconnectCodexSession)
+            }
         }
     }
 }
@@ -527,6 +544,8 @@ private fun ChatFilesPickerSheet(
     hasCodexBinding: Boolean,
     vm: ChatVM,
     onDismiss: () -> Unit,
+    onOpenCodexControls: () -> Unit,
+    codexOperationBusy: Boolean,
 ) {
     val context = LocalContext.current
     val toaster = LocalToaster.current
@@ -708,6 +727,8 @@ private fun ChatFilesPickerSheet(
             },
             hasCodexBinding = hasCodexBinding,
             onResetCodexSession = vm::resetCodexSession,
+            codexOperationBusy = codexOperationBusy,
+            onOpenCodexControls = onOpenCodexControls,
             onUpdateConversation = {
                 vm.updateConversation(it)
                 vm.saveConversationAsync()

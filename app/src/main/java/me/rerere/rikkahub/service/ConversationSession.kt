@@ -79,8 +79,10 @@ class ConversationSession(
     }
     fun releaseIdleEvictionClaim() = synchronized(sendTrackingLock) { evictionClaimed = false }
     private val codexOperationActive = AtomicBoolean(false)
-    fun tryBeginCodexOperation(): Boolean = codexOperationActive.compareAndSet(false, true)
-    fun endCodexOperation() { codexOperationActive.set(false) }
+    private val _codexOperationBusy = MutableStateFlow(false)
+    val codexOperationBusy: StateFlow<Boolean> = _codexOperationBusy.asStateFlow()
+    fun tryBeginCodexOperation(): Boolean = codexOperationActive.compareAndSet(false, true).also { if (it) _codexOperationBusy.value = true }
+    fun endCodexOperation() { codexOperationActive.set(false); _codexOperationBusy.value = false }
     val isCodexOperationActive: Boolean get() = codexOperationActive.get()
 
     // 空闲检查任务
@@ -89,18 +91,28 @@ class ConversationSession(
     @Volatile var codexRuntime: CodexChatRuntime? = null
         private set
     private var codexStateJob: Job? = null
+    private var codexCapabilitiesJob: Job? = null
     private val _codexState = MutableStateFlow<CodexConversationUiState>(CodexConversationUiState.Disconnected)
     val codexState: StateFlow<CodexConversationUiState> = _codexState.asStateFlow()
+    private val _codexCapabilities = MutableStateFlow(CodexCapabilitiesUiState())
+    val codexCapabilities: StateFlow<CodexCapabilitiesUiState> = _codexCapabilities.asStateFlow()
 
     @Synchronized fun replaceCodexRuntime(runtime: CodexChatRuntime?) {
         val previous = codexRuntime
         codexRuntime = runtime
         codexStateJob?.cancel()
+        codexCapabilitiesJob?.cancel()
         codexStateJob = runtime?.let { installed ->
             scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
                 installed.state.collect { _codexState.value = it }
             }
         }
+        codexCapabilitiesJob = runtime?.let { installed ->
+            scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                installed.capabilities.collect { _codexCapabilities.value = it }
+            }
+        }
+        if (runtime == null) _codexCapabilities.value = CodexCapabilitiesUiState()
         if (runtime == null && previous == null) _codexState.value = CodexConversationUiState.Disconnected
         if (previous !== runtime) previous?.close()
     }
@@ -110,6 +122,9 @@ class ConversationSession(
         codexRuntime = null
         codexStateJob?.cancel()
         codexStateJob = null
+        codexCapabilitiesJob?.cancel()
+        codexCapabilitiesJob = null
+        _codexCapabilities.value = CodexCapabilitiesUiState()
         if (!preserveState) _codexState.value = CodexConversationUiState.Disconnected
         return true
     }

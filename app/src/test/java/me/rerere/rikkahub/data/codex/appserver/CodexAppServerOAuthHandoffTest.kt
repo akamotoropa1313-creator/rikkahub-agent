@@ -45,6 +45,21 @@ class CodexAppServerOAuthHandoffTest {
         } }
     }
 
+    @Test fun `invalid auth URL after start preserves exact login id without leaking URL`() = runBlocking {
+        supervisorScope { fixture().use { f ->
+            val handoff = CodexAppServerOAuthHandoff(f.api) { fail("launcher must not run for invalid URL") }
+            val call = async { handoff.beginChatGptLogin() }; val request = f.takeRequest()
+            val url = "http://example.test/auth?secret=never-log"
+            f.respond(request, loginResult("login-invalid-url", url))
+            val error = expect<CodexAppServerLoginHandoffException> { call.await() }
+            assertEquals("login-invalid-url", error.loginId)
+            assertFalse(error.toString().contains(url))
+            assertTrue(error.cause is CodexAppServerInvalidAuthUrlException)
+            assertEquals(3, f.transport.successfulWriteCount())
+            assertTrue(f.connection.state.value is CodexAppServerConnectionState.Ready)
+        } }
+    }
+
     @Test fun `launcher cancellation propagates unchanged without side effects`() = runBlocking {
         supervisorScope { fixture().use { f ->
             val cancellation = CancellationException("caller cancelled")
@@ -60,9 +75,9 @@ class CodexAppServerOAuthHandoffTest {
     }
 
     @Test fun `url policy permits https and loopback only without rewriting`() {
-        listOf("https://example.test/auth?state=secret", "http://localhost:1455/callback", "http://127.0.0.1/x", "http://[::1]/x").forEach(::validateAuthUrl)
+        listOf("https://example.test/auth?state=secret", "http://localhost:1455/callback", "http://127.0.0.1/x", "http://[::1]/x").forEach(::validateCodexAppServerAuthUrl)
         listOf("not a url", "/relative", "rikkahub://oauth", "http://example.test/auth").forEach { value ->
-            expectSync<CodexAppServerInvalidAuthUrlException> { validateAuthUrl(value) }
+            expectSync<CodexAppServerInvalidAuthUrlException> { validateCodexAppServerAuthUrl(value) }
         }
     }
 

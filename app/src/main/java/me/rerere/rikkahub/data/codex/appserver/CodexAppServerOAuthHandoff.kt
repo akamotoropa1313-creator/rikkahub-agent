@@ -14,7 +14,15 @@ class CodexAppServerOAuthHandoff(
     suspend fun beginChatGptLogin(): CodexAppServerPendingChatGptLogin {
         val started = accountApi.startChatGptLogin()
         val authUrl = started.authUrlForLaunch()
-        validateAuthUrl(authUrl)
+        try {
+            validateCodexAppServerAuthUrl(authUrl)
+        } catch (cause: CodexAppServerInvalidAuthUrlException) {
+            throw CodexAppServerLoginHandoffException(
+                started.loginId,
+                "Unable to use the ChatGPT sign-in URL; the pending login may be canceled explicitly",
+                cause,
+            )
+        }
         try {
             launcher.launch(authUrl)
         } catch (cancelled: CancellationException) {
@@ -26,11 +34,21 @@ class CodexAppServerOAuthHandoff(
     }
 }
 
-class CodexAppServerInvalidAuthUrlException(message: String) : IllegalArgumentException(message)
-class CodexAppServerBrowserLaunchException(val loginId: String, cause: Throwable) :
-    Exception("Unable to open ChatGPT sign-in; the pending login may be canceled explicitly", cause)
+open class CodexAppServerLoginHandoffException(
+    val loginId: String,
+    message: String,
+    cause: Throwable,
+) : Exception(message, cause)
 
-internal fun validateAuthUrl(value: String) {
+class CodexAppServerInvalidAuthUrlException(message: String) : IllegalArgumentException(message)
+class CodexAppServerBrowserLaunchException(loginId: String, cause: Throwable) :
+    CodexAppServerLoginHandoffException(
+        loginId,
+        "Unable to open ChatGPT sign-in; the pending login may be canceled explicitly",
+        cause,
+    )
+
+fun validateCodexAppServerAuthUrl(value: String) {
     val uri = try { URI(value) } catch (_: Exception) { throw CodexAppServerInvalidAuthUrlException("Malformed authentication URL") }
     if (!uri.isAbsolute || uri.host == null) throw CodexAppServerInvalidAuthUrlException("Authentication URL must be absolute")
     val scheme = uri.scheme.lowercase()

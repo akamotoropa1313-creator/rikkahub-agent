@@ -100,6 +100,8 @@ internal fun FilesPicker(
     onUpdateConversation: (Conversation) -> Unit,
     hasCodexBinding: Boolean,
     onResetCodexSession: () -> Unit,
+    codexOperationBusy: Boolean,
+    onOpenCodexControls: () -> Unit,
     showInjectionSheet: Boolean,
     onShowInjectionSheetChange: (Boolean) -> Unit,
     showCompressDialog: Boolean,
@@ -196,8 +198,17 @@ internal fun FilesPicker(
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         )
 
+        if (assistant.codexAppServerEnabled) {
+            ListItem(
+                headlineContent = { Text("Codex controls") },
+                supportingContent = { Text("Connection, Account, Codex Skills, and Codex MCP") },
+                modifier = Modifier.clip(MaterialTheme.shapes.large).clickable { onOpenCodexControls() },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            )
+        }
+
         if (hasCodexBinding) {
-            TextButton(onClick = { confirmCodexReset = true }) { Text("Reset Codex session") }
+            TextButton(onClick = { confirmCodexReset = true }, enabled = !codexOperationBusy) { Text("Reset Codex session") }
         }
 
         if (settings.mcpServers.isNotEmpty()) {

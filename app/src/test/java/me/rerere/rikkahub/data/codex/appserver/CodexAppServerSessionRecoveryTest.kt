@@ -109,6 +109,23 @@ class CodexAppServerSessionRecoveryTest {
         session.close()
     }
 
+    @Test fun `recover-only opener resumes exact binding and never starts a thread`() = runBlocking {
+        val transport = FakeCodexAppServerTransport(); val connection = connection(transport)
+        var factoryCalls = 0
+        val creator = CodexAppServerConnectionCreator { _, _ -> factoryCalls++; connection }
+        val f = Fixture(creator = creator); f.bind()
+        val opener = CodexAppServerConversationSessionOpener(f.repo, f.local, creator, f.recovery)
+        val opening = async { opener.recoverBound("a") }
+        respondInitialize(transport)
+        val resume = Json.parseToJsonElement(transport.takeClientLine()).jsonObject
+        assertEquals("thread/resume", resume["method"]?.jsonPrimitive?.content)
+        transport.injectServerLine("""{"id":${resume["id"]},"result":{"thread":{"id":"thread-1"},"model":"m","modelProvider":"p","cwd":"src"}}""")
+        val recovered = opening.await() as CodexAppServerConversationSessionOpenResult.Recovered
+        assertEquals("thread-1", recovered.session.threadId)
+        assertEquals(1, factoryCalls)
+        recovered.session.close()
+    }
+
     @Test fun `conversation opener recovers existing binding without thread start`() = runBlocking {
         val transport = FakeCodexAppServerTransport(); val connection = connection(transport)
         val f = Fixture(creator = CodexAppServerConnectionCreator { _, _ -> connection }); f.bind()

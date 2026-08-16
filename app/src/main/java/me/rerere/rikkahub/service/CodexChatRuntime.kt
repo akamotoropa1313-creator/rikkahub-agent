@@ -20,6 +20,7 @@ import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerItemSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnEvent
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnStatus
+import me.rerere.rikkahub.data.codex.appserver.*
 
 /** Conversation-owned application adapter around the single Stage 13 protocol session. */
 class CodexChatRuntime(
@@ -50,6 +51,141 @@ class CodexChatRuntime(
     private val stopController = CodexTurnStopController()
     private val approvalResponses = ConcurrentHashMap.newKeySet<JsonRpcId>()
     @Volatile private var activeTurnId: String? = null
+    private val capabilityBusy = AtomicBoolean(false)
+    private val _capabilities = MutableStateFlow(CodexCapabilitiesUiState(connected = true))
+    val capabilities: StateFlow<CodexCapabilitiesUiState> = _capabilities.asStateFlow()
+
+    private val accountLoginCorrelation = CodexAccountLoginCorrelation()
+    private val accountCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+        session.accountApi.events.collect { event ->
+            when (event) {
+                is CodexAppServerAccountEvent.LoginCompleted ->
+                    accountLoginCorrelation.onCompletion(event) { completion ->
+                        _capabilities.value = applyAccountLoginCompletion(_capabilities.value, completion)
+                    }
+                is CodexAppServerAccountEvent.MalformedNotification ->
+                    _capabilities.value = _capabilities.value.copy(accountError = event.cause.message ?: "Malformed account event")
+                is CodexAppServerAccountEvent.Updated -> Unit
+            }
+        }
+    }
+    private val mcpCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+        session.mcpApi.events.collect { event ->
+            when (event) {
+                is CodexAppServerMcpEvent.OAuthLoginCompleted ->
+                    _capabilities.value = applyMcpOAuthCompletion(_capabilities.value, event)
+                is CodexAppServerMcpEvent.MalformedNotification ->
+                    _capabilities.value = _capabilities.value.copy(mcpError = event.cause.message ?: "Malformed MCP event")
+                is CodexAppServerMcpEvent.ToolCallProgress -> Unit
+            }
+        }
+    }
+
+    private suspend fun capabilityOperation(block: suspend () -> Unit) {
+        check(activeTurnId == null) { "A Codex turn is already running" }
+        check(capabilityBusy.compareAndSet(false, true)) { "Another Codex operation is already running" }
+        try { block() } finally { capabilityBusy.set(false) }
+    }
+
+    suspend fun refreshSkills(forceReload: Boolean = true) = capabilityOperation {
+        _capabilities.value = _capabilities.value.copy(skillsLoading = true, skillsError = null)
+        runCatching { session.skillsApi.list(cwds = emptyList(), forceReload = forceReload) }
+            .onSuccess { _capabilities.value = _capabilities.value.copy(skillsLoading = false, skillGroups = it.data) }
+            .onFailure { _capabilities.value = _capabilities.value.copy(skillsLoading = false, skillsError = it.safeMessage()); throw it }
+    }
+
+    suspend fun setSkillEnabled(skill: CodexSkillMetadata, enabled: Boolean) = capabilityOperation {
+        _capabilities.value = _capabilities.value.copy(skillUpdatingPath = skill.path, skillsError = null)
+        try {
+            val effective = session.skillsApi.writeConfig(enabled = enabled, path = skill.path).effectiveEnabled
+            _capabilities.value = _capabilities.value.copy(skillGroups = _capabilities.value.skillGroups.map { group ->
+                group.copy(skills = group.skills.map { if (it.path == skill.path) it.copy(enabled = effective) else it })
+            })
+        } catch (failure: Throwable) {
+            _capabilities.value = _capabilities.value.copy(skillsError = failure.safeMessage()); throw failure
+        } finally { _capabilities.value = _capabilities.value.copy(skillUpdatingPath = null) }
+    }
+
+    suspend fun refreshAccount(refreshToken: Boolean = false) = capabilityOperation {
+        _capabilities.value = _capabilities.value.copy(accountLoading = true, accountError = null)
+        try { _capabilities.value = _capabilities.value.copy(account = session.accountApi.readAccount(refreshToken)) }
+        catch (failure: Throwable) { _capabilities.value = _capabilities.value.copy(accountError = failure.safeMessage()); throw failure }
+        finally { _capabilities.value = _capabilities.value.copy(accountLoading = false) }
+    }
+
+    suspend fun beginAccountLogin(launcher: CodexAppServerAuthUrlLauncher) = capabilityOperation {
+        accountLoginCorrelation.beginAttempt {
+            _capabilities.value = _capabilities.value.copy(accountSubmitting = true, accountError = null)
+        }
+        try {
+            val pending = CodexAppServerOAuthHandoff(session.accountApi, launcher).beginChatGptLogin()
+            accountLoginCorrelation.resolveStart(
+                pending.loginId,
+                onCompletion = { completion ->
+                    _capabilities.value = applyAccountLoginCompletion(_capabilities.value, completion)
+                },
+                onPending = { loginId ->
+                    _capabilities.value = _capabilities.value.copy(pendingLoginId = loginId)
+                },
+            )
+        } catch (failure: CodexAppServerLoginHandoffException) {
+            accountLoginCorrelation.resolveStart(
+                failure.loginId,
+                onCompletion = { completion ->
+                    _capabilities.value = applyAccountLoginCompletion(_capabilities.value, completion)
+                },
+                onPending = { loginId ->
+                    _capabilities.value = _capabilities.value.copy(pendingLoginId = loginId, accountError = failure.safeMessage())
+                },
+            )
+            throw failure
+        } catch (failure: Throwable) {
+            accountLoginCorrelation.abortAttempt {
+                _capabilities.value = _capabilities.value.copy(accountError = failure.safeMessage())
+            }
+            throw failure
+        } finally { _capabilities.value = _capabilities.value.copy(accountSubmitting = false) }
+    }
+
+    suspend fun cancelAccountLogin() = capabilityOperation {
+        val id = checkNotNull(_capabilities.value.pendingLoginId) { "No pending Codex sign-in" }
+        session.accountApi.cancelLogin(id)
+        _capabilities.value = _capabilities.value.copy(pendingLoginId = null, accountStatus = "Sign-in canceled")
+    }
+    suspend fun logoutAccount() = capabilityOperation {
+        session.accountApi.logout()
+        _capabilities.value = _capabilities.value.copy(account = session.accountApi.readAccount(), pendingLoginId = null, accountStatus = "Signed out")
+    }
+
+    suspend fun refreshMcp() = capabilityOperation { refreshMcpPages() }
+    suspend fun reloadMcp() = capabilityOperation { session.mcpApi.reload(); refreshMcpPages() }
+    private suspend fun refreshMcpPages() {
+        _capabilities.value = _capabilities.value.copy(mcpLoading = true, mcpError = null)
+        try {
+            val statuses = mutableListOf<CodexMcpServerStatus>(); val seen = mutableSetOf<String>(); var cursor: String? = null
+            do {
+                val page = session.mcpApi.listStatus(cursor = cursor, detail = CodexMcpServerStatusDetail.ToolsAndAuthOnly, threadId = session.threadId)
+                statuses += page.data
+                cursor = page.nextCursor
+                check(cursor == null || seen.add(cursor)) { "MCP status pagination repeated a cursor" }
+                check(seen.size <= 100) { "MCP status pagination exceeded 100 pages" }
+            } while (cursor != null)
+            _capabilities.value = _capabilities.value.copy(mcpServers = statuses)
+        } catch (failure: Throwable) { _capabilities.value = _capabilities.value.copy(mcpError = failure.safeMessage()); throw failure }
+        finally { _capabilities.value = _capabilities.value.copy(mcpLoading = false) }
+    }
+    suspend fun beginMcpOAuth(name: String, launcher: CodexAppServerAuthUrlLauncher) = capabilityOperation {
+        _capabilities.value = _capabilities.value.copy(mcpError = null)
+        try {
+            runCodexMcpOAuthBegin(name, { pending -> _capabilities.value = _capabilities.value.copy(pendingMcpServer = pending) }) {
+                val result = session.mcpApi.beginOAuthLogin(name, threadId = session.threadId)
+                result.authorizationUrlForLaunch().also(::validateCodexAppServerAuthUrl).let(launcher::launch)
+            }
+        } catch (failure: Throwable) {
+            _capabilities.value = _capabilities.value.copy(mcpError = failure.safeMessage())
+            throw failure
+        }
+    }
 
     private fun record(turnId: String) = turns.computeIfAbsent(turnId) { TurnRecord() }
 
@@ -247,9 +383,52 @@ class CodexChatRuntime(
         collector.cancel()
         failureCollector.cancel()
         approvalCollector.cancel()
+        accountCollector.cancel()
+        mcpCollector.cancel()
+        _capabilities.value = CodexCapabilitiesUiState(connected = false)
         session.close()
     }
 }
+
+data class CodexCapabilitiesUiState(
+    val connected: Boolean = false,
+    val skillsLoading: Boolean = false,
+    val skillGroups: List<CodexSkillsListEntry> = emptyList(),
+    val skillUpdatingPath: String? = null,
+    val skillsError: String? = null,
+    val accountLoading: Boolean = false,
+    val accountSubmitting: Boolean = false,
+    val account: CodexAppServerAccountSnapshot? = null,
+    val pendingLoginId: String? = null,
+    val accountStatus: String? = null,
+    val accountError: String? = null,
+    val mcpLoading: Boolean = false,
+    val mcpServers: List<CodexMcpServerStatus> = emptyList(),
+    val pendingMcpServer: String? = null,
+    val mcpStatus: String? = null,
+    val mcpError: String? = null,
+)
+
+internal fun applyMcpOAuthCompletion(state: CodexCapabilitiesUiState, event: CodexAppServerMcpEvent.OAuthLoginCompleted): CodexCapabilitiesUiState {
+    if (state.pendingMcpServer != event.name) return state
+    return state.copy(
+        pendingMcpServer = null,
+        mcpStatus = if (event.success) "${event.name} sign-in completed" else event.error ?: "${event.name} sign-in failed",
+        mcpError = event.error,
+    )
+}
+
+internal fun applyAccountLoginCompletion(state: CodexCapabilitiesUiState, event: CodexAppServerAccountEvent.LoginCompleted): CodexCapabilitiesUiState {
+    val pending = state.pendingLoginId
+    if (event.loginId != null && pending != null && event.loginId != pending) return state
+    return state.copy(
+        pendingLoginId = null,
+        accountStatus = if (event.success) "Sign-in completed" else event.error ?: "Sign-in failed",
+        accountError = event.error,
+    )
+}
+
+private fun Throwable.safeMessage(): String = message?.replace(Regex("https?://\\S+"), "<redacted>") ?: this::class.simpleName.orEmpty()
 
 internal class CodexTurnStopController {
     private val stopRequested = AtomicBoolean(false)

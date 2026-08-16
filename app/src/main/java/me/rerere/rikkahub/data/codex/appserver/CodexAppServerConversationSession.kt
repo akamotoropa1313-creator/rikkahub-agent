@@ -143,6 +143,17 @@ class CodexAppServerConversationSessionOpener(
     private val connectionFactory: CodexAppServerConnectionCreator,
     private val recovery: CodexAppServerSessionRecovery,
 ) {
+    /** Recovery-only entry point: never creates a thread or binding. */
+    suspend fun recoverBound(conversationId: String): CodexAppServerConversationSessionOpenResult {
+        require(conversationId.isNotBlank())
+        val binding = repository.getBinding(conversationId) ?: error("Codex conversation is not bound")
+        return when (val recovered = recovery.recover(conversationId)) {
+            CodexAppServerSessionRecoveryResult.NotBound -> error("Binding disappeared while reconnecting")
+            is CodexAppServerSessionRecoveryResult.Recovered -> CodexAppServerConversationSessionOpenResult.Recovered(recovered.session)
+            is CodexAppServerSessionRecoveryResult.StaleBinding -> CodexAppServerConversationSessionOpenResult.StaleBinding(recovered.binding, recovered.reason)
+        }
+    }
+
     suspend fun open(
         conversationId: String,
         workspaceId: String,
