@@ -116,6 +116,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSessionOpenResult
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams
+import me.rerere.rikkahub.data.codex.appserver.serviceTierIds
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnInput
 import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability
 import me.rerere.rikkahub.data.codex.appserver.codexInputCapability
@@ -720,7 +721,7 @@ class ChatService(
             }.ifBlank { null }
             val threadPersonality = assistant.codexPersonality?.let { CodexAppServerPersonality.valueOf(it.name) }
             when (val opened = opener.open(conversationId.toString(), workspaceId, cwd,
-                CodexAppServerThreadStartParams(model = assistant.codexModel,
+                CodexAppServerThreadStartParams(model = assistant.codexModel, serviceTier = assistant.codexServiceTier,
                     developerInstructions = instructions, personality = threadPersonality))) {
                 is CodexAppServerConversationSessionOpenResult.Started -> opened.session
                 is CodexAppServerConversationSessionOpenResult.Recovered -> opened.session
@@ -777,10 +778,15 @@ class ChatService(
         else loadedCatalog?.firstOrNull { it.isDefault }
         val personality = assistant.codexPersonality?.let { CodexAppServerPersonality.valueOf(it.name) }
             ?.takeIf { selectedCatalogModel?.supportsPersonality == true }
+        val serviceTier = assistant.codexServiceTier?.let { saved ->
+            if (saved == "default" || selectedCatalogModel == null || saved in selectedCatalogModel.serviceTierIds()) saved
+            else "default"
+        }
         val params = CodexAppServerTurnStartParams(
             model = assistant.codexModel,
             effort = assistant.codexReasoningEffort,
             summary = assistant.codexReasoningSummary?.let { CodexAppServerReasoningSummary.valueOf(it.name) },
+            serviceTier = serviceTier,
             personality = personality,
         )
         val result = acceptCodexSkillAfterStart({ runtime.session.startTurn(input, params) }, onAccepted)

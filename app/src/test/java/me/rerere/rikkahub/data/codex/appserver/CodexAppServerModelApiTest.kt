@@ -68,6 +68,27 @@ class CodexAppServerModelApiTest {
     }
 
     @Test
+    fun `service tier metadata preserves modern and legacy open strings`() = runBlocking<Unit> {
+        fixture().use { f ->
+            val call = async { f.api.list() }
+            val tiers = JsonArray(listOf(
+                buildJsonObject { put("id", "priority"); put("name", "Fast"); put("description", "Faster") },
+                buildJsonObject { put("id", "future-tier"); put("name", "Future"); put("description", "Unknown remains open") },
+            ))
+            var response = page(null).replaceModelField("serviceTiers", tiers)
+            response = response.replaceModelField("defaultServiceTier", JsonPrimitive("future-tier"))
+            response = response.replaceModelField("additionalSpeedTiers", JsonArray(listOf(JsonPrimitive("fast"))))
+            f.respond(f.request(), response)
+            val model = call.await().data.single()
+            assertEquals(listOf("priority", "future-tier"), model.serviceTiers!!.map { it.id })
+            assertEquals("Fast", model.serviceTiers!!.first().name)
+            assertEquals("future-tier", model.defaultServiceTier)
+            assertEquals(listOf("fast"), model.additionalSpeedTiers)
+            assertEquals(tiers, model.raw["serviceTiers"])
+        }
+    }
+
+    @Test
     fun `visible pagination preserves server page and effort ordering`() = runBlocking<Unit> {
         fixture().use { f ->
             val call = async { f.api.listAllVisible() }
@@ -116,6 +137,11 @@ class CodexAppServerModelApiTest {
                 page(null).replaceModelField("hidden", JsonPrimitive("false")),
                 page(null).replaceModelField("supportedReasoningEfforts", JsonPrimitive("bad")),
                 page(null).replaceEffortField("reasoningEffort", JsonPrimitive(7)),
+                page(null).replaceModelField("serviceTiers", JsonPrimitive("bad")),
+                page(null).replaceModelField("serviceTiers", JsonArray(listOf(JsonPrimitive("bad")))),
+                page(null).replaceModelField("serviceTiers", JsonArray(listOf(buildJsonObject { put("id", 7); put("name", "Fast"); put("description", "x") }))),
+                page(null).replaceModelField("additionalSpeedTiers", JsonPrimitive("fast")),
+                page(null).replaceModelField("additionalSpeedTiers", JsonArray(listOf(JsonPrimitive(7)))),
                 buildJsonObject { put("data", page(null)["data"]!!); put("nextCursor", 8) },
             )
             malformed.forEach { value ->

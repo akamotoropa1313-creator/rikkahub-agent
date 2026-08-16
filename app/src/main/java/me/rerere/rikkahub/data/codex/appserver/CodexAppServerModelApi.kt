@@ -6,6 +6,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 data class CodexReasoningEffortOption(val reasoningEffort: String, val description: String)
+data class CodexModelServiceTier(val id: String, val name: String, val description: String)
 
 data class CodexAppServerModel(
     val id: String,
@@ -20,10 +21,38 @@ data class CodexAppServerModel(
     val raw: JsonObject,
     /** Null means the server did not report this forward-compatible capability. */
     val inputModalities: List<String>? = null,
+    val serviceTiers: List<CodexModelServiceTier>? = null,
+    val defaultServiceTier: String? = null,
+    val additionalSpeedTiers: List<String>? = null,
 )
 
 data class CodexAppServerModelListResult(
     val data: List<CodexAppServerModel>, val nextCursor: String?, val raw: JsonObject,
+)
+
+/**
+ * Confirmed service-tier ids when the server reported tier metadata, or null when an older server
+ * did not report either modern or legacy metadata. Membership is intentionally permissive in the
+ * unknown case so a saved explicit tier is not silently rewritten merely because capability data
+ * is unavailable. Callers that must require confirmation (for example new thread creation) inspect
+ * [confirmed] directly.
+ */
+data class CodexServiceTierIds(val confirmed: List<String>?) {
+    operator fun contains(id: String): Boolean = confirmed?.contains(id) ?: true
+}
+
+/**
+ * Modern non-empty metadata wins. An empty modern list may fall back to explicitly reported legacy
+ * metadata. If neither field was reported, support remains unknown rather than becoming an explicit
+ * empty set; this preserves compatibility with older App Servers.
+ */
+fun CodexAppServerModel.serviceTierIds(): CodexServiceTierIds = CodexServiceTierIds(
+    confirmed = when {
+        !serviceTiers.isNullOrEmpty() -> serviceTiers.map { it.id }
+        additionalSpeedTiers != null -> additionalSpeedTiers
+        serviceTiers != null -> emptyList()
+        else -> null
+    },
 )
 
 class CodexAppServerModelProtocolException(message: String) : SerializationException(message)
@@ -89,6 +118,26 @@ class CodexAppServerModelApi(private val connection: CodexAppServerConnection) {
                     array.mapIndexed { modalityIndex, modality ->
                         (modality as? JsonPrimitive)?.takeIf { it.isString }?.content
                             ?: fail("model/list data[$index].inputModalities[$modalityIndex] must be a string")
+                    }
+                },
+                item["serviceTiers"]?.let { tiers ->
+                    val array = tiers as? JsonArray ?: fail("model/list data[$index].serviceTiers must be an array")
+                    array.mapIndexed { tierIndex, tier ->
+                        val option = tier as? JsonObject ?: fail("service tier[$tierIndex] must be an object")
+                        fun tierString(name: String) = (option[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                            ?: fail("service tier[$tierIndex].$name must be a string")
+                        CodexModelServiceTier(tierString("id"), tierString("name"), tierString("description"))
+                    }
+                },
+                item["defaultServiceTier"]?.let { value ->
+                    (value as? JsonPrimitive)?.takeIf { it.isString }?.content
+                        ?: fail("model/list data[$index].defaultServiceTier must be a string")
+                },
+                item["additionalSpeedTiers"]?.let { tiers ->
+                    val array = tiers as? JsonArray ?: fail("model/list data[$index].additionalSpeedTiers must be an array")
+                    array.mapIndexed { tierIndex, tier ->
+                        (tier as? JsonPrimitive)?.takeIf { it.isString }?.content
+                            ?: fail("model/list data[$index].additionalSpeedTiers[$tierIndex] must be a string")
                     }
                 },
             )

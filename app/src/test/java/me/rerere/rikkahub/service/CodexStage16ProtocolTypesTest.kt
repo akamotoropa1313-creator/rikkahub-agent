@@ -3,6 +3,7 @@ package me.rerere.rikkahub.service
 import kotlinx.serialization.json.JsonObject
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerModel
 import me.rerere.rikkahub.data.codex.appserver.CodexModelCatalogKnowledge
+import me.rerere.rikkahub.data.codex.appserver.CodexModelServiceTier
 import me.rerere.rikkahub.data.codex.appserver.CodexReasoningEffortOption
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -29,7 +30,54 @@ class CodexStage16ProtocolTypesTest {
         assertNull(CodexAppServerThreadStartParams(model = "model-a", personality = requested).personality)
     }
 
-    private fun model(model: String, supportsPersonality: Boolean) = CodexAppServerModel(
+    @Test
+    fun `new thread emits default tier but omits unconfirmed specific tier`() {
+        CodexModelCatalogKnowledge.clearForTest()
+        assertEquals("default", CodexAppServerThreadStartParams(model = "model-a", serviceTier = "default").serviceTier)
+        assertNull(CodexAppServerThreadStartParams(model = "model-a", serviceTier = "priority").serviceTier)
+
+        // Turn semantics are intentionally more permissive once a runtime exists: saved exact
+        // strings survive catalog Unknown and the App Server remains the final authority.
+        assertEquals("priority", CodexAppServerTurnStartParams(model = "model-a", serviceTier = "priority").serviceTier)
+    }
+
+    @Test
+    fun `new thread emits specific tier only after current catalog confirms it`() {
+        CodexModelCatalogKnowledge.replace(
+            listOf(model("model-a", tiers = listOf(CodexModelServiceTier("priority", "Fast", "Faster"))))
+        )
+        assertEquals("priority", CodexAppServerThreadStartParams(model = "model-a", serviceTier = "priority").serviceTier)
+        assertNull(CodexAppServerThreadStartParams(model = "model-a", serviceTier = "future").serviceTier)
+    }
+
+    @Test
+    fun `null model resolves only the explicit catalog default for thread tier confirmation`() {
+        CodexModelCatalogKnowledge.replace(
+            listOf(
+                model("model-a", isDefault = false, tiers = listOf(CodexModelServiceTier("other", "Other", "Other"))),
+                model("model-default", isDefault = true, tiers = listOf(CodexModelServiceTier("priority", "Fast", "Faster"))),
+            )
+        )
+        assertEquals("priority", CodexAppServerThreadStartParams(model = null, serviceTier = "priority").serviceTier)
+        assertNull(CodexAppServerThreadStartParams(model = "missing", serviceTier = "priority").serviceTier)
+    }
+
+    @Test
+    fun `unreported or explicitly empty tier metadata never confirms a specific thread tier`() {
+        CodexModelCatalogKnowledge.replace(listOf(model("legacy-unknown", tiers = null, legacy = null)))
+        assertNull(CodexAppServerThreadStartParams(model = "legacy-unknown", serviceTier = "priority").serviceTier)
+
+        CodexModelCatalogKnowledge.replace(listOf(model("explicit-empty", tiers = emptyList(), legacy = null)))
+        assertNull(CodexAppServerThreadStartParams(model = "explicit-empty", serviceTier = "priority").serviceTier)
+    }
+
+    private fun model(
+        model: String,
+        supportsPersonality: Boolean = true,
+        isDefault: Boolean = false,
+        tiers: List<CodexModelServiceTier>? = null,
+        legacy: List<String>? = null,
+    ) = CodexAppServerModel(
         id = "id-$model",
         model = model,
         displayName = model,
@@ -38,7 +86,9 @@ class CodexStage16ProtocolTypesTest {
         supportedReasoningEfforts = listOf(CodexReasoningEffortOption("high", "High")),
         defaultReasoningEffort = "high",
         supportsPersonality = supportsPersonality,
-        isDefault = false,
+        isDefault = isDefault,
         raw = JsonObject(emptyMap()),
+        serviceTiers = tiers,
+        additionalSpeedTiers = legacy,
     )
 }

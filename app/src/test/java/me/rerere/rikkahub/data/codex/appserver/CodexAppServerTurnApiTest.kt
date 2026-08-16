@@ -230,6 +230,18 @@ class CodexAppServerTurnApiTest {
     }
 
     @Test
+    fun `service tier distinguishes omission default modern legacy and future strings`() = runBlocking {
+        listOf(null, "default", "priority", "fast", "future-tier").forEach { tier -> fixture().use { f ->
+            val call = async { f.api.startTurn("t", listOf(CodexAppServerTurnInput.Text("x")), CodexAppServerTurnStartParams(serviceTier = tier)) }
+            val request = decodeRequest(f.transport.takeClientLine())
+            if (tier == null) assertFalse("serviceTier" in request.params!!.jsonObject)
+            else assertEquals(tier, request.params!!.jsonObject["serviceTier"]!!.jsonPrimitive.content)
+            assertFalse("service_tier" in request.params!!.jsonObject)
+            f.respond(request, turnResult("id", "completed")); call.await()
+        } }
+    }
+
+    @Test
     fun `blank thread id rejects before write and ready gate is required`() {
         runBlocking {
             fixture().use { f ->

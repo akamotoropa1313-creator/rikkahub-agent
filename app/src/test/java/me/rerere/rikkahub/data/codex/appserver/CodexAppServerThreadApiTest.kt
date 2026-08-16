@@ -56,11 +56,13 @@ class CodexAppServerThreadApiTest {
                     config = mapOf("reasoning" to JsonPrimitive("high")), serviceName = "rikkahub",
                     baseInstructions = "base", developerInstructions = "dev",
                     personality = CodexAppServerPersonality.PRAGMATIC, ephemeral = false,
+                    serviceTier = "future-tier",
                 )
                 val call = async { f.api.startThread(params) }
                 val request = f.takeRequest()
                 val objectValue = request.params!!.jsonObject
-                assertEquals(setOf("model", "modelProvider", "cwd", "config", "serviceName", "baseInstructions", "developerInstructions", "personality", "ephemeral"), objectValue.keys)
+                assertEquals(setOf("model", "modelProvider", "cwd", "config", "serviceName", "baseInstructions", "developerInstructions", "personality", "ephemeral", "serviceTier"), objectValue.keys)
+                assertEquals("future-tier", objectValue["serviceTier"]?.jsonPrimitive?.content)
                 assertEquals(false, objectValue["ephemeral"]?.jsonPrimitive?.content?.toBoolean())
                 f.respond(request, result("id")); call.await()
             }
