@@ -57,7 +57,7 @@ class CodexStage16TurnWireIntegrationTest {
             assertEquals("hello", (input[0].jsonObject["text"] as JsonPrimitive).content)
             f.respond(request, turnResult("turn-1"))
             assertEquals("turn-1", call.await().turn.id)
-            assertEquals(2, f.transport.successfulWriteCount()) // initialized + exactly one turn/start
+            assertEquals(3, f.transport.successfulWriteCount())
         }
     }
 
@@ -70,7 +70,11 @@ class CodexStage16TurnWireIntegrationTest {
                 description = "Review code",
                 shortDescription = null,
                 path = "/skills/review/SKILL.md",
+                scope = "user",
                 enabled = true,
+                interfaceMetadata = null,
+                dependencies = null,
+                raw = JsonObject(emptyMap()),
             )
             val input = buildCodexSkillInvocation(skill, "inspect this")
             val params = CodexAppServerTurnStartParams(
@@ -90,13 +94,13 @@ class CodexStage16TurnWireIntegrationTest {
             val wireInput = p["input"] as JsonArray
             assertEquals(2, wireInput.size)
             assertEquals("text", (wireInput[0].jsonObject["type"] as JsonPrimitive).content)
-            assertEquals("$review inspect this", (wireInput[0].jsonObject["text"] as JsonPrimitive).content)
+            assertEquals("\$review inspect this", (wireInput[0].jsonObject["text"] as JsonPrimitive).content)
             assertEquals("skill", (wireInput[1].jsonObject["type"] as JsonPrimitive).content)
             assertEquals("review", (wireInput[1].jsonObject["name"] as JsonPrimitive).content)
             assertEquals("/skills/review/SKILL.md", (wireInput[1].jsonObject["path"] as JsonPrimitive).content)
             f.respond(request, turnResult("turn-skill"))
             assertEquals("turn-skill", call.await().turn.id)
-            assertEquals(2, f.transport.successfulWriteCount())
+            assertEquals(3, f.transport.successfulWriteCount())
         }
     }
 
@@ -145,7 +149,7 @@ class CodexStage16TurnWireIntegrationTest {
             ),
         )
         initialize.await()
-        transport.takeClientLine() // initialized notification
+        transport.takeClientLine()
         return Fixture(transport, connection, CodexAppServerTurnApi(connection))
     }
 
