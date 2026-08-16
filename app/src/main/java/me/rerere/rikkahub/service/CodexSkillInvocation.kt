@@ -10,3 +10,7 @@ fun buildCodexSkillInvocation(skill: CodexSkillMetadata, prompt: String): List<C
 
 fun codexSkillTranscript(skill: CodexSkillMetadata, prompt: String): String =
     (buildCodexSkillInvocation(skill, prompt).first() as CodexAppServerTurnInput.Text).text
+
+/** Runs the acceptance callback only after turn/start has returned successfully. */
+suspend fun <T> acceptCodexSkillAfterStart(start: suspend () -> T, onAccepted: () -> Unit): T =
+    start().also { onAccepted() }

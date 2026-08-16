@@ -27,6 +27,7 @@ import me.rerere.rikkahub.data.db.entity.CodexAppServerSessionBindingEntity
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.model.Conversation
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -44,6 +45,25 @@ class CodexConversationSessionIntegrationTest {
         assertTrue(owner.tryBeginCodexOperation()) // send-first
         assertTrue(!owner.tryBeginCodexOperation()) // capability rejected
         owner.endCodexOperation()
+    }
+
+    @Test
+    fun `capabilities forward and old runtime events cannot contaminate replacement`() = runBlocking {
+        val owner = owner(this)
+        val old = harness(this, "thread-old")
+        val replacement = harness(this, "thread-new")
+        try {
+            owner.replaceCodexRuntime(old.runtime)
+            withTimeout(2_000) { owner.codexCapabilities.first { it.connected } }
+            old.transport.emitLine(notification("account/login/completed", buildJsonObject { put("success", "invalid") }))
+            withTimeout(2_000) { owner.codexCapabilities.first { it.accountError != null } }
+
+            owner.replaceCodexRuntime(replacement.runtime)
+            withTimeout(2_000) { owner.codexCapabilities.first { it.connected && it.accountError == null } }
+            old.transport.emitLine(notification("account/login/completed", buildJsonObject { put("success", false); put("error", "old runtime") }))
+            repeat(4) { kotlinx.coroutines.yield() }
+            assertFalse(owner.codexCapabilities.value.accountError == "old runtime")
+        } finally { owner.cleanup() }
     }
 
     @Test
@@ -173,7 +193,7 @@ class CodexConversationSessionIntegrationTest {
         private val inbound = Channel<CodexAppServerTransportEvent>(Channel.UNLIMITED)
         override val events: Flow<CodexAppServerTransportEvent> = inbound.receiveAsFlow()
         override suspend fun sendLine(line: String) = Unit
-        suspend fun emitLine(line: String) { inbound.send(CodexAppServerTransportEvent.Line(line)) }
+        suspend fun emitLine(line: String) { inbound.trySend(CodexAppServerTransportEvent.Line(line)) }
         suspend fun emitFailure(cause: Throwable) { inbound.send(CodexAppServerTransportEvent.Failure(cause)) }
         override fun close() {
             inbound.trySend(CodexAppServerTransportEvent.Closed)

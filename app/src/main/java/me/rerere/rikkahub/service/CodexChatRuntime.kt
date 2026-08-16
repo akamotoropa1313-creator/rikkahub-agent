@@ -164,12 +164,14 @@ class CodexChatRuntime(
         finally { _capabilities.value = _capabilities.value.copy(mcpLoading = false) }
     }
     suspend fun beginMcpOAuth(name: String, launcher: CodexAppServerAuthUrlLauncher) = capabilityOperation {
-        _capabilities.value = _capabilities.value.copy(pendingMcpServer = name, mcpError = null)
+        _capabilities.value = _capabilities.value.copy(mcpError = null)
         try {
-            val result = session.mcpApi.beginOAuthLogin(name, threadId = session.threadId)
-            result.authorizationUrlForLaunch().also(::validateCodexAppServerAuthUrl).let(launcher::launch)
+            runCodexMcpOAuthBegin(name, { pending -> _capabilities.value = _capabilities.value.copy(pendingMcpServer = pending) }) {
+                val result = session.mcpApi.beginOAuthLogin(name, threadId = session.threadId)
+                result.authorizationUrlForLaunch().also(::validateCodexAppServerAuthUrl).let(launcher::launch)
+            }
         } catch (failure: Throwable) {
-            _capabilities.value = _capabilities.value.copy(pendingMcpServer = null, mcpError = failure.safeMessage())
+            _capabilities.value = _capabilities.value.copy(mcpError = failure.safeMessage())
             throw failure
         }
     }

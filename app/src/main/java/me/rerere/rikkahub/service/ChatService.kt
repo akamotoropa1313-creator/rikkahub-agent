@@ -609,7 +609,6 @@ class ChatService(
                 if (answer && assistant.codexAppServerEnabled) {
                     validateCodexPreflight(conversationId, conversation, assistant, content)
                 }
-                onAccepted()
                 val processedContent = preprocessUserInputParts(content, assistant)
                 val withUser = conversation.copy(
                     messageNodes = conversation.messageNodes + UIMessage(
@@ -623,7 +622,7 @@ class ChatService(
                     tryFastPathRoute(conversationId, processedContent, withUser, assistant)
                 else false
                 if (answer && assistant.codexAppServerEnabled) {
-                    sendCodexTurn(conversationId, session, withUser, assistant, processedContent, explicitSkill)
+                    sendCodexTurn(conversationId, session, withUser, assistant, processedContent, explicitSkill, onAccepted)
                 } else if (answer && !routedHandled) {
                     handleMessageComplete(conversationId)
                 }
@@ -684,6 +683,7 @@ class ChatService(
         assistant: Assistant,
         parts: List<UIMessagePart>,
         explicitSkill: CodexSkillMetadata? = null,
+        onAccepted: () -> Unit = {},
     ) = codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {
         val workspaceId = assistant.workspaceId?.toString()
             ?: throw IllegalStateException("Codex App Server requires a workspace")
@@ -743,7 +743,7 @@ class ChatService(
                 .removePrefix("$${skill.name}").trimStart()
             buildCodexSkillInvocation(skill, prompt)
         } ?: parts.map { CodexAppServerTurnInput.Text((it as UIMessagePart.Text).text) }
-        val result = runtime.session.startTurn(input)
+        val result = acceptCodexSkillAfterStart({ runtime.session.startTurn(input) }, onAccepted)
         runtime.acceptStartResponse(result.turn.id, result.turn.status)
         try {
             runtime.awaitTurnTerminal(result.turn.id)

@@ -40,7 +40,7 @@ fun CodexControlSheet(
         item { Text("Codex Control Center", style = MaterialTheme.typography.headlineSmall) }
         item { Section("Connection") {
             Text(connectionLabel(connection, hasBinding))
-            if (connection is CodexConversationUiState.Disconnected && hasBinding) Button(onClick = onReconnect, enabled = !operationBusy) { Text("Reconnect Codex") }
+            if (codexReconnectEligible(connection, hasBinding, capabilities.connected, operationBusy)) Button(onClick = onReconnect) { Text("Reconnect Codex") }
         } }
         item {
             Section("Account") {
@@ -110,4 +110,15 @@ private fun connectionLabel(state: CodexConversationUiState, bound: Boolean) = w
     is CodexConversationUiState.Failed -> "Failed: ${state.message}"
     is CodexConversationUiState.StaleBinding -> "Failed: ${state.reason}"
     is CodexConversationUiState.WorkspaceMismatch -> "Failed: workspace mismatch"
+}
+
+
+internal fun codexReconnectEligible(
+    state: CodexConversationUiState,
+    hasBinding: Boolean,
+    runtimeConnected: Boolean,
+    operationBusy: Boolean,
+): Boolean = hasBinding && !runtimeConnected && !operationBusy && when (state) {
+    CodexConversationUiState.Disconnected, is CodexConversationUiState.Failed -> true
+    else -> false
 }
