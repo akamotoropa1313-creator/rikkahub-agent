@@ -79,6 +79,7 @@ import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.codex.CodexControlSheet
 import me.rerere.rikkahub.ui.components.codex.codexComposerLabel
+import me.rerere.rikkahub.ui.components.codex.compactContextText
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.useCropLauncher
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
@@ -343,15 +344,32 @@ private fun ChatPageContent(
                         }
                     }
                     if (assistant.codexAppServerEnabled) {
+                        val currentUsage = when (val state = codexState) {
+                            is CodexConversationUiState.Ready -> state.telemetry
+                            is CodexConversationUiState.Running -> state.telemetry
+                            is CodexConversationUiState.WaitingForApproval -> state.telemetry
+                            is CodexConversationUiState.Terminal -> state.telemetry
+                            else -> null
+                        }?.latest?.tokenUsage
                         TextButton(
                             onClick = { showCodexControls = true },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text(
-                                text = codexComposerLabel(assistant, codexCapabilities.models),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                            Column {
+                                Text(
+                                    text = codexComposerLabel(assistant, codexCapabilities.models),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                currentUsage?.let { usage ->
+                                    Text(
+                                        text = compactContextText(usage),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                }
+                            }
                         }
                     }
                     ChatInput(
