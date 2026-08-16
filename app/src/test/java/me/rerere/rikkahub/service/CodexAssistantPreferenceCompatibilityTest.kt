@@ -23,6 +23,7 @@ class CodexAssistantPreferenceCompatibilityTest {
         assertNull(legacy.codexReasoningEffort)
         assertNull(legacy.codexReasoningSummary)
         assertNull(legacy.codexPersonality)
+        assertNull(legacy.codexServiceTier)
     }
 
     @Test
@@ -39,5 +40,13 @@ class CodexAssistantPreferenceCompatibilityTest {
         assertEquals("focused-future", decoded.codexReasoningEffort)
         assertEquals(CodexReasoningSummaryPreference.DETAILED, decoded.codexReasoningSummary)
         assertEquals(CodexPersonalityPreference.PRAGMATIC, decoded.codexPersonality)
+    }
+
+    @Test
+    fun `service tier open strings survive Settings serialization`() {
+        listOf(null, "default", "priority", "fast", "future-tier").forEach { tier ->
+            val decoded = json.decodeFromString<Assistant>(json.encodeToString(Assistant(codexServiceTier = tier)))
+            assertEquals(tier, decoded.codexServiceTier)
+        }
     }
 }

@@ -30,12 +30,14 @@ internal fun CodexAppServerTurnStartParams(
     effort: String? = null,
     summary: CodexAppServerReasoningSummary? = null,
     personality: RequestedCodexPersonality? = null,
+    serviceTier: String? = null,
 ): me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnStartParams =
     me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnStartParams(
         model = model,
         effort = effort,
         summary = summary,
         personality = personality?.value?.takeIf { CodexModelCatalogKnowledge.personalitySupported(model) },
+        serviceTier = serviceTier,
     )
 
 /**
@@ -47,9 +49,11 @@ internal fun CodexAppServerThreadStartParams(
     model: String? = null,
     developerInstructions: String? = null,
     personality: RequestedCodexPersonality? = null,
+    serviceTier: String? = null,
 ): me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams =
     me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams(
         model = model,
         developerInstructions = developerInstructions,
         personality = null,
+        serviceTier = serviceTier,
     )

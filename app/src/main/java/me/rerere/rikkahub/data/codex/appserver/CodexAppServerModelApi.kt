@@ -6,6 +6,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 data class CodexReasoningEffortOption(val reasoningEffort: String, val description: String)
+data class CodexModelServiceTier(val id: String, val name: String, val description: String)
 
 data class CodexAppServerModel(
     val id: String,
@@ -20,11 +21,18 @@ data class CodexAppServerModel(
     val raw: JsonObject,
     /** Null means the server did not report this forward-compatible capability. */
     val inputModalities: List<String>? = null,
+    val serviceTiers: List<CodexModelServiceTier>? = null,
+    val defaultServiceTier: String? = null,
+    val additionalSpeedTiers: List<String>? = null,
 )
 
 data class CodexAppServerModelListResult(
     val data: List<CodexAppServerModel>, val nextCursor: String?, val raw: JsonObject,
 )
+
+/** Modern metadata wins; legacy values are consulted only when modern metadata is absent/empty. */
+fun CodexAppServerModel.serviceTierIds(): List<String> =
+    serviceTiers?.takeIf { it.isNotEmpty() }?.map { it.id } ?: additionalSpeedTiers.orEmpty()
 
 class CodexAppServerModelProtocolException(message: String) : SerializationException(message)
 
@@ -89,6 +97,26 @@ class CodexAppServerModelApi(private val connection: CodexAppServerConnection) {
                     array.mapIndexed { modalityIndex, modality ->
                         (modality as? JsonPrimitive)?.takeIf { it.isString }?.content
                             ?: fail("model/list data[$index].inputModalities[$modalityIndex] must be a string")
+                    }
+                },
+                item["serviceTiers"]?.let { tiers ->
+                    val array = tiers as? JsonArray ?: fail("model/list data[$index].serviceTiers must be an array")
+                    array.mapIndexed { tierIndex, tier ->
+                        val option = tier as? JsonObject ?: fail("service tier[$tierIndex] must be an object")
+                        fun tierString(name: String) = (option[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                            ?: fail("service tier[$tierIndex].$name must be a string")
+                        CodexModelServiceTier(tierString("id"), tierString("name"), tierString("description"))
+                    }
+                },
+                item["defaultServiceTier"]?.let { value ->
+                    (value as? JsonPrimitive)?.takeIf { it.isString }?.content
+                        ?: fail("model/list data[$index].defaultServiceTier must be a string")
+                },
+                item["additionalSpeedTiers"]?.let { tiers ->
+                    val array = tiers as? JsonArray ?: fail("model/list data[$index].additionalSpeedTiers must be an array")
+                    array.mapIndexed { tierIndex, tier ->
+                        (tier as? JsonPrimitive)?.takeIf { it.isString }?.content
+                            ?: fail("model/list data[$index].additionalSpeedTiers[$tierIndex] must be a string")
                     }
                 },
             )

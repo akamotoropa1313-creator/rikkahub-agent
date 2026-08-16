@@ -19,6 +19,7 @@ data class CodexAppServerThreadStartParams(
     val developerInstructions: String? = null,
     val personality: CodexAppServerPersonality? = null,
     val ephemeral: Boolean? = null,
+    val serviceTier: String? = null,
 )
 
 /** Stable overrides shared by v2 `thread/resume`; the thread id is supplied separately. */
@@ -111,6 +112,7 @@ private fun CodexAppServerThreadStartParams.toJson() = buildMap<String, JsonElem
     putOptional("baseInstructions", baseInstructions); putOptional("developerInstructions", developerInstructions)
     personality?.let { put("personality", JsonPrimitive(it.wireValue)) }
     ephemeral?.let { put("ephemeral", JsonPrimitive(it)) }
+    putOptional("serviceTier", serviceTier)
 }.let(::JsonObject)
 
 private fun CodexAppServerThreadResumeParams.toJson(threadId: String) = buildMap<String, JsonElement> {

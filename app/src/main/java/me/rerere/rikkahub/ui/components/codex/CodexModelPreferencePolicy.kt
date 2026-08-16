@@ -1,7 +1,21 @@
 package me.rerere.rikkahub.ui.components.codex
 
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerModel
+import me.rerere.rikkahub.data.codex.appserver.serviceTierIds
 import me.rerere.rikkahub.data.model.Assistant
+
+internal data class CodexServiceTierOption(val id: String, val name: String, val description: String)
+
+internal fun codexServiceTierOptions(model: CodexAppServerModel): List<CodexServiceTierOption> =
+    model.serviceTiers?.takeIf { it.isNotEmpty() }?.map { CodexServiceTierOption(it.id, it.name, it.description) }
+        ?: model.additionalSpeedTiers.orEmpty().map {
+            CodexServiceTierOption(it, if (it == "fast") "Fast" else it, "Legacy service tier")
+        }
+
+internal fun serviceTierForCodexModelSelection(saved: String?, model: CodexAppServerModel): String? = when (saved) {
+    null, "default" -> saved
+    else -> saved.takeIf { it in model.serviceTierIds() } ?: "default"
+}
 
 internal fun selectedCodexModel(
     savedModel: String?,
@@ -37,6 +51,7 @@ internal fun applyCodexModelSelection(
 ): Assistant = assistant.copy(
     codexModel = model.model,
     codexReasoningEffort = effortForCodexModelSelection(assistant.codexReasoningEffort, model),
+    codexServiceTier = serviceTierForCodexModelSelection(assistant.codexServiceTier, model),
 )
 
 internal fun codexComposerLabel(
@@ -46,5 +61,12 @@ internal fun codexComposerLabel(
     if (!assistant.codexAppServerEnabled) return ""
     val selected = selectedCodexModel(assistant.codexModel, models)
     val modelLabel = selected?.displayName ?: assistant.codexModel ?: "server default"
-    return assistant.codexReasoningEffort?.let { "Codex · $modelLabel · $it" } ?: "Codex · $modelLabel"
+    val effort = assistant.codexReasoningEffort?.let { " · $it" }.orEmpty()
+    val tier = assistant.codexServiceTier?.let { saved ->
+        val label = if (saved == "default") "Default" else selected?.let { model ->
+            codexServiceTierOptions(model).firstOrNull { it.id == saved }?.name
+        } ?: saved
+        " · $label"
+    }.orEmpty()
+    return "Codex · $modelLabel$effort$tier"
 }
