@@ -180,6 +180,29 @@ class CodexAppServerTurnApiTest {
     }
 
     @Test
+    fun `stable multimodal inputs have exact wire shape and ordering`() = runBlocking {
+        fixture().use { f ->
+            val inputs = listOf(
+                CodexAppServerTurnInput.Text("prompt"),
+                CodexAppServerTurnInput.Image("https://example.test/image.png"),
+                CodexAppServerTurnInput.LocalImage("/tmp/image.png"),
+                CodexAppServerTurnInput.Audio("data:audio/wav;base64,AA=="),
+                CodexAppServerTurnInput.LocalAudio("/tmp/audio.wav"),
+                CodexAppServerTurnInput.Skill("review", "/skills/review"),
+            )
+            val call = async { f.api.startTurn("thread", inputs) }
+            val request = decodeRequest(f.transport.takeClientLine())
+            assertEquals(
+                """[{"type":"text","text":"prompt"},{"type":"image","url":"https://example.test/image.png"},{"type":"localImage","path":"/tmp/image.png"},{"type":"audio","url":"data:audio/wav;base64,AA=="},{"type":"localAudio","path":"/tmp/audio.wav"},{"type":"skill","name":"review","path":"/skills/review"}]""",
+                request.params!!.jsonObject["input"].toString(),
+            )
+            f.respond(request, turnResult("turn", "completed"))
+            call.await()
+            Unit
+        }
+    }
+
+    @Test
     fun `stable overrides serialize and unsupported fields remain absent`() {
         runBlocking {
             fixture().use { f ->

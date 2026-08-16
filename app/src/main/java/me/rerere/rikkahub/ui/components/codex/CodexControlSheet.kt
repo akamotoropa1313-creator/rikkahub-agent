@@ -84,6 +84,12 @@ fun CodexControlSheet(
                 supportingContent = {
                     Column {
                         Text(model.description, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            model.inputModalities?.joinToString(" · ", prefix = "Inputs: ")
+                                ?: "Inputs: not reported",
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                         if (validEfforts) {
                             Text("Effort: " + advertisedEfforts.joinToString(" · "), maxLines = 2, overflow = TextOverflow.Ellipsis)
                         } else {

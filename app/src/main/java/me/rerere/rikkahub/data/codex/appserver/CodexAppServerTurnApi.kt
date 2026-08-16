@@ -11,6 +11,10 @@ import kotlin.time.Duration.Companion.seconds
 
 sealed interface CodexAppServerTurnInput {
     data class Text(val text: String) : CodexAppServerTurnInput
+    data class Image(val url: String) : CodexAppServerTurnInput { init { require(url.isNotBlank()) } }
+    data class LocalImage(val path: String) : CodexAppServerTurnInput { init { require(path.startsWith('/')) } }
+    data class Audio(val url: String) : CodexAppServerTurnInput { init { require(url.isNotBlank()) } }
+    data class LocalAudio(val path: String) : CodexAppServerTurnInput { init { require(path.startsWith('/')) } }
     data class Skill(val name: String, val path: String) : CodexAppServerTurnInput {
         init {
             require(name.isNotBlank()) { "skill name must not be blank" }
@@ -182,6 +186,10 @@ private fun CodexAppServerTurnInput.toJson(): JsonObject = when (this) {
             "path" to JsonPrimitive(path),
         ),
     )
+    is CodexAppServerTurnInput.Image -> JsonObject(mapOf("type" to JsonPrimitive("image"), "url" to JsonPrimitive(url)))
+    is CodexAppServerTurnInput.LocalImage -> JsonObject(mapOf("type" to JsonPrimitive("localImage"), "path" to JsonPrimitive(path)))
+    is CodexAppServerTurnInput.Audio -> JsonObject(mapOf("type" to JsonPrimitive("audio"), "url" to JsonPrimitive(url)))
+    is CodexAppServerTurnInput.LocalAudio -> JsonObject(mapOf("type" to JsonPrimitive("localAudio"), "path" to JsonPrimitive(path)))
 }
 
 internal fun JsonObject.requiredString(label: String, key: String = label): String {

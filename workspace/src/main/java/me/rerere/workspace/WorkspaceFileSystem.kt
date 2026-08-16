@@ -53,7 +53,8 @@ class WorkspaceFileSystem(
         return file.toEntry(root)
     }
 
-    fun importBytes(root: File, path: String, inputStream: InputStream): WorkspaceFileEntry {
+    fun importBytes(root: File, path: String, inputStream: InputStream, maxBytes: Long = config.maxWriteBytes): WorkspaceFileEntry {
+        require(maxBytes > 0) { "maxBytes must be positive" }
         val file = resolvePath(root, path)
         file.parentFile?.mkdirs()
         val target = if (!file.exists()) file else resolveConflict(file)
@@ -66,12 +67,12 @@ class WorkspaceFileSystem(
                         val read = input.read(buffer)
                         if (read < 0) break
                         total += read
-                        require(total <= config.maxWriteBytes) { "Content is too large to write: $total bytes" }
+                        require(total <= maxBytes) { "Content is too large to write: $total bytes" }
                         output.write(buffer, 0, read)
                     }
                 }
             }
-        } catch (e: IllegalArgumentException) {
+        } catch (e: Exception) {
             target.delete()
             throw e
         }

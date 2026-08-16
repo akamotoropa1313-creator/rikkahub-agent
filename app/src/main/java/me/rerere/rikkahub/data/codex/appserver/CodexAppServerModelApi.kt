@@ -18,6 +18,8 @@ data class CodexAppServerModel(
     val supportsPersonality: Boolean,
     val isDefault: Boolean,
     val raw: JsonObject,
+    /** Null means the server did not report this forward-compatible capability. */
+    val inputModalities: List<String>? = null,
 )
 
 data class CodexAppServerModelListResult(
@@ -80,7 +82,15 @@ class CodexAppServerModelApi(private val connection: CodexAppServerConnection) {
                         ?: fail("reasoning effort[$effortIndex].$name must be a string")
                     CodexReasoningEffortOption(optionString("reasoningEffort"), optionString("description"))
                 },
-                string("defaultReasoningEffort"), bool("supportsPersonality"), bool("isDefault"), item,
+                string("defaultReasoningEffort"), bool("supportsPersonality"), bool("isDefault"),
+                item, item["inputModalities"]?.let { modalities ->
+                    val array = modalities as? JsonArray
+                        ?: fail("model/list data[$index].inputModalities must be an array")
+                    array.mapIndexed { modalityIndex, modality ->
+                        (modality as? JsonPrimitive)?.takeIf { it.isString }?.content
+                            ?: fail("model/list data[$index].inputModalities[$modalityIndex] must be a string")
+                    }
+                },
             )
         }
         val next = raw["nextCursor"].let { element ->
