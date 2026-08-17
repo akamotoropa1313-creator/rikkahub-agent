@@ -57,9 +57,6 @@ import me.rerere.rikkahub.AppScope
 import android.app.PendingIntent
 import android.content.Intent
 import androidx.core.app.NotificationCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.ProcessLifecycleOwner
 import me.rerere.rikkahub.CHAT_COMPLETED_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.RouteActivity
@@ -233,6 +230,7 @@ private val outputTransformers by lazy {
 class ChatService(
     private val context: Application,
     private val appScope: AppScope,
+    private val appLifecycle: ChatAppLifecycle,
     private val appEventBus: AppEventBus,
     private val settingsStore: SettingsStore,
     private val conversationRepo: ConversationRepository,
@@ -376,33 +374,26 @@ class ChatService(
     private val _generationDoneFlow = MutableSharedFlow<Uuid>()
     val generationDoneFlow: SharedFlow<Uuid> = _generationDoneFlow.asSharedFlow()
 
-    // 前台状态管理
-    private val _isForeground = MutableStateFlow(false)
-    val isForeground: StateFlow<Boolean> = _isForeground.asStateFlow()
+    // Foreground state is owned by the lightweight process-lifecycle bridge so ChatService
+    // itself no longer has to touch LifecycleRegistry from whichever thread first resolves it.
+    val isForeground: StateFlow<Boolean> = appLifecycle.isForeground
 
-    private val lifecycleObserver = LifecycleEventObserver { _, event ->
-        when (event) {
-            Lifecycle.Event.ON_START -> _isForeground.value = true
-            Lifecycle.Event.ON_STOP -> {
-                _isForeground.value = false
-                // A user leaving the app does not cancel AppScope generation. Flush the latest
-                // in-memory stream state while the process is still alive so returning to the
-                // conversation (or an imminent process kill) never falls behind the UI.
-                appScope.launch(Dispatchers.IO) {
-                    runCatching { flushStreamingPersistence() }
-                        .onFailure { Log.w(TAG, "flushStreamingPersistence on stop failed", it) }
-                }
-            }
-            else -> {}
+    private val lifecycleStopListener: () -> Unit = {
+        // A user leaving the app does not cancel AppScope generation. Flush the latest
+        // in-memory stream state while the process is still alive so returning to the
+        // conversation (or an imminent process kill) never falls behind the UI.
+        appScope.launch(Dispatchers.IO) {
+            runCatching { flushStreamingPersistence() }
+                .onFailure { Log.w(TAG, "flushStreamingPersistence on stop failed", it) }
         }
     }
 
     init {
-        ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver)
+        appLifecycle.addOnStopListener(lifecycleStopListener)
     }
 
     fun cleanup() = runCatching {
-        ProcessLifecycleOwner.get().lifecycle.removeObserver(lifecycleObserver)
+        appLifecycle.removeOnStopListener(lifecycleStopListener)
         sessions.values.forEach { it.cleanup() }
         sessions.clear()
         sessionMutexes.clear()

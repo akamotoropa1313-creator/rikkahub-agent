@@ -14,6 +14,7 @@ import me.rerere.rikkahub.data.repository.TelegramChatRepository
 import me.rerere.rikkahub.data.notifications.NotificationListenerPreferences
 import me.rerere.rikkahub.data.telegram.TelegramBotClient
 import me.rerere.rikkahub.data.telegram.TelegramBotPreferences
+import me.rerere.rikkahub.service.ChatAppLifecycle
 import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.service.CronJobScheduler
 import me.rerere.rikkahub.utils.EmojiData
@@ -216,6 +217,10 @@ val appModule = module {
         AppScope()
     }
 
+    // Keep ProcessLifecycleOwner registration tiny and main-thread-bound without eagerly
+    // constructing ChatService and its large LocalTools dependency graph.
+    single { ChatAppLifecycle() }
+
     single<EmojiData> {
         EmojiUtils.loadEmoji(get())
     }
@@ -241,6 +246,7 @@ val appModule = module {
         ChatService(
             context = get(),
             appScope = get(),
+            appLifecycle = get(),
             appEventBus = get(),
             settingsStore = get(),
             conversationRepo = get(),

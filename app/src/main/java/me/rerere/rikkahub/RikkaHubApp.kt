@@ -65,6 +65,10 @@ class RikkaHubApp : Application() {
         }
         this.createNotificationChannel()
 
+        // Prime only the lightweight chat lifecycle bridge on the main thread before any
+        // background entry point can resolve ChatService. ChatService itself stays lazy.
+        eagerlyInitChatAppLifecycle()
+
         // Restore any headless conversation IDs that survived a process kill; must run
         // before any cron worker fires so mark/unmark are consistent.
         HeadlessConversations.init(this)
@@ -99,14 +103,6 @@ class RikkaHubApp : Application() {
         // Start WebServer if enabled in settings
         startWebServerIfEnabled()
 
-        // Eagerly construct ChatService on the main thread. Its constructor calls
-        // LifecycleRegistry.addObserver which throws if it runs off-main, and the Telegram
-        // bot service runs on Dispatchers.IO — without this priming, the first inbound bot
-        // message after a fresh app start crashes the bot's handleIncoming with
-        // "addObserver must be called on the main thread" because Koin's lazy factory
-        // builds ChatService on the IO thread.
-        eagerlyInitChatService()
-
         // Start Telegram bot if previously enabled — service is START_NOT_STICKY so OS won't
         // auto-revive it after a process kill; we need to bring it back ourselves.
         startTelegramBotIfEnabled()
@@ -117,12 +113,8 @@ class RikkaHubApp : Application() {
         // storage friction. Termux-style: private, persistent, OS-blessed.
         me.rerere.rikkahub.data.ai.tools.local.AgentWorkspace.init(this)
 
-        // TermuxPreferences is already constructed transitively via eagerlyInitChatService()
-        // above (ChatService -> LocalTools -> TermuxPreferences), which runs its init{}
-        // restore + persister wiring for TermuxIntegration.lastVerifiedOkAtMs (GitHub #14).
-        // This explicit touch is a decoupled safety net so that persistence still initializes
-        // if that construction chain is later refactored or throws before reaching
-        // termuxPreferences.
+        // TermuxPreferences owns persisted Termux verification state and must still restore
+        // at process start. Initialise it directly now that ChatService/LocalTools are lazy.
         eagerlyInitTermuxPreferences()
 
         // Copy any default skills bundled in assets/default-skills/* into the user's skills
@@ -347,19 +339,18 @@ class RikkaHubApp : Application() {
         }
     }
 
-    private fun eagerlyInitChatService() {
+    private fun eagerlyInitChatAppLifecycle() {
         try {
-            // Just resolving the singleton triggers Koin's factory; the side effect we care
-            // about is the LifecycleRegistry.addObserver call inside ChatService.<init>,
-            // which Android requires to happen on the main thread.
-            get<me.rerere.rikkahub.service.ChatService>()
+            // ChatAppLifecycle is intentionally tiny. Constructing it here preserves the
+            // main-thread requirement of ProcessLifecycleOwner without pulling ChatService's
+            // heavyweight dependency graph into Application.onCreate().
+            get<me.rerere.rikkahub.service.ChatAppLifecycle>()
         } catch (t: Throwable) {
-            Log.e(TAG, "eagerlyInitChatService failed", t)
+            Log.e(TAG, "eagerlyInitChatAppLifecycle failed", t)
         }
     }
 
-    // Decoupled safety net: normally a no-op since eagerlyInitChatService() already
-    // constructed TermuxPreferences transitively; kept independent in case that chain changes.
+    // Termux persisted verification state is intentionally independent of ChatService.
     private fun eagerlyInitTermuxPreferences() {
         try {
             get<me.rerere.rikkahub.data.preferences.TermuxPreferences>()
