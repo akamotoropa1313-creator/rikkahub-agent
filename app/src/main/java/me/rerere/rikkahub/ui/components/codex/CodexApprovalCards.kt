@@ -40,7 +40,7 @@ fun CodexCommandApprovalCard(
         }
         request.command?.let { LabeledPlainText(codexUiText("Command"), it, true) }
         request.cwd?.let { LabeledPlainText(codexUiText("Working directory"), it) }
-        request.commandActions?.forEach { LabeledPlainText(codexUiText("Action"), commandActionPresentation(it)) }
+        request.commandActions?.forEach { LabeledPlainText(codexUiText("Action"), codexUiText(commandActionPresentation(it))) }
         request.environmentId?.let { LabeledPlainText(codexUiText("Environment"), it) }
         ApprovalActions(enabled && !submitting && !resolved,
             approve = { onDecision(CodexAppServerCommandApprovalDecision.Accept) },
@@ -78,7 +78,7 @@ fun CodexFileChangeApprovalCard(
 @Composable private fun LabeledPlainText(label:String, value:String, monospace:Boolean=false) { Text(label, style=MaterialTheme.typography.labelMedium); Text(value, fontFamily=if(monospace) FontFamily.Monospace else FontFamily.Default) }
 @Composable private fun ApprovalActions(approveEnabled:Boolean, rejectEnabled:Boolean = approveEnabled, approve:()->Unit, session:()->Unit, decline:()->Unit, cancel:()->Unit) {
     Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { Button(approve, enabled=approveEnabled) { Text(codexUiText("Approve once")) }; OutlinedButton(session, enabled=approveEnabled) { Text(codexUiText("Approve for session")) } }
-    Text("Decline rejects this action and lets the turn continue. Cancel turn rejects it and stops the turn.", style=MaterialTheme.typography.bodySmall)
+    Text(codexUiText("Decline rejects this action and lets the turn continue. Cancel turn rejects it and stops the turn."), style=MaterialTheme.typography.bodySmall)
     Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { OutlinedButton(decline, enabled=rejectEnabled) { Text(codexUiText("Decline")) }; OutlinedButton(cancel, enabled=rejectEnabled) { Text(codexUiText("Cancel turn")) } }
 }
 
