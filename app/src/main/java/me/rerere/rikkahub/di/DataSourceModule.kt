@@ -166,6 +166,10 @@ val dataSourceModule = module {
     }
 
     single {
+        get<AppDatabase>().codexAppServerSessionBindingDao()
+    }
+
+    single {
         get<AppDatabase>().folderDao()
     }
 

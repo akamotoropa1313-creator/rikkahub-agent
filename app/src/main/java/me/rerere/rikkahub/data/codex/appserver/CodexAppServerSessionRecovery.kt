@@ -1,0 +1,74 @@
+package me.rerere.rikkahub.data.codex.appserver
+
+import me.rerere.rikkahub.data.db.entity.CodexAppServerSessionBindingEntity
+
+sealed interface CodexAppServerStaleBindingReason {
+    data object MissingConversation : CodexAppServerStaleBindingReason
+    data object MissingWorkspace : CodexAppServerStaleBindingReason
+}
+
+sealed interface CodexAppServerSessionRecoveryResult {
+    data object NotBound : CodexAppServerSessionRecoveryResult
+    data class StaleBinding(
+        val binding: CodexAppServerSessionBindingEntity,
+        val reason: CodexAppServerStaleBindingReason,
+    ) : CodexAppServerSessionRecoveryResult
+    data class Recovered(val session: CodexAppServerRecoveredSession) : CodexAppServerSessionRecoveryResult
+}
+
+class CodexAppServerRecoveredSession internal constructor(
+    binding: CodexAppServerSessionBindingEntity,
+    connection: CodexAppServerConnection,
+    val resumeResult: CodexAppServerThreadOpenResult,
+    repository: CodexAppServerSessionBindingRepository,
+    usageTracker: CodexTokenUsageTracker,
+    effectiveCwd: String?,
+) : CodexAppServerConversationSession(binding, connection, repository, usageTracker, effectiveCwd)
+
+class CodexAppServerSessionRecovery(
+    private val repository: CodexAppServerSessionBindingRepository,
+    private val localState: CodexAppServerLocalState,
+    private val connectionFactory: CodexAppServerConnectionCreator,
+) {
+    suspend fun recover(
+        conversationId: String,
+        overrides: CodexAppServerThreadResumeParams = CodexAppServerThreadResumeParams(),
+    ): CodexAppServerSessionRecoveryResult {
+        require(conversationId.isNotBlank()) { "conversationId must not be blank" }
+        val binding = repository.getBinding(conversationId)
+            ?: return CodexAppServerSessionRecoveryResult.NotBound
+        if (!localState.conversationExists(binding.conversationId)) {
+            return CodexAppServerSessionRecoveryResult.StaleBinding(
+                binding, CodexAppServerStaleBindingReason.MissingConversation,
+            )
+        }
+        val workspace = localState.getWorkspace(binding.workspaceId)
+            ?: return CodexAppServerSessionRecoveryResult.StaleBinding(
+                binding, CodexAppServerStaleBindingReason.MissingWorkspace,
+            )
+
+        val effectiveCwd = resolveCodexEffectiveCwd(workspace.root, binding.workspaceCwd)
+        val connection = connectionFactory.create(workspace.root, binding.workspaceCwd)
+        var ownershipTransferred = false
+        var usageTracker: CodexTokenUsageTracker? = null
+        try {
+            connection.initialize()
+            // Establish the no-replay subscription synchronously before resume can emit replay.
+            usageTracker = CodexTokenUsageTracker(connection, binding.threadId)
+            val resumed = CodexAppServerThreadApi(connection).resumeThread(binding.threadId, overrides)
+            val resumedAtMs = repository.markResumed(binding.conversationId, binding.threadId)
+            val session = CodexAppServerRecoveredSession(
+                binding.copy(lastResumedAtMs = resumedAtMs, updatedAtMs = resumedAtMs),
+                connection,
+                resumed,
+                repository,
+                checkNotNull(usageTracker),
+                effectiveCwd,
+            )
+            ownershipTransferred = true
+            return CodexAppServerSessionRecoveryResult.Recovered(session)
+        } finally {
+            if (!ownershipTransferred) { usageTracker?.close(); connection.close() }
+        }
+    }
+}

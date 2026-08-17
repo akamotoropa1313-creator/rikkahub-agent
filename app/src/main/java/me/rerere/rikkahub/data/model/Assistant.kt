@@ -43,6 +43,18 @@ data class Assistant(
     val localTools: List<LocalToolOption> = listOf(LocalToolOption.TimeInfo),
     val enableWebSearch: Boolean = false, // 网络搜索开关(每个助手独立)
     val workspaceId: Uuid? = null,
+    /** Explicit opt-in; existing assistants continue through the provider path. */
+    val codexAppServerEnabled: Boolean = false,
+    /** App Server overrides; null means RikkaHub has never selected an override. */
+    val codexModel: String? = null,
+    val codexReasoningEffort: String? = null,
+    val codexReasoningSummary: CodexReasoningSummaryPreference? = null,
+    val codexPersonality: CodexPersonalityPreference? = null,
+    /** Null omits the override; "default" is an explicit wire value. */
+    val codexServiceTier: String? = null,
+    /** Open persisted strings: unknown future values are preserved but never sent on the wire. */
+    val codexSandboxMode: String? = null,
+    val codexApprovalPolicy: String? = null,
     val background: String? = null, // 聊天页背景图地址(本地文件 URI 或网络 URL), 为 null 时无背景
     val backgroundOpacity: Float = 1.0f, // 背景图不透明度(0~1)
     val useGradientBackground: Boolean = false, // 开启后聊天页使用动态渐变背景
@@ -70,6 +82,9 @@ data class Assistant(
     val allowConversationSystemPrompt: Boolean = false, // 允许对话单独重写 system prompt
     val allowConversationPromptInjection: Boolean = false, // 允许对话单独绑定提示词注入
 )
+
+@Serializable enum class CodexReasoningSummaryPreference { AUTO, CONCISE, DETAILED, NONE }
+@Serializable enum class CodexPersonalityPreference { NONE, FRIENDLY, PRAGMATIC }
 
 @Serializable
 data class QuickMessage(

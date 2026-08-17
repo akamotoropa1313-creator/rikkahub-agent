@@ -206,10 +206,12 @@ class WorkspaceRepository(
         destinationPath: String,
         fileName: String,
         inputStream: InputStream,
+        maxBytes: Long? = null,
     ): WorkspaceFileEntry = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id) ?: error("Workspace not found: $id")
         manager.ensureWorkspace(workspace.root)
-        manager.importFile(workspace.root, destinationPath, area, fileName, inputStream)
+        if (maxBytes == null) manager.importFile(workspace.root, destinationPath, area, fileName, inputStream)
+        else manager.importFile(workspace.root, destinationPath, area, fileName, inputStream, maxBytes)
     }
 
     suspend fun fileSize(

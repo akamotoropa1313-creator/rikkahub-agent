@@ -50,4 +50,34 @@ class WorkspaceFileSystemImportBytesTest {
 
         assertEquals(10L, entry.sizeBytes)
     }
+
+    @Test
+    fun `per-call import cap can exceed global write cap without changing later defaults`() {
+        val root = tempFolder.newFolder("workspace")
+        val fs = fileSystem(maxWriteBytes = 4)
+
+        val staged = fs.importBytes(
+            root,
+            "tmp/rikkahub-codex-input/c/turn/media.bin",
+            ByteArrayInputStream(ByteArray(8)),
+            maxBytes = 8,
+        )
+        assertEquals(8L, staged.sizeBytes)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            fs.importBytes(root, "ordinary.bin", ByteArrayInputStream(ByteArray(5)))
+        }
+        assertFalse(File(root, "ordinary.bin").exists())
+    }
+
+    @Test
+    fun `streaming import cannot escape workspace root`() {
+        val root = tempFolder.newFolder("workspace")
+        val fs = fileSystem(maxWriteBytes = 10)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            fs.importBytes(root, "../../outside.bin", ByteArrayInputStream(byteArrayOf(1)), maxBytes = 10)
+        }
+        assertFalse(File(root.parentFile, "outside.bin").exists())
+    }
 }

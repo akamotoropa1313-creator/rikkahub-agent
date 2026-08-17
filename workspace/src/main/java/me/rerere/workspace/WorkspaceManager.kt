@@ -18,7 +18,8 @@ class WorkspaceManager(
     // 让 startBackground 的启动+注册 与 deleteWorkspace 的 killAll+删除 互斥:
     // 要么启动先完成(随后被 killAll 杀掉), 要么删除先完成(随后 shellRunner.start 因 rootfs
     // 缺失而失败并抛出), 不会出现"进程活着但 workspace 目录已删"的孤儿进程
-    private val backgroundLifecycleLock = Any()
+    private val processLifecycleLock = Any()
+    private val interactive = mutableMapOf<String, MutableSet<WorkspaceInteractiveProcess>>()
 
     // 按 target 长度降序, 保证 /a/b 优先于 /a 匹配
     private val sortedBindMounts = bindMounts.sortedByDescending { it.target.trimEnd('/').length }
@@ -48,9 +49,12 @@ class WorkspaceManager(
 
     fun hasRootfs(root: String): Boolean = File(linuxDir(root), "bin/sh").isFile
 
-    fun deleteWorkspace(root: String): Boolean = synchronized(backgroundLifecycleLock) {
+    fun deleteWorkspace(root: String): Boolean = synchronized(processLifecycleLock) {
         // 先杀掉该 workspace 所有后台进程, 再删目录, 避免进程仍持有已删除目录下的 fd
         killAllBackground(root)
+        // Keep handles registered until their successful close invokes onClose. A failed cleanup
+        // must remain discoverable so a later deletion retries it instead of orphaning the process.
+        interactive[root]?.toList().orEmpty().forEach { it.close() }
         workspaceDir(root).deleteRecursively()
     }
 
@@ -81,10 +85,11 @@ class WorkspaceManager(
         area: WorkspaceStorageArea = WorkspaceStorageArea.FILES,
         fileName: String,
         inputStream: InputStream,
+        maxBytes: Long = config.maxWriteBytes,
     ): WorkspaceFileEntry {
         val areaRoot = areaDir(root, area)
         val targetPath = if (destinationPath.isBlank()) fileName else "$destinationPath/$fileName"
-        return fileSystem.importBytes(areaRoot, targetPath, inputStream)
+        return fileSystem.importBytes(areaRoot, targetPath, inputStream, maxBytes)
     }
 
     fun fileSize(
@@ -220,7 +225,7 @@ class WorkspaceManager(
      * already at the running-process cap.
      */
     fun startBackground(root: String, command: String, cwd: String = ""): BackgroundStatus =
-        synchronized(backgroundLifecycleLock) {
+        synchronized(processLifecycleLock) {
             require(command.isNotBlank()) { "Command is required" }
             val workingDir = resolveCommandWorkingDir(root, cwd)
 
@@ -234,9 +239,41 @@ class WorkspaceManager(
                     tempDir = tempDir(root),
                     workingDir = workingDir,
                     timeoutMillis = 0L,
+                    bindMounts = bindMounts,
                 )
             )
             background.start(root, process, command, cwd)
+        }
+
+    /** Starts a managed live process without consuming any of its three standard streams. */
+    fun startInteractiveProcess(root: String, command: String, cwd: String = ""): WorkspaceInteractiveProcess =
+        synchronized(processLifecycleLock) {
+            require(command.isNotBlank()) { "Command is required" }
+            val workingDir = resolveCommandWorkingDir(root, cwd)
+            val process = shellRunner.start(
+                WorkspaceShellContext(
+                    root = root,
+                    command = command,
+                    cwd = cwd,
+                    filesDir = filesDir(root),
+                    linuxDir = linuxDir(root),
+                    tempDir = tempDir(root),
+                    workingDir = workingDir,
+                    timeoutMillis = 0L,
+                    bindMounts = bindMounts,
+                )
+            )
+            lateinit var handle: WorkspaceInteractiveProcess
+            handle = WorkspaceInteractiveProcess(process, onClose = { closed ->
+                synchronized(processLifecycleLock) {
+                    interactive[root]?.let { handles ->
+                        handles.remove(closed)
+                        if (handles.isEmpty()) interactive.remove(root)
+                    }
+                }
+            })
+            interactive.getOrPut(root) { mutableSetOf() }.add(handle)
+            handle
         }
 
     fun backgroundStatus(root: String, id: String): BackgroundStatus? = background.status(root, id)

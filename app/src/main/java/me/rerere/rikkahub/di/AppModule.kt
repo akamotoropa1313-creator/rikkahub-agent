@@ -27,6 +27,9 @@ import org.koin.dsl.module
 
 val appModule = module {
     single<Json> { JsonInstant }
+    single<me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher> {
+        me.rerere.rikkahub.data.codex.appserver.AndroidCodexAppServerAuthUrlLauncher(get())
+    }
 
     single {
         AppEventBus()
@@ -251,7 +254,9 @@ val appModule = module {
             skillManager = get(),
             toolApprovalPreferences = get(),
             workspaceRepository = get(),
-            folderRepository = get()
+            folderRepository = get(),
+            codexSessionOpener = get(),
+            codexBindingRepository = get()
         )
     }
 

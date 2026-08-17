@@ -94,6 +94,17 @@ import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.service.ChatError
+import me.rerere.rikkahub.service.CodexConversationUiState
+import me.rerere.rikkahub.service.CodexConversationActivity
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
+import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
+import me.rerere.rikkahub.ui.components.codex.CodexCommandApprovalCard
+import me.rerere.rikkahub.ui.components.codex.CodexFileChangeApprovalCard
+import me.rerere.rikkahub.ui.components.codex.CodexCommandExecutionCard
+import me.rerere.rikkahub.ui.components.codex.CodexFileChangeCard
+import me.rerere.rikkahub.ui.components.codex.CodexTurnDiffCard
 import me.rerere.rikkahub.ui.components.message.ChatMessage
 import me.rerere.rikkahub.ui.components.ui.ErrorCardsDisplay
 import me.rerere.rikkahub.ui.components.ui.ListSelectableItem
@@ -116,6 +127,7 @@ fun ChatList(
     state: LazyListState,
     loading: Boolean,
     processingStatus: String? = null,
+    codexState: CodexConversationUiState = CodexConversationUiState.Disabled,
     previewMode: Boolean,
     settings: Settings,
     hazeState: HazeState,
@@ -135,6 +147,8 @@ fun ChatList(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
+    onCodexCommandApproval: (JsonRpcId, CodexAppServerCommandApprovalDecision) -> Unit = { _, _ -> },
+    onCodexFileApproval: (JsonRpcId, CodexAppServerFileChangeApprovalDecision) -> Unit = { _, _ -> },
 ) {
     AnimatedContent(
         targetState = previewMode,
@@ -159,6 +173,7 @@ fun ChatList(
                 state = state,
                 loading = loading,
                 processingStatus = processingStatus,
+                codexState = codexState,
                 settings = settings,
                 hazeState = hazeState,
                 errors = errors,
@@ -177,6 +192,8 @@ fun ChatList(
                 onToolAnswer = onToolAnswer,
                 onToggleFavorite = onToggleFavorite,
                 onConversationSystemPromptChange = onConversationSystemPromptChange,
+                onCodexCommandApproval = onCodexCommandApproval,
+                onCodexFileApproval = onCodexFileApproval,
             )
         }
     }
@@ -189,6 +206,7 @@ private fun ChatListNormal(
     state: LazyListState,
     loading: Boolean,
     processingStatus: String? = null,
+    codexState: CodexConversationUiState,
     settings: Settings,
     hazeState: HazeState,
     errors: List<ChatError>,
@@ -207,6 +225,8 @@ private fun ChatListNormal(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
+    onCodexCommandApproval: (JsonRpcId, CodexAppServerCommandApprovalDecision) -> Unit,
+    onCodexFileApproval: (JsonRpcId, CodexAppServerFileChangeApprovalDecision) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val loadingState by rememberUpdatedState(loading)
@@ -383,6 +403,12 @@ private fun ChatListNormal(
                         customSystemPrompt = conversation.customSystemPrompt,
                         onSystemPromptChange = onConversationSystemPromptChange,
                     )
+                }
+            }
+
+            if (codexState !is CodexConversationUiState.Disabled && codexState !is CodexConversationUiState.Disconnected) {
+                item(key = "CodexLiveActivity") {
+                    CodexLiveActivity(codexState, onCodexCommandApproval, onCodexFileApproval)
                 }
             }
 
@@ -598,6 +624,65 @@ private fun buildHighlightedText(
         if (startIndex < text.length) {
             append(text.substring(startIndex))
         }
+    }
+}
+
+@Composable
+private fun CodexActivityContent(activity: CodexConversationActivity) {
+    if (activity.reasoning.isNotBlank()) Text(activity.reasoning, style = MaterialTheme.typography.bodySmall)
+    activity.commands.forEach { CodexCommandExecutionCard(it) }
+    activity.files.forEach { CodexFileChangeCard(it) }
+    activity.diff?.let { CodexTurnDiffCard(it) }
+    activity.terminalInteractions.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+}
+
+@Composable
+private fun CodexLiveActivity(
+    state: CodexConversationUiState,
+    onCommand: (JsonRpcId, CodexAppServerCommandApprovalDecision) -> Unit,
+    onFile: (JsonRpcId, CodexAppServerFileChangeApprovalDecision) -> Unit,
+) {
+    if (state is CodexConversationUiState.WaitingForApproval) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            CodexActivityContent(state.activity)
+            when (val event = state.event) {
+                is CodexAppServerApprovalEvent.CommandExecutionRequest -> CodexCommandApprovalCard(event.request, { onCommand(event.requestId, it) }, submitting = state.submitting)
+                is CodexAppServerApprovalEvent.FileChangeRequest -> CodexFileChangeApprovalCard(event.request, { onFile(event.requestId, it) }, fileChange = state.fileChange, submitting = state.submitting)
+                else -> Text("Unsupported Codex approval event", color = MaterialTheme.colorScheme.error)
+            }
+        }
+        return
+    }
+    val phaseActivity = when (state) {
+        is CodexConversationUiState.Running -> state.activity
+        is CodexConversationUiState.Terminal -> state.activity
+        else -> null
+    }
+    if (phaseActivity != null && phaseActivity != CodexConversationActivity()) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Codex activity", style = MaterialTheme.typography.titleSmall)
+            CodexActivityContent(phaseActivity)
+        }
+        return
+    }
+    val text = when (state) {
+        CodexConversationUiState.Disabled -> "Codex disabled"
+        CodexConversationUiState.Disconnected -> "Codex disconnected"
+        CodexConversationUiState.Opening -> "Opening Codex App Server…"
+        is CodexConversationUiState.Ready -> "Codex ready · ${state.threadId}"
+        is CodexConversationUiState.Running -> "Codex running · ${state.turnId}"
+        is CodexConversationUiState.Terminal -> "Codex ${state.status.wireValue}"
+        is CodexConversationUiState.WaitingForApproval -> "Codex is waiting for your approval"
+        is CodexConversationUiState.StaleBinding -> "Codex binding is stale: ${state.reason}"
+        is CodexConversationUiState.WorkspaceMismatch -> "Codex workspace mismatch"
+        is CodexConversationUiState.Failed -> "Codex failed: ${state.message}"
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Text(text, modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.labelMedium)
     }
 }
 

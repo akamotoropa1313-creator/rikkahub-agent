@@ -67,14 +67,19 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
+import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
+import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
+import me.rerere.rikkahub.ui.components.codex.CodexControlSheet
+import me.rerere.rikkahub.ui.components.codex.codexComposerLabel
+import me.rerere.rikkahub.ui.components.codex.compactContextText
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.useCropLauncher
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
@@ -111,6 +116,8 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val conversation by vm.conversation.collectAsStateWithLifecycle()
     val loadingJob by vm.conversationJob.collectAsStateWithLifecycle()
     val processingStatus by vm.processingStatus.collectAsStateWithLifecycle()
+    val codexState by vm.codexState.collectAsStateWithLifecycle()
+    val hasCodexBinding by vm.hasCodexBinding.collectAsStateWithLifecycle()
     val currentChatModel by vm.currentChatModel.collectAsStateWithLifecycle()
     val enableWebSearch by vm.enableWebSearch.collectAsStateWithLifecycle()
     val errors by vm.errors.collectAsStateWithLifecycle()
@@ -118,27 +125,23 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
 
-    // Handle back press when drawer is open
     BackHandler(enabled = drawerState.isOpen) {
         scope.launch {
             drawerState.close()
         }
     }
 
-    // Hide keyboard when drawer is open
     LaunchedEffect(drawerState.isOpen) {
         if (drawerState.isOpen) {
             softwareKeyboardController?.hide()
         }
     }
 
-    @Suppress("DEPRECATION")  // LocalWindowInfo replaces this in a future Compose bump
+    @Suppress("DEPRECATION")
     val windowAdaptiveInfo = currentWindowDpSize()
     val isBigScreen =
         windowAdaptiveInfo.width > windowAdaptiveInfo.height && windowAdaptiveInfo.width >= 1100.dp
 
-    // 进入大屏（永久抽屉）模式时重置抽屉状态为关闭，
-    // 避免从横屏旋转回竖屏后，模态抽屉残留为打开状态且无法关闭（#1304）
     LaunchedEffect(isBigScreen) {
         if (isBigScreen && drawerState.isOpen) {
             drawerState.close()
@@ -147,7 +150,6 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
 
     val inputState = vm.inputState
 
-    // 初始化输入状态（处理传入的 files 和 text 参数）
     LaunchedEffect(files, text) {
         if (files.isNotEmpty()) {
             val localFiles = filesManager.createChatFilesByContents(files)
@@ -206,6 +208,8 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     inputState = inputState,
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
+                    codexState = codexState,
+                    hasCodexBinding = hasCodexBinding,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -238,6 +242,8 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     inputState = inputState,
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
+                    codexState = codexState,
+                    hasCodexBinding = hasCodexBinding,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -264,6 +270,8 @@ private fun ChatPageContent(
     inputState: ChatInputState,
     loadingJob: Job?,
     processingStatus: String? = null,
+    codexState: CodexConversationUiState,
+    hasCodexBinding: Boolean,
     setting: Settings,
     bigScreen: Boolean,
     conversation: Conversation,
@@ -283,8 +291,13 @@ private fun ChatPageContent(
     val workspaceRepository: WorkspaceRepository = koinInject()
     var previewMode by rememberSaveable { mutableStateOf(false) }
     val hazeState = rememberHazeState()
-    val assistant = setting.getCurrentAssistant()
+    val assistant = setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
     var showFilesSheet by remember { mutableStateOf(false) }
+    var showCodexControls by remember { mutableStateOf(false) }
+    val codexCapabilities by vm.codexCapabilities.collectAsStateWithLifecycle()
+    val codexReview by vm.codexReview.collectAsStateWithLifecycle()
+    val codexOperationBusy by vm.codexOperationBusy.collectAsStateWithLifecycle()
+    val selectedCodexSkill by vm.selectedCodexSkill.collectAsStateWithLifecycle()
 
     val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
         assistant.workspaceId?.let { workspaceId ->
@@ -325,92 +338,128 @@ private fun ChatPageContent(
                 )
             },
             bottomBar = {
-                ChatInput(
-                    state = inputState,
-                    loading = loadingJob != null,
-                    settings = setting,
-                    hazeState = hazeState,
-                    completionProviders = completionProviders,
-                    onCancelClick = {
-                        vm.stopGeneration()
-                    },
-                    enableSearch = enableWebSearch,
-                    onToggleSearch = {
-                        val current = setting.getCurrentAssistant()
-                        vm.updateSettings(
-                            setting.copy(
-                                assistants = setting.assistants.map { assistant ->
-                                    if (assistant.id == current.id) {
-                                        assistant.copy(enableWebSearch = !enableWebSearch)
-                                    } else {
-                                        assistant
-                                    }
-                                }
-                            )
-                        )
-                    },
-                    onSendClick = {
-                        if (currentChatModel == null) {
-                            toaster.show(
-                                context.getString(R.string.chat_select_model_first),
-                                type = ToastType.Error,
-                            )
-                            return@ChatInput
+                Column {
+                    selectedCodexSkill?.let { skill ->
+                        TextButton(onClick = { vm.selectCodexSkill(null) }) {
+                            Text("${skill.name}  ×", maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        if (inputState.isEditing()) {
-                            vm.handleMessageEdit(
-                                parts = inputState.getContents(),
-                                messageId = inputState.editingMessage!!,
-                            )
-                        } else {
-                            vm.handleMessageSend(inputState.getContents())
-                            scope.launch {
-                                chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
+                    }
+                    if (assistant.codexAppServerEnabled) {
+                        val currentUsage = when (val state = codexState) {
+                            is CodexConversationUiState.Ready -> state.telemetry
+                            is CodexConversationUiState.Running -> state.telemetry
+                            is CodexConversationUiState.WaitingForApproval -> state.telemetry
+                            is CodexConversationUiState.Terminal -> state.telemetry
+                            else -> null
+                        }?.latest?.tokenUsage
+                        TextButton(
+                            onClick = { showCodexControls = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column {
+                                Text(
+                                    text = codexComposerLabel(assistant, codexCapabilities.models),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                currentUsage?.let { usage ->
+                                    Text(
+                                        text = compactContextText(usage),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                }
                             }
                         }
-                        inputState.clearInput()
-                    },
-                    onLongSendClick = {
-                        if (inputState.isEditing()) {
-                            vm.handleMessageEdit(
-                                parts = inputState.getContents(),
-                                messageId = inputState.editingMessage!!,
-                            )
-                        } else {
-                            vm.handleMessageSend(content = inputState.getContents(), answer = false)
-                            scope.launch {
-                                chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
-                            }
-                        }
-                        inputState.clearInput()
-                    },
-                    onUpdateChatModel = {
-                        vm.setChatModel(assistant = setting.getCurrentAssistant(), model = it)
-                    },
-                    onUpdateAssistant = {
-                        vm.updateSettings(
-                            setting.copy(
-                                assistants = setting.assistants.map { assistant ->
-                                    if (assistant.id == it.id) {
-                                        it
-                                    } else {
-                                        assistant
+                    }
+                    ChatInput(
+                        state = inputState,
+                        loading = loadingJob != null,
+                        settings = setting,
+                        hazeState = hazeState,
+                        completionProviders = completionProviders,
+                        onCancelClick = {
+                            vm.stopGeneration()
+                        },
+                        enableSearch = enableWebSearch,
+                        onToggleSearch = {
+                            val current = setting.getCurrentAssistant()
+                            vm.updateSettings(
+                                setting.copy(
+                                    assistants = setting.assistants.map { assistant ->
+                                        if (assistant.id == current.id) {
+                                            assistant.copy(enableWebSearch = !enableWebSearch)
+                                        } else {
+                                            assistant
+                                        }
                                     }
+                                )
+                            )
+                        },
+                        onSendClick = {
+                            if (currentChatModel == null && !assistant.codexAppServerEnabled) {
+                                toaster.show(
+                                    context.getString(R.string.chat_select_model_first),
+                                    type = ToastType.Error,
+                                )
+                                return@ChatInput
+                            }
+                            if (inputState.isEditing()) {
+                                vm.handleMessageEdit(
+                                    parts = inputState.getContents(),
+                                    messageId = inputState.editingMessage!!,
+                                )
+                            } else {
+                                vm.handleMessageSend(inputState.getContents())
+                                scope.launch {
+                                    chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
                                 }
+                            }
+                            inputState.clearInput()
+                        },
+                        onLongSendClick = {
+                            if (inputState.isEditing()) {
+                                vm.handleMessageEdit(
+                                    parts = inputState.getContents(),
+                                    messageId = inputState.editingMessage!!,
+                                )
+                            } else {
+                                vm.handleMessageSend(content = inputState.getContents(), answer = false)
+                                scope.launch {
+                                    chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
+                                }
+                            }
+                            inputState.clearInput()
+                        },
+                        onUpdateChatModel = {
+                            vm.setChatModel(assistant = setting.getCurrentAssistant(), model = it)
+                        },
+                        onUpdateAssistant = {
+                            vm.updateSettings(
+                                setting.copy(
+                                    assistants = setting.assistants.map { assistant ->
+                                        if (assistant.id == it.id) {
+                                            it
+                                        } else {
+                                            assistant
+                                        }
+                                    }
+                                )
                             )
-                        )
-                    },
-                    onUpdateSearchService = { index ->
-                        vm.updateSettings(
-                            setting.copy(
-                                searchServiceSelected = index
+                        },
+                        onUpdateSearchService = { index ->
+                            vm.updateSettings(
+                                setting.copy(
+                                    searchServiceSelected = index
+                                )
                             )
-                        )
-                    },
-                    onMoreClick = {
-                        showFilesSheet = true
-                    },
-                )
+                        },
+                        onMoreClick = {
+                            showFilesSheet = true
+                        },
+                    )
+                }
             },
             containerColor = Color.Transparent,
         ) { innerPadding ->
@@ -420,12 +469,15 @@ private fun ChatPageContent(
                 state = chatListState,
                 loading = loadingJob != null,
                 processingStatus = processingStatus,
+                codexState = codexState,
                 previewMode = previewMode,
                 settings = setting,
                 hazeState = hazeState,
                 errors = errors,
                 onDismissError = onDismissError,
                 onClearAllErrors = onClearAllErrors,
+                onCodexCommandApproval = vm::respondCodexCommandApproval,
+                onCodexFileApproval = vm::respondCodexFileApproval,
                 onRegenerate = {
                     vm.regenerateAtMessage(it)
                 },
@@ -497,9 +549,42 @@ private fun ChatPageContent(
                 setting = setting,
                 conversation = conversation,
                 assistant = assistant,
+                hasCodexBinding = hasCodexBinding,
                 vm = vm,
                 onDismiss = { showFilesSheet = false },
+                onOpenCodexControls = { showFilesSheet = false; showCodexControls = true },
+                codexOperationBusy = codexOperationBusy,
             )
+        }
+        if (showCodexControls) {
+            ModalBottomSheet(onDismissRequest = { showCodexControls = false }) {
+                CodexControlSheet(
+                    connection = codexState,
+                    capabilities = codexCapabilities,
+                    review = codexReview,
+                    onStartReview = vm::startCodexReview,
+                    assistant = assistant,
+                    onUpdateAssistant = { transform -> vm.updateCodexPreferences(transform) },
+                    hasBinding = hasCodexBinding,
+                    onRefreshAccount = vm::refreshCodexAccount,
+                    onRefreshModels = vm::refreshCodexModels,
+                    onLoadThreadHistory = vm::loadCodexThreadHistory,
+                    onReadHistoryThread = vm::readCodexHistoryThread,
+                    onCloseHistoryThread = vm::closeCodexHistoryThread,
+                    onRefreshConfigDiagnostics = vm::refreshCodexConfigDiagnostics,
+                    onRefreshSkills = vm::refreshCodexSkills,
+                    onRefreshMcp = vm::refreshCodexMcp,
+                    onReloadMcp = vm::reloadCodexMcp,
+                    onSignIn = vm::beginCodexAccountLogin,
+                    onCancelSignIn = vm::cancelCodexAccountLogin,
+                    onLogout = vm::logoutCodexAccount,
+                    onSetSkillEnabled = vm::setCodexSkillEnabled,
+                    onUseSkill = { vm.selectCodexSkill(it); showCodexControls = false },
+                    onMcpSignIn = vm::beginCodexMcpOAuth,
+                    operationBusy = codexOperationBusy,
+                    onReconnect = vm::reconnectCodexSession,
+                )
+            }
         }
     }
 }
@@ -510,8 +595,11 @@ private fun ChatFilesPickerSheet(
     setting: Settings,
     conversation: Conversation,
     assistant: Assistant,
+    hasCodexBinding: Boolean,
     vm: ChatVM,
     onDismiss: () -> Unit,
+    onOpenCodexControls: () -> Unit,
+    codexOperationBusy: Boolean,
 ) {
     val context = LocalContext.current
     val toaster = LocalToaster.current
@@ -592,7 +680,6 @@ private fun ChatFilesPickerSheet(
                     val tempFile = File(context.appTempFolder, "pick_temp_${System.currentTimeMillis()}.jpg")
                     runCatching {
                         val source = selectedUris.first()
-                        // HEIF/HEIC（尤其 HDR HEIF）交给 UCrop 前先解码转为 JPEG，规避裁剪解码失败
                         val converted = ImageUtils.isHeifImage(context, source) &&
                             ImageUtils.convertHeifToJpeg(context, source, tempFile)
                         if (!converted) {
@@ -691,6 +778,10 @@ private fun ChatFilesPickerSheet(
                     )
                 )
             },
+            hasCodexBinding = hasCodexBinding,
+            onResetCodexSession = vm::resetCodexSession,
+            codexOperationBusy = codexOperationBusy,
+            onOpenCodexControls = onOpenCodexControls,
             onUpdateConversation = {
                 vm.updateConversation(it)
                 vm.saveConversationAsync()
@@ -752,7 +843,7 @@ private fun TopBar(
                 color = Color.Transparent,
             ) {
                 Column {
-                    val assistant = settings.getCurrentAssistant()
+                    val assistant = settings.getAssistantById(conversation.assistantId) ?: settings.getCurrentAssistant()
                     val model = settings.getCurrentChatModel()
                     val provider = model?.findProvider(providers = settings.providers, checkOverwrite = false)
                     Text(
@@ -761,7 +852,15 @@ private fun TopBar(
                         style = MaterialTheme.typography.bodyMedium,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (model != null && provider != null) {
+                    if (assistant.codexAppServerEnabled) {
+                        Text(
+                            text = "${assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) }} / Codex App Server",
+                            overflow = TextOverflow.Ellipsis,
+                            maxLines = 1,
+                            color = LocalContentColor.current.copy(0.65f),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    } else if (model != null && provider != null) {
                         Text(
                             text = "${assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) }} / ${model.displayName} (${provider.name})",
                             overflow = TextOverflow.Ellipsis,

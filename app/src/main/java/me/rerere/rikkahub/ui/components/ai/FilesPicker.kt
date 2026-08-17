@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -29,6 +30,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.rememberBottomSheetState
@@ -81,6 +83,7 @@ import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
 import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
 import me.rerere.rikkahub.ui.context.LocalNavController
+import me.rerere.rikkahub.ui.components.codex.codexSafetyIndicator
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.workspace.WorkspaceShellStatus
@@ -96,6 +99,10 @@ internal fun FilesPicker(
     onCompressContext: (additionalPrompt: String, targetTokens: Int, keepRecentMessages: Int) -> Job,
     onUpdateAssistant: (Assistant) -> Unit,
     onUpdateConversation: (Conversation) -> Unit,
+    hasCodexBinding: Boolean,
+    onResetCodexSession: () -> Unit,
+    codexOperationBusy: Boolean,
+    onOpenCodexControls: () -> Unit,
     showInjectionSheet: Boolean,
     onShowInjectionSheetChange: (Boolean) -> Unit,
     showCompressDialog: Boolean,
@@ -112,6 +119,14 @@ internal fun FilesPicker(
     val navController = LocalNavController.current
     val workspaceRepository: WorkspaceRepository = koinInject()
     val workspaces by workspaceRepository.listFlow().collectAsState(initial = emptyList())
+    var confirmCodexReset by remember { mutableStateOf(false) }
+    if (confirmCodexReset) AlertDialog(
+        onDismissRequest = { confirmCodexReset = false },
+        title = { Text("Reset Codex session?") },
+        text = { Text("Continuity with the current Codex thread will be lost. The next Send will create a new thread.") },
+        confirmButton = { TextButton(onClick = { confirmCodexReset = false; onResetCodexSession() }) { Text("Reset") } },
+        dismissButton = { TextButton(onClick = { confirmCodexReset = false }) { Text("Cancel") } },
+    )
 
     Column(
         modifier = Modifier
@@ -127,13 +142,16 @@ internal fun FilesPicker(
 
             ImagePickButton(onClick = onPickImage)
 
-            if (provider != null && provider is ProviderSetting.Google) {
+            if (!assistant.codexAppServerEnabled && provider != null && provider is ProviderSetting.Google) {
                 VideoPickButton(onClick = onPickVideo)
 
                 AudioPickButton(onClick = onPickAudio)
             }
 
-            FilePickButton(onClick = onPickFile)
+            // An unloaded/legacy catalog is Unknown, so the App Server remains authoritative.
+            if (assistant.codexAppServerEnabled) AudioPickButton(onClick = onPickAudio)
+
+            if (!assistant.codexAppServerEnabled) FilePickButton(onClick = onPickFile)
         }
 
         HorizontalDivider(
@@ -160,6 +178,46 @@ internal fun FilesPicker(
                     navController.navigate(Screen.Workspaces)
                 },
             )
+        }
+
+        val selectedWorkspace = assistant.workspaceId?.let { id -> workspaces.firstOrNull { it.id == id.toString() } }
+        val codexPrerequisite = when {
+            assistant.workspaceId == null -> "Select a workspace before enabling Codex App Server"
+            selectedWorkspace == null -> "The selected workspace is unavailable"
+            selectedWorkspace.shellStatus != WorkspaceShellStatus.READY.name -> "The workspace shell must be READY"
+            else -> "Uses an App Server-managed thread; the normal provider model is not used"
+        }
+        ListItem(
+            headlineContent = { Text("Codex App Server") },
+            supportingContent = { Text(codexPrerequisite) },
+            trailingContent = {
+                Switch(
+                    checked = assistant.codexAppServerEnabled,
+                    enabled = assistant.codexAppServerEnabled || (selectedWorkspace?.shellStatus == WorkspaceShellStatus.READY.name),
+                    onCheckedChange = { enabled ->
+                        onUpdateAssistant(assistant.copy(codexAppServerEnabled = enabled))
+                    },
+                )
+            },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        )
+
+        if (assistant.codexAppServerEnabled) {
+            ListItem(
+                headlineContent = { Text("Codex controls") },
+                supportingContent = {
+                    Column {
+                        Text("Connection, Account, Codex Skills, Codex MCP, and safety")
+                        codexSafetyIndicator(assistant)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    }
+                },
+                modifier = Modifier.clip(MaterialTheme.shapes.large).clickable { onOpenCodexControls() },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            )
+        }
+
+        if (hasCodexBinding) {
+            TextButton(onClick = { confirmCodexReset = true }, enabled = !codexOperationBusy) { Text("Reset Codex session") }
         }
 
         if (settings.mcpServers.isNotEmpty()) {

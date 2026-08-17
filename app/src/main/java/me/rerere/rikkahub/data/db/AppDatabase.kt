@@ -9,6 +9,7 @@ import me.rerere.ai.core.TokenUsage
 import me.rerere.rikkahub.data.agentrun.AgentRun
 import me.rerere.rikkahub.data.agentrun.AgentRunDao
 import me.rerere.rikkahub.data.db.dao.ConversationDAO
+import me.rerere.rikkahub.data.db.dao.CodexAppServerSessionBindingDao
 import me.rerere.rikkahub.data.db.dao.ConversationCompactionDAO
 import me.rerere.rikkahub.data.db.dao.FavoriteDAO
 import me.rerere.rikkahub.data.db.dao.FolderDAO
@@ -22,6 +23,7 @@ import me.rerere.rikkahub.data.db.dao.SshHostDao
 import me.rerere.rikkahub.data.db.dao.TelegramChatDao
 import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
 import me.rerere.rikkahub.data.db.entity.ConversationEntity
+import me.rerere.rikkahub.data.db.entity.CodexAppServerSessionBindingEntity
 import me.rerere.rikkahub.data.db.entity.ConversationCompactionEntity
 import me.rerere.rikkahub.data.db.entity.FavoriteEntity
 import me.rerere.rikkahub.data.db.entity.FolderEntity
@@ -63,8 +65,9 @@ import me.rerere.rikkahub.workflow.db.WorkflowRunEntity
         AgentRun::class,
         WorkspaceEntity::class,
         FolderEntity::class,
+        CodexAppServerSessionBindingEntity::class,
     ],
-    version = 30,
+    version = 31,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
@@ -108,6 +111,10 @@ import me.rerere.rikkahub.workflow.db.WorkflowRunEntity
         // from Room. Nullable-equivalent (empty string default, matching folder_id), so a plain
         // auto-migration suffices.
         AutoMigration(from = 29, to = 30),
+        // v31: durable local pointers to Codex-owned persistent threads. There are deliberately
+        // no foreign keys: WorkspaceDAO uses SQLite REPLACE, whose delete/reinsert behavior must
+        // not cascade-delete a binding during an ordinary workspace upsert.
+        AutoMigration(from = 30, to = 31),
     ]
 )
 @TypeConverters(TokenUsageConverter::class)
@@ -143,6 +150,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun workspaceDao(): WorkspaceDAO
 
     abstract fun folderDao(): FolderDAO
+
+    abstract fun codexAppServerSessionBindingDao(): CodexAppServerSessionBindingDao
 }
 
 object TokenUsageConverter {

@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.launch
 import me.rerere.rikkahub.data.model.Conversation
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.uuid.Uuid
 
@@ -21,6 +22,7 @@ class ConversationSession(
     initial: Conversation,
     private val scope: CoroutineScope,
     private val onIdle: (Uuid) -> Unit,
+    private val idleTimeoutMs: Long = IDLE_TIMEOUT_MS,
 ) {
     // 会话状态
     val state = MutableStateFlow(initial)
@@ -33,21 +35,126 @@ class ConversationSession(
 
     // 生成任务（内聚在 session 中）
     private val _generationJob = MutableStateFlow<Job?>(null)
+    private val sendTrackingLock = Any()
+    private val pendingSendJobs = linkedSetOf<Job>()
+    private var evictionClaimed = false
+    private var closed = false
+    fun registerPendingSend(job: Job): Boolean {
+        val added = synchronized(sendTrackingLock) {
+            if (evictionClaimed || closed) false else pendingSendJobs.add(job)
+        }
+        if (added) cancelIdleCheck()
+        return added
+    }
+    data class SendPromotion(val promoted: Boolean, val previous: Job?)
+    fun promotePendingSendToGeneration(job: Job): SendPromotion = synchronized(sendTrackingLock) {
+        if (!pendingSendJobs.remove(job)) return@synchronized SendPromotion(false, null)
+        val previous = _generationJob.getAndUpdate { job }
+        installJobCompletion(job)
+        SendPromotion(true, previous)
+    }
+    fun removePendingSend(job: Job): Boolean {
+        val removed = synchronized(sendTrackingLock) { pendingSendJobs.remove(job) }
+        if (removed && !isInUse) scheduleIdleCheck()
+        return removed
+    }
+    fun cancelPendingSends() {
+        val jobs = synchronized(sendTrackingLock) {
+            pendingSendJobs.toList().also { pendingSendJobs.clear() }
+        }
+        jobs.forEach(Job::cancel)
+        if (jobs.isNotEmpty() && !isInUse) scheduleIdleCheck()
+    }
+    val hasPendingSends: Boolean get() = synchronized(sendTrackingLock) { pendingSendJobs.isNotEmpty() }
     val generationJob: StateFlow<Job?> = _generationJob.asStateFlow()
     val isGenerating: Boolean get() = _generationJob.value?.isActive == true
-    val isInUse: Boolean get() = refCount.get() > 0 || isGenerating
+    val isInUse: Boolean get() = refCount.get() > 0 || isGenerating || hasPendingSends
+    fun tryClaimIdleEviction(): Boolean = synchronized(sendTrackingLock) {
+        if (closed || evictionClaimed || refCount.get() > 0 || _generationJob.value?.isActive == true || pendingSendJobs.isNotEmpty()) {
+            false
+        } else {
+            evictionClaimed = true
+            true
+        }
+    }
+    fun releaseIdleEvictionClaim() = synchronized(sendTrackingLock) { evictionClaimed = false }
+    private val codexOperationActive = AtomicBoolean(false)
+    private val _codexOperationBusy = MutableStateFlow(false)
+    val codexOperationBusy: StateFlow<Boolean> = _codexOperationBusy.asStateFlow()
+    fun tryBeginCodexOperation(): Boolean = codexOperationActive.compareAndSet(false, true).also { if (it) _codexOperationBusy.value = true }
+    fun endCodexOperation() { codexOperationActive.set(false); _codexOperationBusy.value = false }
+    val isCodexOperationActive: Boolean get() = codexOperationActive.get()
 
     // 空闲检查任务
     private var idleCheckJob: Job? = null
 
-    fun acquire(): Int = refCount.incrementAndGet().also {
-        cancelIdleCheck()
-        Log.d(TAG, "acquire $id (refs=$it)")
+    @Volatile var codexRuntime: CodexChatRuntime? = null
+        private set
+    private var codexStateJob: Job? = null
+    private var codexCapabilitiesJob: Job? = null
+    private var codexReviewJob: Job? = null
+    private val _codexState = MutableStateFlow<CodexConversationUiState>(CodexConversationUiState.Disconnected)
+    val codexState: StateFlow<CodexConversationUiState> = _codexState.asStateFlow()
+    private val _codexCapabilities = MutableStateFlow(CodexCapabilitiesUiState())
+    val codexCapabilities: StateFlow<CodexCapabilitiesUiState> = _codexCapabilities.asStateFlow()
+    private val _codexReview = MutableStateFlow(CodexReviewUiState())
+    val codexReview: StateFlow<CodexReviewUiState> = _codexReview.asStateFlow()
+
+    @Synchronized fun replaceCodexRuntime(runtime: CodexChatRuntime?) {
+        val previous = codexRuntime
+        codexRuntime = runtime
+        codexStateJob?.cancel()
+        codexCapabilitiesJob?.cancel()
+        codexReviewJob?.cancel()
+        codexStateJob = runtime?.let { installed ->
+            scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                installed.state.collect { _codexState.value = it }
+            }
+        }
+        codexCapabilitiesJob = runtime?.let { installed ->
+            scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                installed.capabilities.collect { _codexCapabilities.value = it }
+            }
+        }
+        codexReviewJob = runtime?.let { installed -> scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            installed.review.collect { _codexReview.value = it }
+        } }
+        if (runtime == null) { _codexCapabilities.value = CodexCapabilitiesUiState(); _codexReview.value = CodexReviewUiState() }
+        if (runtime == null && previous == null) _codexState.value = CodexConversationUiState.Disconnected
+        if (previous !== runtime) previous?.close()
     }
 
-    fun release(): Int = refCount.decrementAndGet().also {
-        Log.d(TAG, "release $id (refs=$it)")
-        if (it <= 0) scheduleIdleCheck()
+    @Synchronized fun detachCodexRuntime(expected: CodexChatRuntime, preserveState: Boolean = true): Boolean {
+        if (codexRuntime !== expected) return false
+        codexRuntime = null
+        codexStateJob?.cancel()
+        codexStateJob = null
+        codexCapabilitiesJob?.cancel()
+        codexCapabilitiesJob = null
+        codexReviewJob?.cancel(); codexReviewJob = null; _codexReview.value = CodexReviewUiState()
+        _codexCapabilities.value = CodexCapabilitiesUiState()
+        if (!preserveState) _codexState.value = CodexConversationUiState.Disconnected
+        return true
+    }
+
+    internal fun tryAcquireLifecycle(): Int? = synchronized(sendTrackingLock) {
+        if (evictionClaimed || closed) null else refCount.incrementAndGet()
+    }
+
+    fun tryAcquire(): Int? {
+        val refs = tryAcquireLifecycle() ?: return null
+        cancelIdleCheck()
+        Log.d(TAG, "acquire $id (refs=$refs)")
+        return refs
+    }
+
+    fun acquire(): Int = checkNotNull(tryAcquire()) { "Conversation session is being evicted" }
+
+    fun release(): Int {
+        val refs = synchronized(sendTrackingLock) { refCount.decrementAndGet() }
+        Log.d(TAG, "release $id (refs=$refs)")
+        if (refs <= 0) scheduleIdleCheck()
+        return refs
     }
 
     // 作用域 API - 短请求（REST）
@@ -76,28 +183,33 @@ class ConversationSession(
         // each read the prior value, A cancels old, B reads old (already cancelled,
         // no-op), A writes newA, B writes newB → A's job is untracked but still running;
         // getJob() returns B; stopGeneration only cancels B; A leaks until completion.
-        val previous = _generationJob.getAndUpdate { job }
-        previous?.cancel()
-        // Identity-checked completion handler: only null the StateFlow if the value is
-        // STILL the same job we just set. Without this an out-of-order setJob(B) →
-        // A.invokeOnCompletion → clobber-B race could null out the live job.
-        job?.invokeOnCompletion {
-            _generationJob.compareAndSet(job, null)
-            if (refCount.get() <= 0) {
-                scheduleIdleCheck()
+        val previous = synchronized(sendTrackingLock) {
+            if (closed || evictionClaimed) {
+                job?.cancel()
+                return
             }
+            _generationJob.getAndUpdate { job }
+        }
+        previous?.cancel()
+        job?.let(::installJobCompletion)
+    }
+
+    private fun installJobCompletion(job: Job) {
+        job.invokeOnCompletion {
+            _generationJob.compareAndSet(job, null)
+            if (refCount.get() <= 0) scheduleIdleCheck()
         }
     }
 
     fun getJob(): Job? = _generationJob.value
 
+    fun publishCodexState(state: CodexConversationUiState) { _codexState.value = state }
+
     private fun scheduleIdleCheck() {
         idleCheckJob?.cancel()
         idleCheckJob = scope.launch {
-            delay(IDLE_TIMEOUT_MS)
-            if (refCount.get() <= 0 && !isGenerating) {
-                onIdle(id)
-            }
+            delay(idleTimeoutMs)
+            if (!isInUse) onIdle(id)
         }
     }
 
@@ -107,6 +219,11 @@ class ConversationSession(
     }
 
     fun cleanup() {
+        synchronized(sendTrackingLock) {
+            if (closed) return
+            closed = true
+            evictionClaimed = true
+        }
         // Use getAndUpdate (same as setJob) so cleanup() is consistent with the atomic
         // swap used elsewhere. Direct .value = null would bypass the CAS and could
         // theoretically race with a concurrent setJob that's running post-removal
@@ -115,7 +232,10 @@ class ConversationSession(
         // cleanup() is only called after removal, but correctness still matters.
         val job = _generationJob.getAndUpdate { null }
         job?.cancel()
+        cancelPendingSends()
         idleCheckJob?.cancel()
         idleCheckJob = null
+        replaceCodexRuntime(null)
+        endCodexOperation()
     }
 }
