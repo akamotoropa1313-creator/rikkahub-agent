@@ -2,6 +2,7 @@ package me.rerere.rikkahub.service
 
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -199,6 +200,52 @@ class CodexChatRuntimeIntegrationTest {
         }
     }
 
+    @Test
+    fun `agent text callback failure releases terminal waiter with failure`() = runBlocking {
+        val harness = harness(this) { _, _, _ -> error("persist failed") }
+        try {
+            harness.runtime.acceptStartResponse("turn-1", CodexAppServerTurnStatus.InProgress)
+            val waiter = async { runCatching { harness.runtime.awaitTurnTerminal("turn-1") } }
+
+            harness.transport.emit(notification("item/agentMessage/delta", buildJsonObject {
+                put("threadId", "thread-1")
+                put("turnId", "turn-1")
+                put("itemId", "agent-1")
+                put("delta", "hello")
+            }))
+
+            val result = withTimeout(2_000) { waiter.await() }
+            assertTrue(result.isFailure)
+            assertEquals("persist failed", result.exceptionOrNull()?.message)
+            assertTrue(awaitState(harness.runtime) { it is CodexConversationUiState.Failed } is CodexConversationUiState.Failed)
+        } finally {
+            harness.runtime.close()
+        }
+    }
+
+    @Test
+    fun `malformed turn completed releases active terminal waiter with protocol failure`() = runBlocking {
+        val harness = harness(this)
+        try {
+            harness.runtime.acceptStartResponse("turn-1", CodexAppServerTurnStatus.InProgress)
+            val waiter = async { runCatching { harness.runtime.awaitTurnTerminal("turn-1") } }
+
+            harness.transport.emit(notification("turn/completed", buildJsonObject {
+                put("threadId", "thread-1")
+                put("turn", buildJsonObject {
+                    put("id", "turn-1")
+                })
+            }))
+
+            val result = withTimeout(2_000) { waiter.await() }
+            assertTrue(result.isFailure)
+            assertTrue(result.exceptionOrNull()?.message?.contains("status") == true)
+            assertTrue(awaitState(harness.runtime) { it is CodexConversationUiState.Failed } is CodexConversationUiState.Failed)
+        } finally {
+            harness.runtime.close()
+        }
+    }
+
     private fun assertActivity(activity: CodexConversationActivity) {
         assertEquals("first\nsecond", activity.reasoning)
         assertEquals(listOf("command-1", "command-2"), activity.commands.map { it.id })
@@ -210,7 +257,10 @@ class CodexChatRuntimeIntegrationTest {
         predicate: (CodexConversationUiState) -> Boolean,
     ): CodexConversationUiState = withTimeout(2_000) { runtime.state.first(predicate) }
 
-    private fun harness(scope: CoroutineScope): Harness {
+    private fun harness(
+        scope: CoroutineScope,
+        onAgentText: suspend (turnId: String, itemId: String, text: String) -> Unit = { _, _, _ -> },
+    ): Harness {
         val binding = CodexAppServerSessionBindingEntity(
             conversationId = "conversation-1",
             workspaceId = "workspace-1",
@@ -231,7 +281,7 @@ class CodexChatRuntimeIntegrationTest {
             CodexAppServerClientInfo(version = "test"),
         )
         val session = CodexAppServerConversationSession(binding, connection, repository)
-        return Harness(CodexChatRuntime(session, scope, onAgentText = { _, _, _ -> }), transport)
+        return Harness(CodexChatRuntime(session, scope, onAgentText = onAgentText), transport)
     }
 
     private data class Harness(

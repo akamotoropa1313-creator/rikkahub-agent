@@ -57,6 +57,7 @@ class CodexChatRuntime(
     private val terminalClaimed = ConcurrentHashMap.newKeySet<String>()
     private val recentTerminalTurns = ConcurrentLinkedQueue<String>()
     private val closed = AtomicBoolean(false)
+    private val failed = AtomicBoolean(false)
     private val stopController = CodexTurnStopController()
     private val approvalLock = Any()
     private val pendingApprovals = linkedMapOf<JsonRpcId, PendingApproval>()
@@ -450,6 +451,18 @@ class CodexChatRuntime(
         }
     }
 
+    private fun failRuntime(failure: Throwable) {
+        if (failure is CancellationException) throw failure
+        if (!failed.compareAndSet(false, true)) return
+        activeTurnId = null
+        synchronized(approvalLock) {
+            pendingApprovals.clear()
+        }
+        _state.value = CodexConversationUiState.Failed(failure.message ?: failure.toString())
+        turns.values.forEach { it.terminal.completeExceptionally(failure) }
+        runCatching { onFailure(this, failure) }
+    }
+
     private suspend fun terminal(turnId: String, status: CodexAppServerTurnStatus, snapshot: CodexAppServerTurnSnapshot? = null) {
         val turn = record(turnId)
         if (!terminalClaimed.add(turnId)) {
@@ -504,8 +517,16 @@ class CodexChatRuntime(
 
     private val collector: Job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.turnApi.events.collect { event ->
+            if (failed.get()) return@collect
+            if (event is CodexAppServerTurnEvent.MalformedNotification) {
+                val rawThreadId = ((event.rawParams as? kotlinx.serialization.json.JsonObject)?.get("threadId")
+                    as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+                if (rawThreadId == null || rawThreadId == session.threadId) failRuntime(event.cause)
+                return@collect
+            }
             if (event.threadIdOrNull() != session.threadId) return@collect
-            when (event) {
+            try {
+                when (event) {
                 is CodexAppServerTurnEvent.TurnStarted -> {
                     record(event.turn.id)
                     if (reviewStarting) reviewTurns.add(event.turn.id)
@@ -582,7 +603,12 @@ class CodexChatRuntime(
                     turnDiffs[event.turnId] = event.diff
                     publishActivity(event.turnId)
                 }
-                is CodexAppServerTurnEvent.MalformedNotification -> _state.value = CodexConversationUiState.Failed(event.cause.message ?: "Malformed Codex event")
+                is CodexAppServerTurnEvent.MalformedNotification -> Unit
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                failRuntime(failure)
             }
         }
     }
@@ -640,13 +666,7 @@ class CodexChatRuntime(
     private val failureCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.failure.collect { failure ->
             failure ?: return@collect
-            activeTurnId = null
-            synchronized(approvalLock) {
-                pendingApprovals.clear()
-            }
-            _state.value = CodexConversationUiState.Failed(failure.message ?: failure.toString())
-            turns.values.forEach { it.terminal.completeExceptionally(failure) }
-            onFailure(this@CodexChatRuntime, failure)
+            failRuntime(failure)
         }
     }
 

@@ -141,6 +141,39 @@ class WorkspaceInteractiveProcessTest {
         assertFalse(process.isAlive)
     }
 
+    @Test fun `onClose callback runs outside handle monitor`() {
+        val process = ControlledProcess()
+        val callbackEntered = CountDownLatch(1)
+        val callbackRelease = CountDownLatch(1)
+        val monitorAcquired = CountDownLatch(1)
+        lateinit var handle: WorkspaceInteractiveProcess
+        handle = WorkspaceInteractiveProcess(
+            process,
+            onClose = {
+                callbackEntered.countDown()
+                assertTrue(callbackRelease.await(2, TimeUnit.SECONDS))
+            },
+            closeTimeoutMillis = 1,
+        )
+
+        val closeThread = thread { handle.close() }
+        assertTrue(callbackEntered.await(2, TimeUnit.SECONDS))
+        val monitorThread = thread {
+            synchronized(handle) {
+                monitorAcquired.countDown()
+            }
+        }
+        try {
+            assertTrue("handle monitor must be released before onClose", monitorAcquired.await(500, TimeUnit.MILLISECONDS))
+        } finally {
+            callbackRelease.countDown()
+        }
+        closeThread.join(2_000)
+        monitorThread.join(2_000)
+        assertFalse(closeThread.isAlive)
+        assertFalse(monitorThread.isAlive)
+    }
+
     @Test fun `background still receives bind mounts and deletion kills it`() {
         val base = createTempDirectory("interactive").toFile()
         val process = ControlledProcess()

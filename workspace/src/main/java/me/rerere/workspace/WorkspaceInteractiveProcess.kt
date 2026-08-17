@@ -22,21 +22,23 @@ class WorkspaceInteractiveProcess internal constructor(
     fun destroy() = process.destroy()
     fun destroyForcibly(): Process = process.destroyForcibly()
 
-    @Synchronized
     override fun close() {
-        if (closed) return
-        runCatching { stdin.close() }
-        if (process.isAlive) process.destroy()
-        var stopped = awaitStopped()
-        if (!stopped && process.isAlive) {
-            process.destroyForcibly()
-            stopped = awaitStopped()
+        val notifyClose = synchronized(this) {
+            if (closed) return
+            runCatching { stdin.close() }
+            if (process.isAlive) process.destroy()
+            var stopped = awaitStopped()
+            if (!stopped && process.isAlive) {
+                process.destroyForcibly()
+                stopped = awaitStopped()
+            }
+            if (!stopped && process.isAlive) {
+                throw WorkspaceProcessCleanupException("Process remained alive after forceful shutdown")
+            }
+            closed = true
+            true
         }
-        if (!stopped && process.isAlive) {
-            throw WorkspaceProcessCleanupException("Process remained alive after forceful shutdown")
-        }
-        closed = true
-        onClose(this)
+        if (notifyClose) onClose(this)
     }
 
     private fun awaitStopped(): Boolean = runCatching {
