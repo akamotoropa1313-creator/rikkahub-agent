@@ -87,6 +87,8 @@ jobs:
           --tests 'me.rerere.rikkahub.data.codex.appserver.*Test'
           --tests 'me.rerere.rikkahub.ui.components.codex.*Test'
           --tests 'me.rerere.rikkahub.service.Codex*Test'
+          --tests 'me.rerere.rikkahub.di.CodexRepositoryModuleTest'
+          --tests 'me.rerere.rikkahub.utils.CrashHandlerTest'
 
       - name: Run workspace interactive process unit tests
         run: >-
@@ -100,7 +102,9 @@ jobs:
           find app/build/test-results/testDebugUnitTest \
             \( -name 'TEST-me.rerere.rikkahub.data.codex.appserver.*Test.xml' \
             -o -name 'TEST-me.rerere.rikkahub.ui.components.codex.*Test.xml' \
-            -o -name 'TEST-me.rerere.rikkahub.service.Codex*Test.xml' \) \
+            -o -name 'TEST-me.rerere.rikkahub.service.Codex*Test.xml' \
+            -o -name 'TEST-me.rerere.rikkahub.di.CodexRepositoryModuleTest.xml' \
+            -o -name 'TEST-me.rerere.rikkahub.utils.CrashHandlerTest.xml' \) \
             -print -exec cat {} \; 2>/dev/null || true
 
       - name: Print workspace interactive process JUnit failure details
