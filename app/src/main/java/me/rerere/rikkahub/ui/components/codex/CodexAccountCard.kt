@@ -58,16 +58,16 @@ fun CodexAccountCard(
     val presentation = codexAccountPresentation(snapshot, loginPending, enabled, submitting)
     Card(modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Codex account")
-            presentation.lines.forEach { Text(it) }
+            Text(codexUiText("Codex account"))
+            presentation.lines.forEach { Text(codexUiText(it)) }
             statusMessage?.let { Text(it) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (presentation.showCancel) OutlinedButton(onCancelSignIn, enabled = presentation.actionsEnabled) { Text("Cancel") }
+                if (presentation.showCancel) OutlinedButton(onCancelSignIn, enabled = presentation.actionsEnabled) { Text(codexUiText("Cancel")) }
                 else if (presentation.showSignIn) {
-                    Button(onSignIn, enabled = presentation.actionsEnabled) { Text("Sign in with ChatGPT") }
+                    Button(onSignIn, enabled = presentation.actionsEnabled) { Text(codexUiText("Sign in with ChatGPT")) }
                 }
-                OutlinedButton(onRefresh, enabled = presentation.actionsEnabled) { Text("Refresh") }
-                if (presentation.showLogout) OutlinedButton(onLogout, enabled = presentation.actionsEnabled) { Text("Log out") }
+                OutlinedButton(onRefresh, enabled = presentation.actionsEnabled) { Text(codexUiText("Refresh")) }
+                if (presentation.showLogout) OutlinedButton(onLogout, enabled = presentation.actionsEnabled) { Text(codexUiText("Log out")) }
             }
         }
     }

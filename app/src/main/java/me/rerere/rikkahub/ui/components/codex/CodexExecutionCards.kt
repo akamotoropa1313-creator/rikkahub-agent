@@ -42,7 +42,7 @@ fun CodexCommandExecutionCard(item: CodexAppServerItemSnapshot.CommandExecution,
             Text(item.command, fontFamily = FontFamily.Monospace)
             Text(item.cwd, style = MaterialTheme.typography.bodySmall)
             Text("${item.status}${item.exitCode?.let { " · exit $it" } ?: ""}${item.durationMs?.let { " · ${it}ms" } ?: ""}")
-            item.aggregatedOutput?.let { CollapsibleText(it, "Output", isDiff = false) }
+            item.aggregatedOutput?.let { CollapsibleText(it, codexUiText("Output"), isDiff = false) }
         }
     }
 }
@@ -54,13 +54,13 @@ fun CodexFileChangeCard(item: CodexAppServerItemSnapshot.FileChange, modifier: M
             Text(item.status.toString())
             item.changes.forEach { change ->
                 val label = when (val kind = change.kind) {
-                    is CodexAppServerPatchChangeKind.Add -> "Add"
-                    is CodexAppServerPatchChangeKind.Delete -> "Delete"
-                    is CodexAppServerPatchChangeKind.Update -> "Update${kind.movePath?.let { " → $it" } ?: ""}"
+                    is CodexAppServerPatchChangeKind.Add -> codexUiText("Add")
+                    is CodexAppServerPatchChangeKind.Delete -> codexUiText("Delete")
+                    is CodexAppServerPatchChangeKind.Update -> codexUiText("Update") + (kind.movePath?.let { " → $it" } ?: "")
                     is CodexAppServerPatchChangeKind.Other -> kind.type
                 }
                 Text("$label · ${change.path}", style = MaterialTheme.typography.titleSmall)
-                CollapsibleText(change.diff, "Diff", isDiff = true)
+                CollapsibleText(change.diff, codexUiText("Diff"), isDiff = true)
             }
         }
     }
@@ -70,7 +70,7 @@ fun CodexFileChangeCard(item: CodexAppServerItemSnapshot.FileChange, modifier: M
 fun CodexTurnDiffCard(diff: String, modifier: Modifier = Modifier) {
     Card(modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
-            Text("Turn diff", style = MaterialTheme.typography.titleSmall)
+            Text(codexUiText("Turn diff"), style = MaterialTheme.typography.titleSmall)
             UnifiedDiff(diff)
         }
     }

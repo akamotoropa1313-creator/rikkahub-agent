@@ -31,17 +31,17 @@ fun CodexCommandApprovalCard(
     submitting: Boolean = false,
     resolved: Boolean = false,
 ) {
-    ApprovalSurface("Command approval", modifier) {
-        request.reason?.let { LabeledPlainText("Reason", it) }
+    ApprovalSurface(codexUiText("Command approval"), modifier) {
+        request.reason?.let { LabeledPlainText(codexUiText("Reason"), it) }
         request.networkApprovalContext?.let {
-            Text("Network access requested", style = MaterialTheme.typography.titleMedium)
-            LabeledPlainText("Host", it.host)
-            LabeledPlainText("Protocol", it.protocol.toString())
+            Text(codexUiText("Network access requested"), style = MaterialTheme.typography.titleMedium)
+            LabeledPlainText(codexUiText("Host"), it.host)
+            LabeledPlainText(codexUiText("Protocol"), it.protocol.toString())
         }
-        request.command?.let { LabeledPlainText("Command", it, true) }
-        request.cwd?.let { LabeledPlainText("Working directory", it) }
-        request.commandActions?.forEach { LabeledPlainText("Action", commandActionPresentation(it)) }
-        request.environmentId?.let { LabeledPlainText("Environment", it) }
+        request.command?.let { LabeledPlainText(codexUiText("Command"), it, true) }
+        request.cwd?.let { LabeledPlainText(codexUiText("Working directory"), it) }
+        request.commandActions?.forEach { LabeledPlainText(codexUiText("Action"), commandActionPresentation(it)) }
+        request.environmentId?.let { LabeledPlainText(codexUiText("Environment"), it) }
         ApprovalActions(enabled && !submitting && !resolved,
             approve = { onDecision(CodexAppServerCommandApprovalDecision.Accept) },
             session = { onDecision(CodexAppServerCommandApprovalDecision.AcceptForSession) },
@@ -60,11 +60,11 @@ fun CodexFileChangeApprovalCard(
     submitting: Boolean = false,
     resolved: Boolean = false,
 ) {
-    ApprovalSurface("File-change approval", modifier) {
-        request.reason?.let { LabeledPlainText("Reason", it) }
-        request.grantRoot?.let { LabeledPlainText("Requested grant root", it) }
+    ApprovalSurface(codexUiText("File-change approval"), modifier) {
+        request.reason?.let { LabeledPlainText(codexUiText("Reason"), it) }
+        request.grantRoot?.let { LabeledPlainText(codexUiText("Requested grant root"), it) }
         fileChange?.let { CodexFileChangeCard(it) }
-            ?: Text("Change preview unavailable. Approval is disabled for your safety.", color = MaterialTheme.colorScheme.error)
+            ?: Text(codexUiText("Change preview unavailable. Approval is disabled for your safety."), color = MaterialTheme.colorScheme.error)
         val availability = approvalActionAvailability(enabled, submitting, resolved, fileChange != null)
         ApprovalActions(availability.approveEnabled, availability.rejectEnabled,
             approve = { onDecision(CodexAppServerFileChangeApprovalDecision.Accept) },
@@ -77,9 +77,9 @@ fun CodexFileChangeApprovalCard(
 @Composable private fun ApprovalSurface(title:String, modifier:Modifier, content:@Composable ()->Unit) = Card(modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) { Text(title, style=MaterialTheme.typography.titleLarge); content() } }
 @Composable private fun LabeledPlainText(label:String, value:String, monospace:Boolean=false) { Text(label, style=MaterialTheme.typography.labelMedium); Text(value, fontFamily=if(monospace) FontFamily.Monospace else FontFamily.Default) }
 @Composable private fun ApprovalActions(approveEnabled:Boolean, rejectEnabled:Boolean = approveEnabled, approve:()->Unit, session:()->Unit, decline:()->Unit, cancel:()->Unit) {
-    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { Button(approve, enabled=approveEnabled) { Text("Approve once") }; OutlinedButton(session, enabled=approveEnabled) { Text("Approve for session") } }
+    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { Button(approve, enabled=approveEnabled) { Text(codexUiText("Approve once")) }; OutlinedButton(session, enabled=approveEnabled) { Text(codexUiText("Approve for session")) } }
     Text("Decline rejects this action and lets the turn continue. Cancel turn rejects it and stops the turn.", style=MaterialTheme.typography.bodySmall)
-    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { OutlinedButton(decline, enabled=rejectEnabled) { Text("Decline") }; OutlinedButton(cancel, enabled=rejectEnabled) { Text("Cancel turn") } }
+    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { OutlinedButton(decline, enabled=rejectEnabled) { Text(codexUiText("Decline")) }; OutlinedButton(cancel, enabled=rejectEnabled) { Text(codexUiText("Cancel turn")) } }
 }
 
 internal data class ApprovalActionAvailability(val approveEnabled: Boolean, val rejectEnabled: Boolean)

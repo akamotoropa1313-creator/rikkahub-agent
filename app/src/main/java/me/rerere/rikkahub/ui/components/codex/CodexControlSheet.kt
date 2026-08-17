@@ -77,38 +77,38 @@ fun CodexControlSheet(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { Text("Codex Control Center", style = MaterialTheme.typography.headlineSmall) }
+        item { Text(codexUiText("Codex Control Center"), style = MaterialTheme.typography.headlineSmall) }
         item {
             Section("Thread history") {
                 val history = capabilities.threadHistory
                 if (history.selectedThreadId != null) {
-                    TextButton(modifier = Modifier.heightIn(min = 44.dp), onClick = onCloseHistoryThread) { Text("Back to history") }
+                    TextButton(modifier = Modifier.heightIn(min = 44.dp), onClick = onCloseHistoryThread) { Text(codexUiText("Back to history")) }
                     if (history.detailLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
                     history.detailError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     history.selectedThread?.let { thread ->
-                        Text(thread.name ?: thread.preview ?: "Untitled thread", style = MaterialTheme.typography.titleMedium)
-                        Text("Thread ID: ${thread.id}", maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        thread.modelProvider?.let { Text("Model provider: $it") }
-                        thread.status?.let { Text("Status: ${it.wireValue}") }
-                        thread.recencyAt?.let { Text("Recency: $it") }
-                        thread.updatedAt?.let { Text("Updated: $it") }
+                        Text(codexUiText(thread.name ?: thread.preview ?: "Untitled thread"), style = MaterialTheme.typography.titleMedium)
+                        Text(codexUiText("Thread ID: ${thread.id}"), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        thread.modelProvider?.let { Text(codexUiText("Model provider: $it")) }
+                        thread.status?.let { Text(codexUiText("Status: ${it.wireValue}")) }
+                        thread.recencyAt?.let { Text(codexUiText("Recency: $it")) }
+                        thread.updatedAt?.let { Text(codexUiText("Updated: $it")) }
                         thread.cwd?.let { Text("CWD: ${it.substringAfterLast('/').ifBlank { "/" }}", maxLines = 2, overflow = TextOverflow.Ellipsis) }
                         thread.turns.forEach { historyTurn ->
                             HorizontalDivider()
-                            Text("Turn ${historyTurn.turn.id}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(codexUiText("Turn ${historyTurn.turn.id}"), maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("${historyTurn.turn.status.wireValue}${historyTurn.turn.durationMs?.let { " · ${it}ms" }.orEmpty()}")
                             historyTurn.turn.error?.let { Text(it.message, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
-                            historyTurn.items.forEach { item -> Text(historyItemText(item), maxLines = 5, overflow = TextOverflow.Ellipsis) }
+                            historyTurn.items.forEach { item -> Text(codexUiText(historyItemText(item)), maxLines = 5, overflow = TextOverflow.Ellipsis) }
                         }
                     }
                 } else {
-                    Text("Browse persisted App Server threads without switching this conversation.")
+                    Text(codexUiText("Browse persisted App Server threads without switching this conversation."))
                     if (history.loaded) {
                         OutlinedTextField(
                             value = historySearch,
                             onValueChange = { historySearch = it },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Search") },
+                            label = { Text(codexUiText("Search")) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                             keyboardActions = KeyboardActions(
@@ -117,7 +117,7 @@ fun CodexControlSheet(
                         )
                         if (history.searchTerm.isNotEmpty()) {
                             Text(
-                                "Active filter: ${history.searchTerm}",
+                                codexUiText("Active filter: ${history.searchTerm}"),
                                 style = MaterialTheme.typography.bodySmall,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
@@ -135,13 +135,13 @@ fun CodexControlSheet(
                                     false,
                                 )
                             },
-                        ) { Text(if (history.loaded) "Refresh current results" else "Load history") }
+                        ) { Text(codexUiText(if (history.loaded) "Refresh current results" else "Load history")) }
                         if (history.loaded) {
                             OutlinedButton(
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
                                 enabled = historyControlsEnabled,
                                 onClick = { onLoadThreadHistory(threadHistorySubmittedSearchTerm(historySearch), false) },
-                            ) { Text(if (historySearch.isBlank()) "Clear search" else "Search") }
+                            ) { Text(codexUiText(if (historySearch.isBlank()) "Clear search" else "Search")) }
                         }
                     }
                     if (history.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -149,21 +149,21 @@ fun CodexControlSheet(
                     history.threads.forEach { thread ->
                         ListItem(
                             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
-                            headlineContent = { Text(thread.name ?: thread.preview ?: "Untitled thread", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            headlineContent = { Text(codexUiText(thread.name ?: thread.preview ?: "Untitled thread"), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             supportingContent = { Text(listOfNotNull(thread.preview, thread.recencyAt?.toString(), thread.status?.wireValue, thread.modelProvider).joinToString(" · "), maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                            trailingContent = { if (thread.id == connection.threadId) Text("Current", color = MaterialTheme.colorScheme.primary) },
+                            trailingContent = { if (thread.id == connection.threadId) Text(codexUiText("Current"), color = MaterialTheme.colorScheme.primary) },
                         )
                         TextButton(
                             modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
                             enabled = capabilities.connected && !history.detailLoading && !operationBusy,
                             onClick = { onReadHistoryThread(thread.id) },
-                        ) { Text("View details") }
+                        ) { Text(codexUiText("View details")) }
                     }
                     Button(
                         modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
                         enabled = capabilities.connected && history.nextCursor != null && !history.loading && !operationBusy,
                         onClick = { onLoadThreadHistory(threadHistoryRefreshSearchTerm(history), true) },
-                    ) { Text("Load more") }
+                    ) { Text(codexUiText("Load more")) }
                 }
             }
         }
@@ -171,19 +171,19 @@ fun CodexControlSheet(
             Section("Usage & status") {
                 val telemetry = connection.telemetryOrNull()
                 val usage = telemetry?.latest?.tokenUsage
-                if (usage == null) Text("No token usage reported yet") else {
-                    Text("Current context", style = MaterialTheme.typography.titleMedium)
+                if (usage == null) Text(codexUiText("No token usage reported yet")) else {
+                    Text(codexUiText("Current context"), style = MaterialTheme.typography.titleMedium)
                     Text(currentContextText(usage))
-                    if (usage.modelContextWindow == null) Text("Context window: Not reported")
-                    Text("Session total: ${formatTokenCount(usage.total.totalTokens)} tokens")
-                    Text("Latest usage breakdown", style = MaterialTheme.typography.titleMedium)
+                    if (usage.modelContextWindow == null) Text(codexUiText("Context window: Not reported"))
+                    Text(codexUiText("Session total: ${formatTokenCount(usage.total.totalTokens)} tokens"))
+                    Text(codexUiText("Latest usage breakdown"), style = MaterialTheme.typography.titleMedium)
                     Text("Input: ${formatTokenCount(usage.last.inputTokens)}")
                     Text("Cached input: ${formatTokenCount(usage.last.cachedInputTokens)}")
                     usage.last.cacheWriteInputTokens?.let { Text("Cache write input: ${formatTokenCount(it)}") }
                     Text("Output: ${formatTokenCount(usage.last.outputTokens)}")
                     Text("Reasoning output: ${formatTokenCount(usage.last.reasoningOutputTokens)}")
                 }
-                telemetry?.warning?.let { Text("Usage warning: $it", color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+                telemetry?.warning?.let { Text(codexUiText("Usage warning: $it"), color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
                 (connection as? CodexConversationUiState.Terminal)?.diagnostics?.let { turn ->
                     Text(turnStatusText(turn), style = MaterialTheme.typography.titleMedium)
                     turn.error?.let { error ->
@@ -195,32 +195,32 @@ fun CodexControlSheet(
         }
         item {
             Section("Configuration & policy") {
-                Text("These are App Server base and managed settings. RikkaHub thread and turn overrides may differ.")
+                Text(codexUiText("These are App Server base and managed settings. RikkaHub thread and turn overrides may differ."))
                 Button(
                     onClick = onRefreshConfigDiagnostics,
                     enabled = capabilities.connected && !capabilities.configLoading && !capabilities.requirementsLoading && !operationBusy,
-                ) { Text(if (capabilities.effectiveConfig == null && !capabilities.requirementsLoaded) "Load configuration" else "Refresh diagnostics") }
+                ) { Text(codexUiText(if (capabilities.effectiveConfig == null && !capabilities.requirementsLoaded) "Load configuration" else "Refresh diagnostics")) }
                 if (capabilities.configLoading || capabilities.requirementsLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                capabilities.configError?.let { Text("Configuration: $it", color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
-                capabilities.requirementsError?.let { Text("Managed requirements: $it", color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+                capabilities.configError?.let { Text(codexUiText("Configuration: $it"), color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+                capabilities.requirementsError?.let { Text(codexUiText("Managed requirements: $it"), color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
                 capabilities.effectiveConfig?.let { config ->
                     Text(if (config.threadAgnostic) "Base App Server configuration · Thread-agnostic configuration" else "Base App Server configuration", style = MaterialTheme.typography.titleMedium)
-                    configRow("Model", config.model, config, "model")
-                    configRow("Model provider", config.modelProvider, config, "model_provider")
-                    configRow("Model context window", config.modelContextWindow?.toString(), config, "model_context_window")
-                    configRow("Auto compact limit", config.modelAutoCompactTokenLimit?.toString(), config, "model_auto_compact_token_limit")
-                    configRow("Sandbox default", config.sandboxMode?.let { if (it.known) it.wireValue else "${it.wireValue} (unknown)" }, config, "sandbox_mode")
-                    configRow("Workspace-write network access", config.sandboxWorkspaceWrite?.networkAccess?.enabledLabel(), config, "sandbox_workspace_write.network_access")
-                    config.sandboxWorkspaceWrite?.writableRootsCount?.let { Text("Writable roots: $it") }
-                    configRow("Web search", config.webSearch, config, "web_search")
-                    configRow("Reasoning effort", config.modelReasoningEffort, config, "model_reasoning_effort")
-                    configRow("Reasoning summary", config.modelReasoningSummary, config, "model_reasoning_summary")
-                    configRow("Verbosity", config.modelVerbosity, config, "model_verbosity")
-                    configRow("Service tier", config.serviceTier, config, "service_tier")
-                    configRow("Analytics", config.analyticsEnabled?.enabledLabel(), config, "analytics.enabled")
+                    configRow(codexUiText("Model"), config.model, config, "model")
+                    configRow(codexUiText("Model provider"), config.modelProvider, config, "model_provider")
+                    configRow(codexUiText("Model context window"), config.modelContextWindow?.toString(), config, "model_context_window")
+                    configRow(codexUiText("Auto compact limit"), config.modelAutoCompactTokenLimit?.toString(), config, "model_auto_compact_token_limit")
+                    configRow(codexUiText("Sandbox default"), config.sandboxMode?.let { if (it.known) it.wireValue else "${it.wireValue} (unknown)" }, config, "sandbox_mode")
+                    configRow(codexUiText("Workspace-write network access"), config.sandboxWorkspaceWrite?.networkAccess?.enabledLabel(), config, "sandbox_workspace_write.network_access")
+                    config.sandboxWorkspaceWrite?.writableRootsCount?.let { Text(codexUiText("Writable roots: $it")) }
+                    configRow(codexUiText("Web search"), config.webSearch, config, "web_search")
+                    configRow(codexUiText("Reasoning effort"), config.modelReasoningEffort, config, "model_reasoning_effort")
+                    configRow(codexUiText("Reasoning summary"), config.modelReasoningSummary, config, "model_reasoning_summary")
+                    configRow(codexUiText("Verbosity"), config.modelVerbosity, config, "model_verbosity")
+                    configRow(codexUiText("Service tier"), config.serviceTier, config, "service_tier")
+                    configRow(codexUiText("Analytics"), config.analyticsEnabled?.enabledLabel(), config, "analytics.enabled")
                 }
                 if (capabilities.requirementsLoaded) {
-                    Text("Managed requirements", style = MaterialTheme.typography.titleMedium)
+                    Text(codexUiText("Managed requirements"), style = MaterialTheme.typography.titleMedium)
                     capabilities.requirements?.let { requirements ->
                         requirements.allowedSandboxModes?.let { Text("Allowed sandbox modes: " + it.joinToString(" · ") { mode -> mode.wireValue }) }
                         requirements.allowedWebSearchModes?.let { Text("Allowed web search: " + it.joinToString(" · ")) }
@@ -228,30 +228,30 @@ fun CodexControlSheet(
                         requirements.newThread?.modelReasoningEffort?.let { Text("Managed new-thread effort: $it") }
                         requirements.newThread?.serviceTier?.let { Text("Managed new-thread service tier: $it") }
                         requirements.featureRequirements?.forEach { (feature, required) -> Text("$feature = required ${if (required) "enabled" else "disabled"}") }
-                    } ?: Text("No managed requirements reported")
+                    } ?: Text(codexUiText("No managed requirements reported"))
                 }
             }
         }
         item {
             Section("Code review") {
-                Text("Run a native inline review on this conversation's bound thread.")
+                Text(codexUiText("Run a native inline review on this conversation's bound thread."))
                 listOf("Working tree", "Base branch", "Commit", "Custom").forEach { kind ->
                     TextButton(modifier = Modifier.heightIn(min = 44.dp), onClick = { reviewKind = kind }) {
-                        Text((if (reviewKind == kind) "✓ " else "") + kind)
+                        Text((if (reviewKind == kind) "✓ " else "") + codexUiText(kind))
                     }
                 }
                 when (reviewKind) {
-                    "Base branch" -> OutlinedTextField(branch, { branch = it }, Modifier.fillMaxWidth(), label = { Text("Branch") }, singleLine = true)
-                    "Commit" -> { OutlinedTextField(sha, { sha = it }, Modifier.fillMaxWidth(), label = { Text("Commit SHA") }, singleLine = true); OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("Title (optional)") }) }
-                    "Custom" -> OutlinedTextField(instructions, { instructions = it }, Modifier.fillMaxWidth().heightIn(min = 120.dp), label = { Text("Review instructions") }, minLines = 4)
+                    "Base branch" -> OutlinedTextField(branch, { branch = it }, Modifier.fillMaxWidth(), label = { Text(codexUiText("Branch")) }, singleLine = true)
+                    "Commit" -> { OutlinedTextField(sha, { sha = it }, Modifier.fillMaxWidth(), label = { Text(codexUiText("Commit SHA")) }, singleLine = true); OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text(codexUiText("Title (optional)")) }) }
+                    "Custom" -> OutlinedTextField(instructions, { instructions = it }, Modifier.fillMaxWidth().heightIn(min = 120.dp), label = { Text(codexUiText("Review instructions")) }, minLines = 4)
                 }
                 if (review.inProgress) {
-                    Text("Review in progress · ${review.targetSummary.orEmpty()}")
+                    Text(codexUiText("Review in progress · ${review.targetSummary.orEmpty()}"))
                     Button(
                         modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
                         enabled = capabilities.connected,
                         onClick = { onStartReview(CodexReviewAction.Stop) },
-                    ) { Text("Stop review") }
+                    ) { Text(codexUiText("Stop review")) }
                 }
                 review.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 val valid = when (reviewKind) { "Base branch" -> branch.isNotBlank(); "Commit" -> sha.isNotBlank(); "Custom" -> instructions.isNotBlank(); else -> true }
@@ -262,51 +262,51 @@ fun CodexControlSheet(
                         "Custom" -> CodexAppServerReviewTarget.Custom(instructions)
                         else -> CodexAppServerReviewTarget.UncommittedChanges
                     }))
-                }) { Text("Start review") }
+                }) { Text(codexUiText("Start review")) }
             }
         }
         item {
             Section("Safety & permissions") {
-                Text("Sandbox", style = MaterialTheme.typography.titleMedium)
+                Text(codexUiText("Sandbox"), style = MaterialTheme.typography.titleMedium)
                 Text("Server setting omits the override. On an existing thread a previous override may be sticky; Reset is required to return completely to server configuration.")
                 listOf(null to "Server setting", "read-only" to "Read only", "workspace-write" to "Workspace write", "danger-full-access" to "Full access").forEach { (value, label) ->
                     TextButton(onClick = {
                         val confirmation = codexSafetyConfirmation(assistant, sandbox = value)
                         if (confirmation == CodexSafetyConfirmation.NONE) onUpdateAssistant { it.copy(codexSandboxMode = value) }
                         else pendingSafety = value to assistant.codexApprovalPolicy
-                    }) { Text((if (assistant.codexSandboxMode == value) "✓ " else "") + label) }
+                    }) { Text((if (assistant.codexSandboxMode == value) "✓ " else "") + codexUiText(label)) }
                 }
-                Text(when (assistant.codexSandboxMode) {
+                Text(codexUiText(when (assistant.codexSandboxMode) {
                     "read-only" -> "Codex can read project files but writes are restricted."
                     "workspace-write" -> "Codex can modify files allowed by the workspace sandbox."
                     "danger-full-access" -> "Removes Codex sandbox restrictions for the environment available to the App Server."
                     else -> "The App Server setting is used when no explicit override is selected."
-                })
+                }))
                 if (!codexSandboxKnown(assistant.codexSandboxMode)) Text("Unsupported saved sandbox preference '${assistant.codexSandboxMode}' is preserved and will not be sent.", color = MaterialTheme.colorScheme.error)
                 managedSandboxWarning(assistant.codexSandboxMode, capabilities.requirementsLoaded, capabilities.requirements)?.let {
                     Text(it, color = MaterialTheme.colorScheme.error)
                 }
-                Text("Approval", style = MaterialTheme.typography.titleMedium)
+                Text(codexUiText("Approval"), style = MaterialTheme.typography.titleMedium)
                 listOf(null to "Server setting", "untrusted" to "Untrusted", "on-request" to "On request", "never" to "Never").forEach { (value, label) ->
                     TextButton(onClick = {
                         val confirmation = codexSafetyConfirmation(assistant, approval = value)
                         if (confirmation == CodexSafetyConfirmation.NONE) onUpdateAssistant { it.copy(codexApprovalPolicy = value) }
                         else pendingSafety = assistant.codexSandboxMode to value
-                    }) { Text((if (assistant.codexApprovalPolicy == value) "✓ " else "") + label) }
+                    }) { Text((if (assistant.codexApprovalPolicy == value) "✓ " else "") + codexUiText(label)) }
                 }
-                Text(when (assistant.codexApprovalPolicy) {
+                Text(codexUiText(when (assistant.codexApprovalPolicy) {
                     "untrusted" -> "Only known-safe read-only commands are automatically approved; other operations may request approval."
                     "on-request" -> "Codex decides when it needs to ask for approval."
                     "never" -> "Codex does not ask for approval; blocked operations fail instead. This does not itself mean Full access."
                     else -> "Server approval policy is used when no explicit override is selected."
-                })
+                }))
                 if (!codexApprovalKnown(assistant.codexApprovalPolicy)) Text("Unsupported saved approval preference '${assistant.codexApprovalPolicy}' is preserved and will not be sent.", color = MaterialTheme.colorScheme.error)
             }
         }
         item {
             Section("Model & behavior") {
-                Text("Codex model", style = MaterialTheme.typography.titleMedium)
-                Text("The App Server catalog is authoritative. Changes apply from the next Codex turn.")
+                Text(codexUiText("Codex model"), style = MaterialTheme.typography.titleMedium)
+                Text(codexUiText("The App Server catalog is authoritative. Changes apply from the next Codex turn."))
                 Button(
                     onClick = onRefreshModels,
                     enabled = capabilities.connected && !capabilities.modelsLoading && !operationBusy,
@@ -359,19 +359,19 @@ fun CodexControlSheet(
                         enabled = validEfforts,
                         onClick = { onUpdateAssistant { latest -> applyCodexModelSelection(latest, model) } },
                     ) {
-                        Text(if (assistant.codexModel == model.model) "Selected" else "Select")
+                        Text(codexUiText(if (assistant.codexModel == model.model) "Selected" else "Select"))
                     }
                 },
             )
         }
         item {
-            Text("Service tier", style = MaterialTheme.typography.titleMedium)
+            Text(codexUiText("Service tier"), style = MaterialTheme.typography.titleMedium)
             Text("Server setting omits the override. On an existing thread, the server-side tier may remain sticky. Default explicitly requests the default tier on the next turn.")
             TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = null) } }) {
-                Text((if (assistant.codexServiceTier == null) "✓ " else "") + "Server setting")
+                Text((if (assistant.codexServiceTier == null) "✓ " else "") + codexUiText("Server setting"))
             }
             TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = "default") } }) {
-                Text((if (assistant.codexServiceTier == "default") "✓ " else "") + "Default")
+                Text((if (assistant.codexServiceTier == "default") "✓ " else "") + codexUiText("Default"))
             }
             serviceTierModel?.let { tierModel ->
                 codexServiceTierOptions(tierModel).forEach { tier ->
@@ -405,7 +405,7 @@ fun CodexControlSheet(
                 }
             }
             item {
-                Text("Reasoning summary")
+                Text(codexUiText("Reasoning summary"))
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     CodexReasoningSummaryPreference.entries.forEach { value ->
                         TextButton(onClick = { onUpdateAssistant { it.copy(codexReasoningSummary = value) } }) {
@@ -413,7 +413,7 @@ fun CodexControlSheet(
                         }
                     }
                 }
-                Text("Personality")
+                Text(codexUiText("Personality"))
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     CodexPersonalityPreference.entries.forEach { value ->
                         TextButton(
@@ -431,9 +431,9 @@ fun CodexControlSheet(
         }
         item {
             Section("Connection") {
-                Text(connectionLabel(connection, hasBinding))
+                Text(codexUiText(connectionLabel(connection, hasBinding)))
                 if (codexReconnectEligible(connection, hasBinding, capabilities.connected, operationBusy)) {
-                    Button(onClick = onReconnect) { Text("Reconnect Codex") }
+                    Button(onClick = onReconnect) { Text(codexUiText("Reconnect Codex")) }
                 }
             }
         }
@@ -454,11 +454,11 @@ fun CodexControlSheet(
         }
         item {
             Section("Codex Skills") {
-                Text("${capabilities.skillGroups.sumOf { it.skills.size }} skills")
+                Text(codexUiText("${capabilities.skillGroups.sumOf { it.skills.size }} skills"))
                 Button(
                     onClick = onRefreshSkills,
                     enabled = capabilities.connected && !capabilities.skillsLoading && !operationBusy,
-                ) { Text("Refresh") }
+                ) { Text(codexUiText("Refresh")) }
                 capabilities.skillsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
@@ -475,8 +475,8 @@ fun CodexControlSheet(
                             TextButton(
                                 onClick = { onSetSkillEnabled(skill, !skill.enabled) },
                                 enabled = capabilities.skillUpdatingPath == null && !operationBusy,
-                            ) { Text(if (skill.enabled) "Disable" else "Enable") }
-                            TextButton(onClick = { onUseSkill(skill) }, enabled = skill.enabled && !operationBusy) { Text("Use") }
+                            ) { Text(codexUiText(if (skill.enabled) "Disable" else "Enable")) }
+                            TextButton(onClick = { onUseSkill(skill) }, enabled = skill.enabled && !operationBusy) { Text(codexUiText("Use")) }
                         }
                     },
                 )
@@ -489,11 +489,11 @@ fun CodexControlSheet(
                     Button(
                         onClick = onRefreshMcp,
                         enabled = capabilities.connected && !capabilities.mcpLoading && !operationBusy,
-                    ) { Text("Refresh") }
+                    ) { Text(codexUiText("Refresh")) }
                     OutlinedButton(
                         onClick = onReloadMcp,
                         enabled = capabilities.connected && !capabilities.mcpLoading && !operationBusy,
-                    ) { Text("Reload MCP") }
+                    ) { Text(codexUiText("Reload MCP")) }
                 }
                 capabilities.mcpError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
@@ -507,7 +507,7 @@ fun CodexControlSheet(
                         TextButton(
                             onClick = { onMcpSignIn(server.name) },
                             enabled = capabilities.pendingMcpServer == null && !operationBusy,
-                        ) { Text("Sign in") }
+                        ) { Text(codexUiText("Sign in")) }
                     }
                 },
             )
@@ -523,8 +523,8 @@ fun CodexControlSheet(
                 CodexSafetyConfirmation.FULL_ACCESS -> "Sandbox restrictions are removed. Codex may modify data available inside its execution environment. Enable only when you intentionally want unrestricted execution."
                 else -> "Approval prompts are disabled. Operations blocked by the sandbox or policy may fail rather than ask. This does not itself mean Full access."
             }) },
-            confirmButton = { TextButton(onClick = { onUpdateAssistant { it.copy(codexSandboxMode = pending.first, codexApprovalPolicy = pending.second) }; pendingSafety = null }) { Text("Confirm") } },
-            dismissButton = { TextButton(onClick = { pendingSafety = null }) { Text("Cancel") } },
+            confirmButton = { TextButton(onClick = { onUpdateAssistant { it.copy(codexSandboxMode = pending.first, codexApprovalPolicy = pending.second) }; pendingSafety = null }) { Text(codexUiText("Confirm")) } },
+            dismissButton = { TextButton(onClick = { pendingSafety = null }) { Text(codexUiText("Cancel")) } },
         )
     }
 }
