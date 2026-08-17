@@ -107,6 +107,15 @@ jobs:
             -o -name 'TEST-me.rerere.rikkahub.utils.CrashHandlerTest.xml' \) \
             -print -exec cat {} \; 2>/dev/null || true
 
+      - name: Upload app JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-app-junit-results
+          path: app/build/test-results/testDebugUnitTest/*.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Print workspace interactive process JUnit failure details
         if: failure()
         shell: bash
