@@ -8,13 +8,14 @@ import me.rerere.rikkahub.data.db.dao.ConversationDAO
 import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
 import org.junit.Assert.assertNotNull
 import org.junit.Test
-import org.koin.core.context.koinApplication
+import org.koin.core.context.startKoin
+import org.koin.core.context.stopKoin
 import org.koin.dsl.module
 
 class CodexRepositoryModuleTest {
     @Test
     fun `codex local state is resolvable by its interface`() {
-        val app = koinApplication {
+        val koin = startKoin {
             modules(
                 module {
                     single<ConversationDAO> { interfaceStub() }
@@ -23,13 +24,13 @@ class CodexRepositoryModuleTest {
                 },
                 repositoryModule,
             )
-        }
+        }.koin
 
         try {
-            assertNotNull(app.koin.get<CodexAppServerLocalState>())
-            assertNotNull(app.koin.get<CodexAppServerSessionBindingRepository>())
+            assertNotNull(koin.get<CodexAppServerLocalState>())
+            assertNotNull(koin.get<CodexAppServerSessionBindingRepository>())
         } finally {
-            app.close()
+            stopKoin()
         }
     }
 
