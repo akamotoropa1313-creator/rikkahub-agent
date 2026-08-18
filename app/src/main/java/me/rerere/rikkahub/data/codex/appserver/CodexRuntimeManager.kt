@@ -5,9 +5,11 @@ import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,38 +20,16 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import me.rerere.workspace.WorkspaceManager
 
-/** A user-facing failure category; raw process/network details stay in diagnostics only. */
 enum class CodexRuntimeErrorCategory {
-    RuntimeMissing,
-    RuntimeUnsupported,
-    RuntimeInstallFailed,
-    RuntimeCorrupt,
-    RuntimeVersionMismatch,
-    AppServerLaunchFailed,
-    AppServerExited,
-    InitializeFailed,
-    AuthenticationRequired,
-    AuthenticationFailed,
-    UsageLimitExceeded,
-    ProtocolIncompatible,
-    ModelCatalogDecodeFailed,
-    WorkspaceInvalid,
-    NetworkFailure,
-    Timeout,
-    Unknown,
+    RuntimeMissing, RuntimeUnsupported, RuntimeInstallFailed, RuntimeCorrupt, RuntimeVersionMismatch,
+    AppServerLaunchFailed, AppServerExited, InitializeFailed, AuthenticationRequired, AuthenticationFailed,
+    UsageLimitExceeded, ProtocolIncompatible, ModelCatalogDecodeFailed, WorkspaceInvalid, NetworkFailure,
+    Timeout, Unknown,
 }
 
 enum class CodexRuntimePhase {
-    IDLE,
-    CHECKING_WORKSPACE,
-    CHECKING_PLATFORM,
-    CHECKING_RUNTIME,
-    DOWNLOADING,
-    VERIFYING,
-    INSTALLING,
-    VALIDATING,
-    READY,
-    FAILED,
+    IDLE, CHECKING_WORKSPACE, CHECKING_PLATFORM, CHECKING_RUNTIME, DOWNLOADING, VERIFYING,
+    INSTALLING, VALIDATING, READY, FAILED,
 }
 
 data class CodexRuntimeProgress(
@@ -59,6 +39,8 @@ data class CodexRuntimeProgress(
     val totalBytes: Long? = null,
     val errorCategory: CodexRuntimeErrorCategory? = null,
     val errorMessage: String? = null,
+    val version: String? = null,
+    val architecture: String? = null,
 )
 
 data class CodexRuntimeReady(
@@ -82,161 +64,200 @@ internal data class CodexRuntimeAsset(
 )
 
 /**
- * Owns the RikkaHub-managed Codex executable inside each Workspace rootfs.
- *
- * The normal path deliberately does not call apt, npm, debconf, tzdata, locale configuration or
- * any other package-manager command. The official MUSL release is self-contained and downloaded
- * by Android, then checksum-verified and atomically installed into the rootfs. This makes a fresh
- * Ubuntu PRoot non-interactive by construction.
+ * Provisions one app-managed, pinned OpenAI Codex standalone binary and exposes it to every PRoot
+ * through [RUNTIME_BIND_ROOT]. The normal path never invokes apt/npm/node/dpkg/debconf/tzdata, so
+ * fresh Ubuntu Workspaces cannot block on package-manager prompts. Downloads are verified against
+ * OpenAI's published SHA-256 before atomic installation.
  */
 class CodexRuntimeManager(
     private val workspaceManager: WorkspaceManager,
     private val httpClient: OkHttpClient,
+    private val runtimeBaseDir: File,
 ) {
-    private val locks = ConcurrentHashMap<String, Mutex>()
+    private val rootLocks = ConcurrentHashMap<String, Mutex>()
+    private val installLock = Mutex()
     private val states = ConcurrentHashMap<String, MutableStateFlow<CodexRuntimeProgress>>()
+    private val downloadClient by lazy {
+        httpClient.newBuilder().callTimeout(DOWNLOAD_TIMEOUT_MINUTES, TimeUnit.MINUTES).build()
+    }
 
     fun state(root: String): StateFlow<CodexRuntimeProgress> =
         states.getOrPut(root) { MutableStateFlow(CodexRuntimeProgress()) }.asStateFlow()
 
-    suspend fun ensureReady(root: String): CodexRuntimeReady =
-        locks.getOrPut(root) { Mutex() }.withLock {
-            val state = states.getOrPut(root) { MutableStateFlow(CodexRuntimeProgress()) }
-            try {
-                publish(state, CodexRuntimePhase.CHECKING_WORKSPACE, "Workspaceを確認しています")
-                if (!workspaceManager.hasRootfs(root)) {
-                    throw CodexRuntimeProvisioningException(
-                        CodexRuntimeErrorCategory.WorkspaceInvalid,
-                        "Workspace Linux環境が準備できていません",
-                    )
-                }
-
-                publish(state, CodexRuntimePhase.CHECKING_PLATFORM, "OSとアーキテクチャを確認しています")
-                val platform = runWorkspace(root, "uname -s; uname -m", 10_000)
-                val lines = platform.stdout.lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
-                if (platform.timedOut) fail(CodexRuntimeErrorCategory.Timeout, "Workspace platform check timed out")
-                if (platform.exitCode != 0 || lines.size < 2 || lines[0] != "Linux") {
-                    fail(CodexRuntimeErrorCategory.RuntimeUnsupported, "Codex runtime requires a Linux Workspace")
-                }
-                val asset = assetFor(lines[1])
-                    ?: fail(CodexRuntimeErrorCategory.RuntimeUnsupported, "Unsupported Workspace architecture: ${lines[1]}")
-
-                val installDir = workspaceManager.resolveRootfsPath(root, "$MANAGED_ROOT/$VALIDATED_VERSION").rootDir
-                    .let { base ->
-                        val location = workspaceManager.resolveRootfsPath(root, "$MANAGED_ROOT/$VALIDATED_VERSION")
-                        File(location.rootDir, location.relativePath)
-                    }
-                val executable = File(installDir, "codex")
-
-                publish(state, CodexRuntimePhase.CHECKING_RUNTIME, "Codex runtimeを確認しています")
-                validateInstalled(root, executable, asset)?.let { ready ->
-                    publish(state, CodexRuntimePhase.READY, "Codex $VALIDATED_VERSION")
-                    return@withLock ready
-                }
-
-                val usable = workspaceManager.linuxDir(root).usableSpace
-                if (usable in 1 until MIN_FREE_BYTES) {
-                    fail(CodexRuntimeErrorCategory.RuntimeInstallFailed, "Codex runtime用の空き容量が不足しています")
-                }
-
-                val temp = File(workspaceManager.tempDir(root), "codex-${VALIDATED_VERSION}-${asset.architecture}.tar.gz.part")
-                temp.parentFile?.mkdirs()
-                temp.delete()
-                download(state, asset, temp)
-
-                publish(state, CodexRuntimePhase.VERIFYING, "ダウンロードを検証しています")
-                val actualSha = sha256(temp)
-                if (!actualSha.equals(asset.archiveSha256, ignoreCase = true)) {
-                    temp.delete()
-                    fail(CodexRuntimeErrorCategory.RuntimeCorrupt, "Codex runtimeの整合性確認に失敗しました")
-                }
-
-                publish(state, CodexRuntimePhase.INSTALLING, "Codex runtimeを導入しています")
-                installDir.mkdirs()
-                val staging = File(installDir, ".codex.staging-${System.nanoTime()}")
-                try {
-                    extractSingleTarGz(temp, staging, asset.archiveEntry)
-                    check(staging.setExecutable(true, false)) { "Failed to mark Codex executable" }
-                    if (!staging.setReadable(true, false)) fail(CodexRuntimeErrorCategory.RuntimeInstallFailed, "Codex runtime permissions could not be set")
-                    val old = File(installDir, ".codex.previous")
-                    old.delete()
-                    if (executable.exists() && !executable.renameTo(old)) executable.delete()
-                    if (!staging.renameTo(executable)) {
-                        old.takeIf(File::exists)?.renameTo(executable)
-                        fail(CodexRuntimeErrorCategory.RuntimeInstallFailed, "Codex runtime could not be installed atomically")
-                    }
-                    old.delete()
-                    File(installDir, "INSTALL-METADATA").writeText(
-                        "version=$VALIDATED_VERSION\nasset=${asset.assetName}\nsha256=${asset.archiveSha256}\n",
-                    )
-                } finally {
-                    staging.delete()
-                    temp.delete()
-                }
-
-                publish(state, CodexRuntimePhase.VALIDATING, "Codex App Serverを検証しています")
-                val ready = validateInstalled(root, executable, asset)
-                    ?: fail(CodexRuntimeErrorCategory.RuntimeCorrupt, "Installed Codex runtime failed validation")
-                publish(state, CodexRuntimePhase.READY, "Codex $VALIDATED_VERSION")
-                ready
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: CodexRuntimeProvisioningException) {
-                state.value = CodexRuntimeProgress(
-                    phase = CodexRuntimePhase.FAILED,
-                    detail = state.value.detail,
-                    errorCategory = failure.category,
-                    errorMessage = failure.message,
-                )
-                throw failure
-            } catch (failure: Throwable) {
-                val wrapped = CodexRuntimeProvisioningException(
-                    classifyProvisioningFailure(failure),
-                    failure.message ?: "Codex runtime setup failed",
-                    failure,
-                )
-                state.value = CodexRuntimeProgress(
-                    phase = CodexRuntimePhase.FAILED,
-                    detail = state.value.detail,
-                    errorCategory = wrapped.category,
-                    errorMessage = wrapped.message,
-                )
-                throw wrapped
+    suspend fun ensureReady(root: String): CodexRuntimeReady = rootLocks.getOrPut(root) { Mutex() }.withLock {
+        val state = states.getOrPut(root) { MutableStateFlow(CodexRuntimeProgress()) }
+        try {
+            publish(state, CodexRuntimePhase.CHECKING_WORKSPACE, "Workspaceを確認しています")
+            if (!workspaceManager.hasRootfs(root)) {
+                fail(CodexRuntimeErrorCategory.WorkspaceInvalid, "Workspace Linux環境が準備できていません")
             }
+
+            publish(state, CodexRuntimePhase.CHECKING_PLATFORM, "OSとアーキテクチャを確認しています")
+            val platform = runWorkspace(root, "uname -s; uname -m", 10_000)
+            val lines = platform.stdout.lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
+            if (platform.timedOut) fail(CodexRuntimeErrorCategory.Timeout, "Workspace platform check timed out")
+            if (platform.exitCode != 0 || lines.size < 2 || lines[0] != "Linux") {
+                fail(CodexRuntimeErrorCategory.RuntimeUnsupported, "Codex runtime requires a Linux Workspace")
+            }
+            val asset = assetFor(lines[1])
+                ?: fail(CodexRuntimeErrorCategory.RuntimeUnsupported, "Unsupported Workspace architecture: ${lines[1]}")
+            state.value = state.value.copy(architecture = asset.architecture, version = VALIDATED_VERSION)
+
+            val installDir = File(runtimeBaseDir, "$VALIDATED_VERSION/${asset.architecture}")
+            val executable = File(installDir, "codex")
+            publish(state, CodexRuntimePhase.CHECKING_RUNTIME, "Codex runtimeを確認しています", asset)
+            validateInstalled(root, executable, asset)?.let { ready ->
+                publish(state, CodexRuntimePhase.READY, "Codex $VALIDATED_VERSION · ${asset.architecture}", asset)
+                return@withLock ready
+            }
+
+            installLock.withLock {
+                if (validateInstalled(root, executable, asset) == null) {
+                    provision(state, asset, installDir, executable)
+                }
+            }
+
+            publish(state, CodexRuntimePhase.VALIDATING, "Codex App Serverを検証しています", asset)
+            val ready = validateInstalled(root, executable, asset)
+                ?: fail(CodexRuntimeErrorCategory.RuntimeCorrupt, "Installed Codex runtime failed validation")
+            publish(state, CodexRuntimePhase.READY, "Codex $VALIDATED_VERSION · ${asset.architecture}", asset)
+            ready
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: CodexRuntimeProvisioningException) {
+            state.value = state.value.copy(
+                phase = CodexRuntimePhase.FAILED,
+                errorCategory = failure.category,
+                errorMessage = failure.message,
+            )
+            throw failure
+        } catch (failure: Throwable) {
+            val wrapped = CodexRuntimeProvisioningException(
+                classifyProvisioningFailure(failure),
+                failure.message ?: "Codex runtime setup failed",
+                failure,
+            )
+            state.value = state.value.copy(
+                phase = CodexRuntimePhase.FAILED,
+                errorCategory = wrapped.category,
+                errorMessage = wrapped.message,
+            )
+            throw wrapped
+        }
+    }
+
+    suspend fun repair(root: String): CodexRuntimeReady {
+        states.getOrPut(root) { MutableStateFlow(CodexRuntimeProgress()) }.value =
+            CodexRuntimeProgress(phase = CodexRuntimePhase.IDLE, detail = "Codex runtimeを再検証します")
+        return ensureReady(root)
+    }
+
+    private suspend fun provision(
+        state: MutableStateFlow<CodexRuntimeProgress>,
+        asset: CodexRuntimeAsset,
+        installDir: File,
+        executable: File,
+    ) {
+        runtimeBaseDir.mkdirs()
+        val usable = runtimeBaseDir.usableSpace
+        if (usable in 1 until MIN_FREE_BYTES) {
+            fail(CodexRuntimeErrorCategory.RuntimeInstallFailed, "Codex runtime用の空き容量が不足しています")
+        }
+        installDir.mkdirs()
+        installDir.listFiles()?.filter { it.name.startsWith(".codex.staging-") || it.name.endsWith(".part") }
+            ?.forEach(File::delete)
+        val temp = File(installDir, "${asset.assetName}.part")
+        temp.delete()
+        downloadWithRetry(state, asset, temp)
+
+        publish(state, CodexRuntimePhase.VERIFYING, "ダウンロードを検証しています", asset)
+        if (!sha256(temp).equals(asset.archiveSha256, ignoreCase = true)) {
+            temp.delete()
+            fail(CodexRuntimeErrorCategory.RuntimeCorrupt, "Codex runtimeの整合性確認に失敗しました")
         }
 
-    private suspend fun validateInstalled(
-        root: String,
-        executable: File,
-        asset: CodexRuntimeAsset,
-    ): CodexRuntimeReady? {
+        publish(state, CodexRuntimePhase.INSTALLING, "Codex runtimeを導入しています", asset)
+        val staging = File(installDir, ".codex.staging-${System.nanoTime()}")
+        val previous = File(installDir, ".codex.previous")
+        try {
+            extractSingleTarGz(temp, staging, asset.archiveEntry)
+            if (!staging.setExecutable(true, false) || !staging.setReadable(true, false)) {
+                fail(CodexRuntimeErrorCategory.RuntimeInstallFailed, "Codex runtime permissions could not be set")
+            }
+            previous.delete()
+            if (executable.exists() && !executable.renameTo(previous)) {
+                fail(CodexRuntimeErrorCategory.RuntimeInstallFailed, "Existing Codex runtime could not be staged for update")
+            }
+            if (!staging.renameTo(executable)) {
+                previous.takeIf(File::exists)?.renameTo(executable)
+                fail(CodexRuntimeErrorCategory.RuntimeInstallFailed, "Codex runtime could not be installed atomically")
+            }
+            File(installDir, "INSTALL-METADATA").writeText(
+                "version=$VALIDATED_VERSION\nasset=${asset.assetName}\nsha256=${asset.archiveSha256}\nsource=$RELEASE_BASE/rust-v$VALIDATED_VERSION\n",
+            )
+            previous.delete()
+        } finally {
+            staging.delete()
+            temp.delete()
+        }
+    }
+
+    private suspend fun validateInstalled(root: String, executable: File, asset: CodexRuntimeAsset): CodexRuntimeReady? {
         if (!executable.isFile || !executable.canExecute()) return null
-        val rootfsPath = "$MANAGED_ROOT/$VALIDATED_VERSION/codex"
-        val version = runWorkspace(root, "${shellQuote(rootfsPath)} --version", 15_000)
-        if (version.timedOut || version.exitCode != 0) return null
-        if (!version.stdout.contains(VALIDATED_VERSION)) return null
-        val appServer = runWorkspace(root, "${shellQuote(rootfsPath)} app-server --help >/dev/null 2>&1", 15_000)
+        val visiblePath = "$RUNTIME_BIND_ROOT/$VALIDATED_VERSION/${asset.architecture}/codex"
+        val version = runWorkspace(root, "${shellQuote(visiblePath)} --version", 15_000)
+        if (version.timedOut || version.exitCode != 0 || !version.stdout.contains(VALIDATED_VERSION)) return null
+        val appServer = runWorkspace(root, "${shellQuote(visiblePath)} app-server --help >/dev/null 2>&1", 15_000)
         if (appServer.timedOut || appServer.exitCode != 0) return null
-        return CodexRuntimeReady(rootfsPath, VALIDATED_VERSION, asset.architecture, managed = true)
+        return CodexRuntimeReady(visiblePath, VALIDATED_VERSION, asset.architecture, managed = true)
     }
 
-    private suspend fun runWorkspace(root: String, command: String, timeoutMs: Long) = runInterruptible(Dispatchers.IO) {
-        workspaceManager.executeCommand(root, command, timeoutMillis = timeoutMs)
-    }
+    private suspend fun runWorkspace(root: String, command: String, timeoutMs: Long) =
+        runInterruptible(Dispatchers.IO) { workspaceManager.executeCommand(root, command, timeoutMillis = timeoutMs) }
 
-    private suspend fun download(
+    private suspend fun downloadWithRetry(
         state: MutableStateFlow<CodexRuntimeProgress>,
         asset: CodexRuntimeAsset,
         target: File,
+    ) {
+        var last: Throwable? = null
+        repeat(DOWNLOAD_ATTEMPTS) { attempt ->
+            try {
+                target.delete()
+                downloadOnce(state, asset, target, attempt + 1)
+                return
+            } catch (cancelled: CancellationException) {
+                target.delete()
+                throw cancelled
+            } catch (failure: Throwable) {
+                target.delete()
+                last = failure
+                if (attempt + 1 < DOWNLOAD_ATTEMPTS) delay(750L * (attempt + 1))
+            }
+        }
+        throw CodexRuntimeProvisioningException(
+            CodexRuntimeErrorCategory.NetworkFailure,
+            "OpenAI公式Codex runtimeをダウンロードできませんでした",
+            last,
+        )
+    }
+
+    private suspend fun downloadOnce(
+        state: MutableStateFlow<CodexRuntimeProgress>,
+        asset: CodexRuntimeAsset,
+        target: File,
+        attempt: Int,
     ) = runInterruptible(Dispatchers.IO) {
-        publish(state, CodexRuntimePhase.DOWNLOADING, "OpenAI公式Codex runtimeをダウンロードしています")
-        val url = "$RELEASE_BASE/rust-v$VALIDATED_VERSION/${asset.assetName}"
-        val request = Request.Builder().url(url).get().build()
-        httpClient.newCall(request).execute().use { response ->
+        publish(state, CodexRuntimePhase.DOWNLOADING, "OpenAI公式Codex runtimeをダウンロードしています ($attempt/$DOWNLOAD_ATTEMPTS)", asset)
+        val request = Request.Builder()
+            .url("$RELEASE_BASE/rust-v$VALIDATED_VERSION/${asset.assetName}")
+            .get()
+            .build()
+        downloadClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 fail(CodexRuntimeErrorCategory.NetworkFailure, "Codex runtime download failed: HTTP ${response.code}")
             }
-            val body = response.body ?: fail(CodexRuntimeErrorCategory.NetworkFailure, "Codex runtime download returned no body")
+            val body = response.body
             val total = body.contentLength().takeIf { it > 0 }
             target.outputStream().buffered().use { output ->
                 body.byteStream().use { input ->
@@ -252,9 +273,11 @@ class CodexRuntimeManager(
                         if (readTotal >= nextReport || readTotal == total) {
                             state.value = CodexRuntimeProgress(
                                 phase = CodexRuntimePhase.DOWNLOADING,
-                                detail = "OpenAI公式Codex runtimeをダウンロードしています",
+                                detail = "OpenAI公式Codex runtimeをダウンロードしています ($attempt/$DOWNLOAD_ATTEMPTS)",
                                 bytesRead = readTotal,
                                 totalBytes = total,
+                                version = VALIDATED_VERSION,
+                                architecture = asset.architecture,
                             )
                             nextReport = readTotal + 512 * 1024
                         }
@@ -300,16 +323,30 @@ class CodexRuntimeManager(
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    private fun publish(state: MutableStateFlow<CodexRuntimeProgress>, phase: CodexRuntimePhase, detail: String) {
-        state.value = CodexRuntimeProgress(phase = phase, detail = detail)
+    private fun publish(
+        state: MutableStateFlow<CodexRuntimeProgress>,
+        phase: CodexRuntimePhase,
+        detail: String,
+        asset: CodexRuntimeAsset? = null,
+    ) {
+        state.value = CodexRuntimeProgress(
+            phase = phase,
+            detail = detail,
+            version = if (asset != null) VALIDATED_VERSION else state.value.version,
+            architecture = asset?.architecture ?: state.value.architecture,
+        )
     }
 
     companion object {
-        /** Pinned, stable release validated with this App Server client. Never auto-updated to latest. */
         const val VALIDATED_VERSION = "0.146.0"
-        const val MANAGED_ROOT = "/opt/rikkahub/codex"
+        const val SUPPORTED_MIN_VERSION = VALIDATED_VERSION
+        const val SUPPORTED_MAX_VERSION = VALIDATED_VERSION
+        const val RUNTIME_BIND_ROOT = "/rikkahub_runtime"
+        const val RUNTIME_HOST_DIR_NAME = "codex_runtime"
         private const val RELEASE_BASE = "https://github.com/openai/codex/releases/download"
         private const val MIN_FREE_BYTES = 320L * 1024L * 1024L
+        private const val DOWNLOAD_ATTEMPTS = 3
+        private const val DOWNLOAD_TIMEOUT_MINUTES = 5L
 
         internal val ASSETS = listOf(
             CodexRuntimeAsset(
@@ -336,13 +373,10 @@ class CodexRuntimeManager(
         }
 
         internal fun classifyProvisioningFailure(failure: Throwable): CodexRuntimeErrorCategory {
-            val text = generateSequence(failure) { it.cause }
-                .take(5)
-                .joinToString(" ") { it.message.orEmpty() }
-                .lowercase()
+            val text = generateSequence(failure) { it.cause }.take(5).joinToString(" ") { it.message.orEmpty() }.lowercase()
             return when {
                 "timed out" in text || "timeout" in text -> CodexRuntimeErrorCategory.Timeout
-                "network" in text || "http " in text || "unable to resolve host" in text -> CodexRuntimeErrorCategory.NetworkFailure
+                "network" in text || "http " in text || "unable to resolve host" in text || "connect" in text -> CodexRuntimeErrorCategory.NetworkFailure
                 "space" in text || "no space" in text -> CodexRuntimeErrorCategory.RuntimeInstallFailed
                 else -> CodexRuntimeErrorCategory.RuntimeInstallFailed
             }
