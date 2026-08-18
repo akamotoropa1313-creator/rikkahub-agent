@@ -15,7 +15,7 @@ jobs:
 
       - name: Apply staged PR33 first-run patch
         run: |
-          python3 .github/scripts/pr33_first_run_apply.py
+          python3 .github/scripts/pr33_first_run_apply_v2.py
           git diff --check
 
       - name: Set up JDK 17
