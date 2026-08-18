@@ -3,6 +3,7 @@ package me.rerere.rikkahub.di
 import java.lang.reflect.Proxy
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerLocalState
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
+import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeResolver
 import me.rerere.rikkahub.data.db.dao.CodexAppServerSessionBindingDao
 import me.rerere.rikkahub.data.db.dao.ConversationDAO
 import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
@@ -14,7 +15,7 @@ import org.koin.dsl.module
 
 class CodexRepositoryModuleTest {
     @Test
-    fun `codex local state is resolvable by its interface`() {
+    fun `codex local state and runtime resolver are resolvable by interface`() {
         val koin = startKoin {
             modules(
                 module {
@@ -29,6 +30,7 @@ class CodexRepositoryModuleTest {
         try {
             assertNotNull(koin.get<CodexAppServerLocalState>())
             assertNotNull(koin.get<CodexAppServerSessionBindingRepository>())
+            assertNotNull(koin.get<CodexRuntimeResolver>())
         } finally {
             stopKoin()
         }
