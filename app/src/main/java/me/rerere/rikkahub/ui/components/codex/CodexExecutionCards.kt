@@ -80,7 +80,7 @@ fun CodexTurnDiffCard(diff: String, modifier: Modifier = Modifier) {
 private fun CollapsibleText(text: String, label: String, isDiff: Boolean) {
     var expanded by remember(text) { mutableStateOf(text.length <= 2_000) }
     Text(
-        if (expanded) "$labelを隠す" else "$labelを表示（${text.length}文字）",
+        if (expanded) "${label}を隠す" else "${label}を表示（${text.length}文字）",
         modifier = Modifier.clickable { expanded = !expanded }.padding(vertical = 12.dp),
         color = MaterialTheme.colorScheme.primary,
     )
