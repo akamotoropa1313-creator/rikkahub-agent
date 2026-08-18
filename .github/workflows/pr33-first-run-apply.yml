@@ -1,0 +1,70 @@
+name: Apply Codex first-run UX
+
+on:
+  push:
+    branches:
+      - codex/runtime-provisioning-first-run
+    paths:
+      - .github/workflows/pr33-first-run-apply.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/runtime-provisioning-first-run
+          submodules: recursive
+
+      - name: Apply first-run and compatibility fixes
+        run: |
+          python3 .github/scripts/pr33_first_run_apply.py
+          git diff --check
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+          log-accepted-android-sdk-licenses: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.14
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+          run_install: false
+      - name: Install Android build dependencies
+        run: sdkmanager --channel=3 "platforms;android-37.0" "build-tools;37.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile app
+        run: ./gradlew :app:compileDebugKotlin
+
+      - name: Run focused Codex tests
+        run: >-
+          ./gradlew :app:testDebugUnitTest
+          --tests 'me.rerere.rikkahub.data.codex.appserver.CodexAppServerModelApiTest'
+          --tests 'me.rerere.rikkahub.service.CodexChatRuntimeIntegrationTest'
+
+      - name: Commit verified fixes
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            app/src/main/java/me/rerere/rikkahub/service/ChatService.kt \
+            app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt \
+            app/src/main/java/me/rerere/rikkahub/ui/components/ai/FilesPicker.kt \
+            app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt \
+            app/src/main/java/me/rerere/rikkahub/service/CodexChatRuntime.kt \
+            app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatList.kt \
+            app/src/test/java/me/rerere/rikkahub/data/codex/appserver/CodexAppServerModelApiTest.kt \
+            app/src/test/java/me/rerere/rikkahub/service/CodexChatRuntimeIntegrationTest.kt
+          git commit -m "feat(codex): complete no-dummy-message first-run flow"
+          git push origin HEAD:codex/runtime-provisioning-first-run
