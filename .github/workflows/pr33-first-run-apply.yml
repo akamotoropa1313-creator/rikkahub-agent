@@ -1,9 +1,7 @@
 name: Finalize Codex first-run UX
 
 on:
-  push:
-    branches:
-      - codex/runtime-provisioning-first-run
+  pull_request:
     paths:
       - .github/workflows/pr33-first-run-apply.yml
 
