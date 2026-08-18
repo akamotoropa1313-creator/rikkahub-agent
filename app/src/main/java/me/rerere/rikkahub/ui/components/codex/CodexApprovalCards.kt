@@ -31,17 +31,17 @@ fun CodexCommandApprovalCard(
     submitting: Boolean = false,
     resolved: Boolean = false,
 ) {
-    ApprovalSurface("Command approval", modifier) {
-        request.reason?.let { LabeledPlainText("Reason", it) }
+    ApprovalSurface("コマンドの承認", modifier) {
+        request.reason?.let { LabeledPlainText("理由", it) }
         request.networkApprovalContext?.let {
-            Text("Network access requested", style = MaterialTheme.typography.titleMedium)
-            LabeledPlainText("Host", it.host)
-            LabeledPlainText("Protocol", it.protocol.toString())
+            Text("ネットワークアクセスが要求されています", style = MaterialTheme.typography.titleMedium)
+            LabeledPlainText("ホスト", it.host)
+            LabeledPlainText("プロトコル", it.protocol.toString())
         }
-        request.command?.let { LabeledPlainText("Command", it, true) }
-        request.cwd?.let { LabeledPlainText("Working directory", it) }
-        request.commandActions?.forEach { LabeledPlainText("Action", commandActionPresentation(it)) }
-        request.environmentId?.let { LabeledPlainText("Environment", it) }
+        request.command?.let { LabeledPlainText("コマンド", it, true) }
+        request.cwd?.let { LabeledPlainText("作業ディレクトリ", it) }
+        request.commandActions?.forEach { LabeledPlainText("操作", commandActionPresentation(it)) }
+        request.environmentId?.let { LabeledPlainText("環境", it) }
         ApprovalActions(enabled && !submitting && !resolved,
             approve = { onDecision(CodexAppServerCommandApprovalDecision.Accept) },
             session = { onDecision(CodexAppServerCommandApprovalDecision.AcceptForSession) },
@@ -60,11 +60,11 @@ fun CodexFileChangeApprovalCard(
     submitting: Boolean = false,
     resolved: Boolean = false,
 ) {
-    ApprovalSurface("File-change approval", modifier) {
-        request.reason?.let { LabeledPlainText("Reason", it) }
-        request.grantRoot?.let { LabeledPlainText("Requested grant root", it) }
+    ApprovalSurface("ファイル変更の承認", modifier) {
+        request.reason?.let { LabeledPlainText("理由", it) }
+        request.grantRoot?.let { LabeledPlainText("要求された許可ルート", it) }
         fileChange?.let { CodexFileChangeCard(it) }
-            ?: Text("Change preview unavailable. Approval is disabled for your safety.", color = MaterialTheme.colorScheme.error)
+            ?: Text("変更内容をプレビューできないため、安全のため承認を無効にしています。", color = MaterialTheme.colorScheme.error)
         val availability = approvalActionAvailability(enabled, submitting, resolved, fileChange != null)
         ApprovalActions(availability.approveEnabled, availability.rejectEnabled,
             approve = { onDecision(CodexAppServerFileChangeApprovalDecision.Accept) },
@@ -77,9 +77,9 @@ fun CodexFileChangeApprovalCard(
 @Composable private fun ApprovalSurface(title:String, modifier:Modifier, content:@Composable ()->Unit) = Card(modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) { Text(title, style=MaterialTheme.typography.titleLarge); content() } }
 @Composable private fun LabeledPlainText(label:String, value:String, monospace:Boolean=false) { Text(label, style=MaterialTheme.typography.labelMedium); Text(value, fontFamily=if(monospace) FontFamily.Monospace else FontFamily.Default) }
 @Composable private fun ApprovalActions(approveEnabled:Boolean, rejectEnabled:Boolean = approveEnabled, approve:()->Unit, session:()->Unit, decline:()->Unit, cancel:()->Unit) {
-    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { Button(approve, enabled=approveEnabled) { Text("Approve once") }; OutlinedButton(session, enabled=approveEnabled) { Text("Approve for session") } }
-    Text("Decline rejects this action and lets the turn continue. Cancel turn rejects it and stops the turn.", style=MaterialTheme.typography.bodySmall)
-    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { OutlinedButton(decline, enabled=rejectEnabled) { Text("Decline") }; OutlinedButton(cancel, enabled=rejectEnabled) { Text("Cancel turn") } }
+    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { Button(approve, enabled=approveEnabled) { Text("今回のみ承認") }; OutlinedButton(session, enabled=approveEnabled) { Text("このセッションで承認") } }
+    Text("「拒否」はこの操作だけを拒否してターンを続行します。「ターンをキャンセル」は操作を拒否してターンも停止します。", style=MaterialTheme.typography.bodySmall)
+    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { OutlinedButton(decline, enabled=rejectEnabled) { Text("拒否") }; OutlinedButton(cancel, enabled=rejectEnabled) { Text("ターンをキャンセル") } }
 }
 
 internal data class ApprovalActionAvailability(val approveEnabled: Boolean, val rejectEnabled: Boolean)
@@ -89,14 +89,14 @@ internal fun approvalActionAvailability(enabled: Boolean, submitting: Boolean, r
 }
 
 internal fun commandActionPresentation(action: CodexAppServerCommandAction): String = when (action) {
-    is CodexAppServerCommandAction.Read -> "Read: ${action.path}"
-    is CodexAppServerCommandAction.ListFiles -> action.path?.let { "List files: $it" } ?: "List files"
+    is CodexAppServerCommandAction.Read -> "読み取り: ${action.path}"
+    is CodexAppServerCommandAction.ListFiles -> action.path?.let { "ファイル一覧: $it" } ?: "ファイル一覧"
     is CodexAppServerCommandAction.Search -> when {
-        action.query != null && action.path != null -> "Search: ${action.query} in ${action.path}"
-        action.query != null -> "Search: ${action.query}"
-        action.path != null -> "Search in: ${action.path}"
-        else -> "Search"
+        action.query != null && action.path != null -> "検索: ${action.query}（${action.path}）"
+        action.query != null -> "検索: ${action.query}"
+        action.path != null -> "検索先: ${action.path}"
+        else -> "検索"
     }
-    is CodexAppServerCommandAction.UnknownCommand -> "Command: ${action.command}"
-    is CodexAppServerCommandAction.Other -> "Unknown command action"
+    is CodexAppServerCommandAction.UnknownCommand -> "コマンド: ${action.command}"
+    is CodexAppServerCommandAction.Other -> "不明なコマンド操作"
 }

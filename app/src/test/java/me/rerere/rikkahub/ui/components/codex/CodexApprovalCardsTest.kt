@@ -12,11 +12,11 @@ class CodexApprovalCardsTest {
     private val raw = buildJsonObject { put("secret", "must-not-render") }
     @Test fun `known command actions have friendly text without raw json`() {
         val actions = listOf(
-            CodexAppServerCommandAction.Read("cat a", "a", "/a", raw) to "Read: /a",
-            CodexAppServerCommandAction.ListFiles("find", "/work", raw) to "List files: /work",
-            CodexAppServerCommandAction.Search("rg q", "q", "/work", raw) to "Search: q in /work",
-            CodexAppServerCommandAction.UnknownCommand("custom", raw) to "Command: custom",
-            CodexAppServerCommandAction.Other("future", raw) to "Unknown command action",
+            CodexAppServerCommandAction.Read("cat a", "a", "/a", raw) to "読み取り: /a",
+            CodexAppServerCommandAction.ListFiles("find", "/work", raw) to "ファイル一覧: /work",
+            CodexAppServerCommandAction.Search("rg q", "q", "/work", raw) to "検索: q（/work）",
+            CodexAppServerCommandAction.UnknownCommand("custom", raw) to "コマンド: custom",
+            CodexAppServerCommandAction.Other("future", raw) to "不明なコマンド操作",
         )
         actions.forEach { (action, expected) -> assertEquals(expected, commandActionPresentation(action)); assertFalse(commandActionPresentation(action).contains("secret")) }
     }

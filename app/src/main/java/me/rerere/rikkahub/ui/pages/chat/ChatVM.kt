@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -36,6 +37,7 @@ import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
+import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeResolver
 import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Avatar
@@ -44,6 +46,7 @@ import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.NodeFavoriteTarget
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FavoriteRepository
+import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.service.CodexConversationUiState
@@ -53,6 +56,7 @@ import me.rerere.rikkahub.ui.hooks.writeStringPreference
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.rikkahub.utils.UiState
 import me.rerere.rikkahub.utils.UpdateChecker
+import me.rerere.workspace.WorkspaceShellStatus
 import java.util.Locale
 import kotlin.uuid.Uuid
 
@@ -63,6 +67,8 @@ class ChatVM(
     private val context: Application,
     private val settingsStore: SettingsStore,
     private val conversationRepo: ConversationRepository,
+    private val workspaceRepository: WorkspaceRepository,
+    private val codexRuntimeResolver: CodexRuntimeResolver,
     private val chatService: ChatService,
     val updateChecker: UpdateChecker,
     private val filesManager: FilesManager,
@@ -103,10 +109,28 @@ class ChatVM(
         _hasCodexBinding.value = false
     } }
     fun reconnectCodexSession() { viewModelScope.launch { runCatching { chatService.reconnectCodexSession(_conversationId) } } }
+
+    private suspend fun ensureCodexRuntimeReadyBeforeSession() {
+        val persistedConversation = conversationRepo.getConversationById(_conversationId) ?: conversation.value
+        val currentSettings = settingsStore.settingsFlow.first()
+        val assistant = currentSettings.getAssistantById(persistedConversation.assistantId)
+            ?: currentSettings.getCurrentAssistant()
+        if (!assistant.codexAppServerEnabled) return
+        val workspaceId = assistant.workspaceId?.toString() ?: return
+        val workspace = workspaceRepository.getById(workspaceId) ?: return
+        if (workspace.shellStatus != WorkspaceShellStatus.READY.name) return
+        codexRuntimeResolver.ensureReady(workspace.root)
+    }
+
     private fun launchCodexPreparation() {
         if (_codexPrepareJob.value?.isActive == true) return
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
-            runCatching { chatService.prepareCodexSession(_conversationId) }
+            runCatching {
+                // Provision first. This makes the ON toggle itself start download/install instead
+                // of relying on the first message to reach the App Server connection factory.
+                ensureCodexRuntimeReadyBeforeSession()
+                chatService.prepareCodexSession(_conversationId)
+            }
             _hasCodexBinding.value = chatService.hasCodexBinding(_conversationId)
         }
         _codexPrepareJob.value = job

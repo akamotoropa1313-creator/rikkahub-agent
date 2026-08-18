@@ -4,31 +4,120 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   protocol-tests:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out PR branch
+      - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: codex/runtime-provisioning-first-run
           submodules: recursive
-          fetch-depth: 0
 
-      - name: Materialize requested Codex UX fixes
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+          log-accepted-android-sdk-licenses: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.14
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+          run_install: false
+
+      - name: Verify web toolchain
+        run: |
+          bun --version
+          pnpm --version
+
+      - name: Install Android build dependencies
         shell: bash
         run: |
           set -euo pipefail
-          python3 .github/scripts/pr33_localize_and_provision_on_enable.py
-          git diff --check
-          git fetch origin master
-          git checkout origin/master -- .github/workflows/codex-app-server-protocol-tests.yml
-          git rm .github/scripts/pr33_localize_and_provision_on_enable.py
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "feat(codex): localize UI and provision runtime on enable"
-          git push origin HEAD:codex/runtime-provisioning-first-run
+          command -v sdkmanager
+          available_packages="$(sdkmanager --list --channel=3)"
+          if ! printf '%s\n' "$available_packages" | awk -F '|' '
+            {
+              gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1)
+              if ($1 == "platforms;android-37.0") found = 1
+            }
+            END { exit(found ? 0 : 1) }
+          '; then
+            echo "Required SDK package platforms;android-37.0 is unavailable." >&2
+            printf '%s\n' "$available_packages" | grep -E 'platforms;android-37([.]|[[:space:]]|$)' || true
+            exit 1
+          fi
+          sdkmanager --channel=3 \
+            "platforms;android-37.0" \
+            "build-tools;37.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.22.1"
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile app and generate Room schemas
+        run: ./gradlew :app:compileDebugKotlin
+
+      - name: Verify committed Room schemas are clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          schema_status="$(git status --porcelain -- app/schemas/me.rerere.rikkahub.data.db.AppDatabase)"
+          if [[ -n "$schema_status" ]]; then
+            printf '%s\n' "$schema_status" >&2
+            echo "Room/KSP generated uncommitted schema changes." >&2
+            exit 1
+          fi
+
+      - name: Run Codex App Server protocol unit tests
+        run: >-
+          ./gradlew :app:testDebugUnitTest
+          --tests 'me.rerere.rikkahub.data.codex.appserver.*Test'
+          --tests 'me.rerere.rikkahub.ui.components.codex.*Test'
+          --tests 'me.rerere.rikkahub.service.Codex*Test'
+          --tests 'me.rerere.rikkahub.di.CodexRepositoryModuleTest'
+          --tests 'me.rerere.rikkahub.utils.CrashHandlerTest'
+
+      - name: Run workspace interactive process unit tests
+        run: >-
+          ./gradlew :workspace:testDebugUnitTest
+          --tests 'me.rerere.workspace.*Interactive*Test'
+
+      - name: Print Codex App Server JUnit failure details
+        if: failure()
+        shell: bash
+        run: |
+          find app/build/test-results/testDebugUnitTest \
+            \( -name 'TEST-me.rerere.rikkahub.data.codex.appserver.*Test.xml' \
+            -o -name 'TEST-me.rerere.rikkahub.ui.components.codex.*Test.xml' \
+            -o -name 'TEST-me.rerere.rikkahub.service.Codex*Test.xml' \
+            -o -name 'TEST-me.rerere.rikkahub.di.CodexRepositoryModuleTest.xml' \
+            -o -name 'TEST-me.rerere.rikkahub.utils.CrashHandlerTest.xml' \) \
+            -print -exec cat {} \; 2>/dev/null || true
+
+      - name: Upload app JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-app-junit-results
+          path: app/build/test-results/testDebugUnitTest/*.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Print workspace interactive process JUnit failure details
+        if: failure()
+        shell: bash
+        run: |
+          find workspace/build/test-results/testDebugUnitTest -name '*Interactive*Test.xml' -print -exec cat {} \; 2>/dev/null || true

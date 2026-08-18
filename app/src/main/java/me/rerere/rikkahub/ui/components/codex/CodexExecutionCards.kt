@@ -41,8 +41,8 @@ fun CodexCommandExecutionCard(item: CodexAppServerItemSnapshot.CommandExecution,
         Column(Modifier.padding(12.dp)) {
             Text(item.command, fontFamily = FontFamily.Monospace)
             Text(item.cwd, style = MaterialTheme.typography.bodySmall)
-            Text("${item.status}${item.exitCode?.let { " · exit $it" } ?: ""}${item.durationMs?.let { " · ${it}ms" } ?: ""}")
-            item.aggregatedOutput?.let { CollapsibleText(it, "Output", isDiff = false) }
+            Text("${item.status}${item.exitCode?.let { " · 終了コード $it" } ?: ""}${item.durationMs?.let { " · ${it}ms" } ?: ""}")
+            item.aggregatedOutput?.let { CollapsibleText(it, "出力", isDiff = false) }
         }
     }
 }
@@ -54,13 +54,13 @@ fun CodexFileChangeCard(item: CodexAppServerItemSnapshot.FileChange, modifier: M
             Text(item.status.toString())
             item.changes.forEach { change ->
                 val label = when (val kind = change.kind) {
-                    is CodexAppServerPatchChangeKind.Add -> "Add"
-                    is CodexAppServerPatchChangeKind.Delete -> "Delete"
-                    is CodexAppServerPatchChangeKind.Update -> "Update${kind.movePath?.let { " → $it" } ?: ""}"
+                    is CodexAppServerPatchChangeKind.Add -> "追加"
+                    is CodexAppServerPatchChangeKind.Delete -> "削除"
+                    is CodexAppServerPatchChangeKind.Update -> "更新${kind.movePath?.let { " → $it" } ?: ""}"
                     is CodexAppServerPatchChangeKind.Other -> kind.type
                 }
                 Text("$label · ${change.path}", style = MaterialTheme.typography.titleSmall)
-                CollapsibleText(change.diff, "Diff", isDiff = true)
+                CollapsibleText(change.diff, "差分", isDiff = true)
             }
         }
     }
@@ -70,7 +70,7 @@ fun CodexFileChangeCard(item: CodexAppServerItemSnapshot.FileChange, modifier: M
 fun CodexTurnDiffCard(diff: String, modifier: Modifier = Modifier) {
     Card(modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
-            Text("Turn diff", style = MaterialTheme.typography.titleSmall)
+            Text("ターンの差分", style = MaterialTheme.typography.titleSmall)
             UnifiedDiff(diff)
         }
     }
@@ -80,7 +80,7 @@ fun CodexTurnDiffCard(diff: String, modifier: Modifier = Modifier) {
 private fun CollapsibleText(text: String, label: String, isDiff: Boolean) {
     var expanded by remember(text) { mutableStateOf(text.length <= 2_000) }
     Text(
-        if (expanded) "Hide $label" else "Show $label (${text.length} characters)",
+        if (expanded) "$labelを隠す" else "$labelを表示（${text.length}文字）",
         modifier = Modifier.clickable { expanded = !expanded }.padding(vertical = 12.dp),
         color = MaterialTheme.colorScheme.primary,
     )

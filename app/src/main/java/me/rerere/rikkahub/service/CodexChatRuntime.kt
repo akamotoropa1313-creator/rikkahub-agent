@@ -86,7 +86,7 @@ class CodexChatRuntime(
                         _capabilities.value = applyAccountLoginCompletion(_capabilities.value, completion)
                     }
                 is CodexAppServerAccountEvent.MalformedNotification ->
-                    _capabilities.value = _capabilities.value.copy(accountError = event.cause.message ?: "Malformed account event")
+                    _capabilities.value = _capabilities.value.copy(accountError = event.cause.message ?: "アカウントイベントの形式が不正です")
                 is CodexAppServerAccountEvent.Updated -> Unit
             }
         }
@@ -97,7 +97,7 @@ class CodexChatRuntime(
                 is CodexAppServerMcpEvent.OAuthLoginCompleted ->
                     _capabilities.value = applyMcpOAuthCompletion(_capabilities.value, event)
                 is CodexAppServerMcpEvent.MalformedNotification ->
-                    _capabilities.value = _capabilities.value.copy(mcpError = event.cause.message ?: "Malformed MCP event")
+                    _capabilities.value = _capabilities.value.copy(mcpError = event.cause.message ?: "MCPイベントの形式が不正です")
                 is CodexAppServerMcpEvent.ToolCallProgress -> Unit
             }
         }
@@ -126,7 +126,7 @@ class CodexChatRuntime(
             throw cancelled
         } catch (failure: Throwable) {
             val message = if (failure is CodexAppServerResponseException && failure.error.code == -32601L)
-                "Native code review is not supported by this App Server" else failure.safeMessage()
+                "このApp Serverはネイティブコードレビューに対応していません" else failure.safeMessage()
             _review.value = CodexReviewUiState(error = message)
             throw failure
         } finally {
@@ -188,7 +188,7 @@ class CodexChatRuntime(
         }
         catch (failure: Throwable) {
             val message = if (failure is CodexAppServerResponseException && failure.error.code == -32601L)
-                "Thread history is not supported by this App Server" else failure.safeMessage()
+                "このApp Serverはスレッド履歴に対応していません" else failure.safeMessage()
             _capabilities.value = _capabilities.value.copy(threadHistory = old.copy(loading = false, error = message))
             throw failure
         }
@@ -226,7 +226,7 @@ class CodexChatRuntime(
             throw cancelled
         } catch (failure: Throwable) {
             val message = if (failure is CodexAppServerResponseException && failure.error.code == -32601L)
-                "Thread history is not supported by this App Server" else failure.safeMessage()
+                "このApp Serverはスレッド履歴に対応していません" else failure.safeMessage()
             val current = _capabilities.value.threadHistory
             if (current.selectedThreadId == threadId) {
                 _capabilities.value = _capabilities.value.copy(
@@ -362,7 +362,7 @@ class CodexChatRuntime(
     }
 
     suspend fun cancelAccountLogin() = capabilityOperation {
-        val id = checkNotNull(_capabilities.value.pendingLoginId) { "No pending Codex sign-in" }
+        val id = checkNotNull(_capabilities.value.pendingLoginId) { "保留中のCodexサインインはありません" }
         when (val result = session.accountApi.cancelLogin(id)) {
             CodexAppServerCancelLoginResult.Canceled -> {
                 accountLoginCorrelation.markCanceled(id)
@@ -377,13 +377,13 @@ class CodexChatRuntime(
                 // retire the correlation or claim cancellation succeeded; keep accepting that
                 // delayed completion for this exact login ID.
                 _capabilities.value = _capabilities.value.copy(
-                    accountStatus = "Sign-in is no longer pending on the App Server",
+                    accountStatus = "App Server側ではサインイン待機状態ではなくなっています",
                     accountError = null,
                 )
             }
             is CodexAppServerCancelLoginResult.Unknown -> {
                 _capabilities.value = _capabilities.value.copy(
-                    accountError = "Unable to confirm sign-in cancellation (${result.raw})",
+                    accountError = "サインインのキャンセルを確認できませんでした (${result.raw})",
                 )
             }
         }

@@ -14,28 +14,28 @@ internal fun formatCompactTokens(value: Long): String = when {
     else -> "%.1fM".format(Locale.US, value / 1_000_000.0).replace(".0M", "M")
 }
 internal fun formatDuration(durationMs: Long): String = when {
-    durationMs < 1_000 -> "$durationMs ms"
-    durationMs < 60_000 -> "%.1f s".format(Locale.US, durationMs / 1_000.0).replace(".0 s", " s")
-    else -> "${durationMs / 60_000} min ${(durationMs % 60_000) / 1_000} s"
+    durationMs < 1_000 -> "$durationMs ミリ秒"
+    durationMs < 60_000 -> "%.1f 秒".format(Locale.US, durationMs / 1_000.0).replace(".0 秒", " 秒")
+    else -> "${durationMs / 60_000}分 ${(durationMs % 60_000) / 1_000}秒"
 }
 internal fun currentContextText(usage: CodexThreadTokenUsage): String = usage.modelContextWindow?.let {
-    "${formatTokenCount(usage.last.totalTokens)} / ${formatTokenCount(it)} tokens"
-} ?: "${formatTokenCount(usage.last.totalTokens)} tokens"
+    "${formatTokenCount(usage.last.totalTokens)} / ${formatTokenCount(it)} トークン"
+} ?: "${formatTokenCount(usage.last.totalTokens)} トークン"
 internal fun compactContextText(usage: CodexThreadTokenUsage): String = usage.modelContextWindow?.let {
-    "Ctx ${formatCompactTokens(usage.last.totalTokens)} / ${formatCompactTokens(it)}"
-} ?: "Ctx ${formatCompactTokens(usage.last.totalTokens)}"
+    "コンテキスト ${formatCompactTokens(usage.last.totalTokens)} / ${formatCompactTokens(it)}"
+} ?: "コンテキスト ${formatCompactTokens(usage.last.totalTokens)}"
 internal fun turnStatusText(turn: CodexAppServerTurnSnapshot): String {
     val status = when (turn.status) {
-        CodexAppServerTurnStatus.Completed -> "Completed"
-        CodexAppServerTurnStatus.Interrupted -> "Interrupted"
-        CodexAppServerTurnStatus.Failed -> "Failed"
-        CodexAppServerTurnStatus.InProgress -> "In progress"
+        CodexAppServerTurnStatus.Completed -> "完了"
+        CodexAppServerTurnStatus.Interrupted -> "中断"
+        CodexAppServerTurnStatus.Failed -> "失敗"
+        CodexAppServerTurnStatus.InProgress -> "実行中"
         is CodexAppServerTurnStatus.Unknown -> turn.status.wireValue
     }
     return turn.durationMs?.let { "$status · ${formatDuration(it)}" } ?: status
 }
 internal fun errorCategoryLabel(info: CodexAppServerErrorInfo?): String = when (info) {
-    null -> "Codex error"
+    null -> "Codexエラー"
     is CodexAppServerErrorInfo.Known -> info.category.replace(Regex("([a-z])([A-Z])"), "$1 $2").replaceFirstChar(Char::uppercase)
-    is CodexAppServerErrorInfo.Unknown -> "Other Codex error"
+    is CodexAppServerErrorInfo.Unknown -> "その他のCodexエラー"
 }

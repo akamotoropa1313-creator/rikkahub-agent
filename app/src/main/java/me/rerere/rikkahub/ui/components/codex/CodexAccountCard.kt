@@ -25,16 +25,16 @@ internal fun codexAccountPresentation(
     enabled: Boolean, submitting: Boolean,
 ): CodexAccountPresentation {
     val lines = when {
-        loginPending -> listOf("Waiting for ChatGPT sign-in")
-        snapshot == null -> listOf("Account status unavailable")
+        loginPending -> listOf("ChatGPTへのサインインを待っています")
+        snapshot == null -> listOf("アカウント状態を取得できません")
         snapshot.account is CodexAppServerAccount.ChatGpt -> buildList {
-            add("Signed in with ChatGPT")
+            add("ChatGPTでサインイン済み")
             snapshot.account.email?.takeIf(String::isNotBlank)?.let(::add)
             add(snapshot.account.planType.displayName)
         }
-        snapshot.account != null -> listOf("Authenticated account")
-        snapshot.requiresOpenaiAuth -> listOf("ChatGPT sign-in required")
-        else -> listOf("No OpenAI sign-in required")
+        snapshot.account != null -> listOf("認証済みアカウント")
+        snapshot.requiresOpenaiAuth -> listOf("ChatGPTへのサインインが必要です")
+        else -> listOf("OpenAIへのサインインは不要です")
     }
     return CodexAccountPresentation(
         lines, showSignIn = !loginPending && snapshot?.account == null && snapshot?.requiresOpenaiAuth == true,
@@ -58,16 +58,16 @@ fun CodexAccountCard(
     val presentation = codexAccountPresentation(snapshot, loginPending, enabled, submitting)
     Card(modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Codex account")
+            Text("Codexアカウント")
             presentation.lines.forEach { Text(it) }
             statusMessage?.let { Text(it) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (presentation.showCancel) OutlinedButton(onCancelSignIn, enabled = presentation.actionsEnabled) { Text("Cancel") }
+                if (presentation.showCancel) OutlinedButton(onCancelSignIn, enabled = presentation.actionsEnabled) { Text("キャンセル") }
                 else if (presentation.showSignIn) {
-                    Button(onSignIn, enabled = presentation.actionsEnabled) { Text("Sign in with ChatGPT") }
+                    Button(onSignIn, enabled = presentation.actionsEnabled) { Text("ChatGPTでサインイン") }
                 }
-                OutlinedButton(onRefresh, enabled = presentation.actionsEnabled) { Text("Refresh") }
-                if (presentation.showLogout) OutlinedButton(onLogout, enabled = presentation.actionsEnabled) { Text("Log out") }
+                OutlinedButton(onRefresh, enabled = presentation.actionsEnabled) { Text("更新") }
+                if (presentation.showLogout) OutlinedButton(onLogout, enabled = presentation.actionsEnabled) { Text("ログアウト") }
             }
         }
     }

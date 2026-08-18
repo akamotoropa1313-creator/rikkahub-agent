@@ -131,10 +131,10 @@ internal fun FilesPicker(
     var confirmCodexReset by remember { mutableStateOf(false) }
     if (confirmCodexReset) AlertDialog(
         onDismissRequest = { confirmCodexReset = false },
-        title = { Text("Reset Codex session?") },
-        text = { Text("Continuity with the current Codex thread will be lost. The next Send will create a new thread.") },
-        confirmButton = { TextButton(onClick = { confirmCodexReset = false; onResetCodexSession() }) { Text("Reset") } },
-        dismissButton = { TextButton(onClick = { confirmCodexReset = false }) { Text("Cancel") } },
+        title = { Text("Codexセッションをリセットしますか？") },
+        text = { Text("現在のCodexスレッドとの継続性が失われます。次回の送信時に新しいスレッドを作成します。") },
+        confirmButton = { TextButton(onClick = { confirmCodexReset = false; onResetCodexSession() }) { Text("リセット") } },
+        dismissButton = { TextButton(onClick = { confirmCodexReset = false }) { Text("キャンセル") } },
     )
 
     Column(
@@ -196,13 +196,13 @@ internal fun FilesPicker(
         }
         val runtimeProgress by runtimeFlow.collectAsState()
         val codexPrerequisite = when {
-            assistant.workspaceId == null -> "Workspaceを選択するとCodex Coding Agentを有効にできます"
+            assistant.workspaceId == null -> "Workspaceを選択するとCodexコーディングエージェントを有効にできます"
             selectedWorkspace == null -> "選択したWorkspaceを利用できません"
             selectedWorkspace.shellStatus != WorkspaceShellStatus.READY.name -> "WorkspaceのLinux環境をREADYにしてください"
-            else -> "Workspace内でCodex App Server Harnessを使用します。設定 > Providers > Codexとは別機能です。"
+            else -> "Workspace内でCodex App Serverを使用します。「設定 > プロバイダー > Codex」とは別の機能です。"
         }
         ListItem(
-            headlineContent = { Text("Codex Coding Agent (App Server)") },
+            headlineContent = { Text("Codex コーディングエージェント（App Server）") },
             supportingContent = { Text(codexPrerequisite) },
             trailingContent = {
                 Switch(
@@ -233,7 +233,7 @@ internal fun FilesPicker(
                             val total = runtimeProgress.totalBytes
                             Text(if (total != null) "${runtimeProgress.bytesRead / 1_048_576} / ${total / 1_048_576} MiB" else "${runtimeProgress.bytesRead / 1_048_576} MiB")
                         }
-                        runtimeProgress.version?.let { Text("検証済みRuntime: Codex $it${runtimeProgress.architecture?.let { arch -> " · $arch" }.orEmpty()}") }
+                        runtimeProgress.version?.let { Text("検証済みランタイム: Codex $it${runtimeProgress.architecture?.let { arch -> " · $arch" }.orEmpty()}") }
                         runtimeProgress.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     }
                 },
@@ -247,11 +247,11 @@ internal fun FilesPicker(
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             )
             ListItem(
-                headlineContent = { Text("Codex App Server設定") },
+                headlineContent = { Text("Codex App Serverの設定") },
                 supportingContent = {
                     Column {
-                        Text("接続、App Serverアカウント、モデル、Skills、MCP、安全性を設定します")
-                        Text("通常のCodex Providerのログイン状態とは独立しています", style = MaterialTheme.typography.bodySmall)
+                        Text("接続、App Serverアカウント、モデル、スキル、MCP、安全性を設定します")
+                        Text("通常のCodexプロバイダーのログイン状態とは独立しています", style = MaterialTheme.typography.bodySmall)
                         codexSafetyIndicator(assistant)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     }
                 },
@@ -261,7 +261,7 @@ internal fun FilesPicker(
         }
 
         if (hasCodexBinding) {
-            TextButton(onClick = { confirmCodexReset = true }, enabled = !codexOperationBusy) { Text("Reset Codex session") }
+            TextButton(onClick = { confirmCodexReset = true }, enabled = !codexOperationBusy) { Text("Codexセッションをリセット") }
         }
 
         if (settings.mcpServers.isNotEmpty()) {

@@ -39,7 +39,7 @@ class CodexSafetyPreferencePolicyTest {
             codexSafetyConfirmation(base, "danger-full-access", "never"),
         )
         assertEquals(
-            "Full access · No approvals",
+            "フルアクセス · 承認確認なし",
             codexSafetyIndicator(
                 base.copy(
                     codexSandboxMode = "danger-full-access",
@@ -48,7 +48,7 @@ class CodexSafetyPreferencePolicyTest {
             ),
         )
         assertEquals(
-            "Server safety setting · Reset clears sticky overrides",
+            "サーバーの安全設定 · リセットすると固定された上書き設定を解除します",
             codexSafetyIndicator(base),
         )
         assertNull(

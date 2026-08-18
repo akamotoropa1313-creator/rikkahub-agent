@@ -15,7 +15,7 @@ class CodexAccountCardTest {
         val required = codexAccountPresentation(snapshot(null, true), false, true, false)
         assertTrue(required.showSignIn)
         val neutral = codexAccountPresentation(snapshot(null, false), false, true, false)
-        assertFalse(neutral.showSignIn); assertTrue("No OpenAI sign-in required" in neutral.lines)
+        assertFalse(neutral.showSignIn); assertTrue("OpenAIへのサインインは不要です" in neutral.lines)
     }
     @Test fun `chatgpt null email and unknown account are safe`() {
         val chat = CodexAppServerAccount.ChatGpt("person@example.test", CodexAppServerPlanType.Plus, empty)
@@ -24,7 +24,7 @@ class CodexAccountCardTest {
         assertFalse(noEmail.lines.any { it == "null" })
         val unknownRaw = buildJsonObject { put("accessToken", "must-not-render"); put("authUrl", "https://secret") }
         val unknown = codexAccountPresentation(snapshot(CodexAppServerAccount.Unknown("future", unknownRaw)), false, true, false)
-        assertTrue("Authenticated account" in unknown.lines)
+        assertTrue("認証済みアカウント" in unknown.lines)
         assertFalse(unknown.lines.joinToString().contains("secret")); assertFalse(unknown.lines.joinToString().contains("accessToken"))
     }
     @Test fun `pending and submitting control actions without exposing identifiers`() {

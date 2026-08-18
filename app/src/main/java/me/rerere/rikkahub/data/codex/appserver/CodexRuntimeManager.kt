@@ -95,12 +95,12 @@ class CodexRuntimeManager(
             publish(state, CodexRuntimePhase.CHECKING_PLATFORM, "OSとアーキテクチャを確認しています")
             val platform = runWorkspace(root, "uname -s; uname -m", 10_000)
             val lines = platform.stdout.lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
-            if (platform.timedOut) fail(CodexRuntimeErrorCategory.Timeout, "Workspace platform check timed out")
+            if (platform.timedOut) fail(CodexRuntimeErrorCategory.Timeout, "Workspaceのプラットフォーム確認がタイムアウトしました")
             if (platform.exitCode != 0 || lines.size < 2 || lines[0] != "Linux") {
-                fail(CodexRuntimeErrorCategory.RuntimeUnsupported, "Codex runtime requires a Linux Workspace")
+                fail(CodexRuntimeErrorCategory.RuntimeUnsupported, "CodexランタイムにはLinux Workspaceが必要です")
             }
             val asset = assetFor(lines[1])
-                ?: fail(CodexRuntimeErrorCategory.RuntimeUnsupported, "Unsupported Workspace architecture: ${lines[1]}")
+                ?: fail(CodexRuntimeErrorCategory.RuntimeUnsupported, "未対応のWorkspaceアーキテクチャです: ${lines[1]}")
             state.value = state.value.copy(architecture = asset.architecture, version = VALIDATED_VERSION)
 
             val installDir = File(runtimeBaseDir, "$VALIDATED_VERSION/${asset.architecture}")
@@ -119,7 +119,7 @@ class CodexRuntimeManager(
 
             publish(state, CodexRuntimePhase.VALIDATING, "Codex App Serverを検証しています", asset)
             val ready = validateInstalled(root, executable, asset)
-                ?: fail(CodexRuntimeErrorCategory.RuntimeCorrupt, "Installed Codex runtime failed validation")
+                ?: fail(CodexRuntimeErrorCategory.RuntimeCorrupt, "インストール済みCodexランタイムの検証に失敗しました")
             publish(state, CodexRuntimePhase.READY, "Codex $VALIDATED_VERSION · ${asset.architecture}", asset)
             ready
         } catch (cancelled: CancellationException) {
@@ -134,7 +134,7 @@ class CodexRuntimeManager(
         } catch (failure: Throwable) {
             val wrapped = CodexRuntimeProvisioningException(
                 classifyProvisioningFailure(failure),
-                failure.message ?: "Codex runtime setup failed",
+                failure.message ?: "Codexランタイムのセットアップに失敗しました",
                 failure,
             )
             state.value = state.value.copy(
@@ -182,15 +182,15 @@ class CodexRuntimeManager(
         try {
             extractSingleTarGz(temp, staging, asset.archiveEntry)
             if (!staging.setExecutable(true, false) || !staging.setReadable(true, false)) {
-                fail(CodexRuntimeErrorCategory.RuntimeInstallFailed, "Codex runtime permissions could not be set")
+                fail(CodexRuntimeErrorCategory.RuntimeInstallFailed, "Codexランタイムの実行権限を設定できませんでした")
             }
             previous.delete()
             if (executable.exists() && !executable.renameTo(previous)) {
-                fail(CodexRuntimeErrorCategory.RuntimeInstallFailed, "Existing Codex runtime could not be staged for update")
+                fail(CodexRuntimeErrorCategory.RuntimeInstallFailed, "既存のCodexランタイムを更新用に退避できませんでした")
             }
             if (!staging.renameTo(executable)) {
                 previous.takeIf(File::exists)?.renameTo(executable)
-                fail(CodexRuntimeErrorCategory.RuntimeInstallFailed, "Codex runtime could not be installed atomically")
+                fail(CodexRuntimeErrorCategory.RuntimeInstallFailed, "Codexランタイムを安全に置き換えられませんでした")
             }
             File(installDir, "INSTALL-METADATA").writeText(
                 "version=$VALIDATED_VERSION\nasset=${asset.assetName}\nsha256=${asset.archiveSha256}\nsource=$RELEASE_BASE/rust-v$VALIDATED_VERSION\n",
@@ -255,7 +255,7 @@ class CodexRuntimeManager(
             .build()
         downloadClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                fail(CodexRuntimeErrorCategory.NetworkFailure, "Codex runtime download failed: HTTP ${response.code}")
+                fail(CodexRuntimeErrorCategory.NetworkFailure, "Codexランタイムのダウンロードに失敗しました: HTTP ${response.code}")
             }
             val body = response.body
             val total = body.contentLength().takeIf { it > 0 }
@@ -265,7 +265,7 @@ class CodexRuntimeManager(
                     var readTotal = 0L
                     var nextReport = 0L
                     while (true) {
-                        if (Thread.currentThread().isInterrupted) throw InterruptedException("Codex runtime download cancelled")
+                        if (Thread.currentThread().isInterrupted) throw InterruptedException("Codexランタイムのダウンロードをキャンセルしました")
                         val read = input.read(buffer)
                         if (read < 0) break
                         output.write(buffer, 0, read)
@@ -293,7 +293,7 @@ class CodexRuntimeManager(
                 val header = ByteArray(512)
                 val read = input.readFullyOrEnd(header)
                 if (read == 0) break
-                if (read != 512) throw EOFException("Truncated Codex archive header")
+                if (read != 512) throw EOFException("Codexアーカイブが途中で切れています")
                 if (header.all { it == 0.toByte() }) break
                 val name = header.tarString(0, 100).removePrefix("./")
                 val size = header.tarOctal(124, 12)
@@ -307,7 +307,7 @@ class CodexRuntimeManager(
                 input.skipFully(size + size.tarPadding())
             }
         }
-        fail(CodexRuntimeErrorCategory.RuntimeCorrupt, "Official Codex archive did not contain the expected executable")
+        fail(CodexRuntimeErrorCategory.RuntimeCorrupt, "OpenAI公式Codexアーカイブに想定した実行ファイルが含まれていません")
     }
 
     private fun sha256(file: File): String {
