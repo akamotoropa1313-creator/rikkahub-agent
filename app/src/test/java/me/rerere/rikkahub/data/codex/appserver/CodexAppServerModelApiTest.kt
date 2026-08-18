@@ -89,6 +89,22 @@ class CodexAppServerModelApiTest {
     }
 
     @Test
+    fun `defaultServiceTier accepts string null and omitted while unknown metadata is preserved`() = runBlocking<Unit> {
+        listOf<JsonElement?>(JsonPrimitive("default"), JsonNull, null).forEach { tier ->
+            fixture().use { f ->
+                val call = async { f.api.list() }
+                var response = page(null)
+                if (tier != null) response = response.replaceModelField("defaultServiceTier", tier)
+                response = response.replaceModelField("futureModelMetadata", buildJsonObject { put("multiAgentVersion", 99) })
+                f.respond(f.request(), response)
+                val model = call.await().data.single()
+                assertEquals((tier as? JsonPrimitive)?.takeIf { it.isString }?.content, model.defaultServiceTier)
+                assertTrue(model.raw.containsKey("futureModelMetadata"))
+            }
+        }
+    }
+
+    @Test
     fun `visible pagination preserves server page and effort ordering`() = runBlocking<Unit> {
         fixture().use { f ->
             val call = async { f.api.listAllVisible() }

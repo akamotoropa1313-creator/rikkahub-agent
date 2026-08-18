@@ -292,7 +292,12 @@ class CodexChatRuntime(
     suspend fun refreshAccount(refreshToken: Boolean = false) = capabilityOperation {
         _capabilities.value = _capabilities.value.copy(accountLoading = true, accountError = null)
         try {
-            _capabilities.value = _capabilities.value.copy(account = session.accountApi.readAccount(refreshToken))
+            val account = session.accountApi.readAccount(refreshToken)
+            _capabilities.value = _capabilities.value.copy(
+                account = account,
+                accountStatus = null,
+                accountError = null,
+            )
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
@@ -363,7 +368,7 @@ class CodexChatRuntime(
                 accountLoginCorrelation.markCanceled(id)
                 _capabilities.value = _capabilities.value.copy(
                     pendingLoginId = null,
-                    accountStatus = "Sign-in canceled",
+                    accountStatus = null,
                     accountError = null,
                 )
             }
@@ -385,7 +390,12 @@ class CodexChatRuntime(
     }
     suspend fun logoutAccount() = capabilityOperation {
         session.accountApi.logout()
-        _capabilities.value = _capabilities.value.copy(account = session.accountApi.readAccount(), pendingLoginId = null, accountStatus = "Signed out")
+        _capabilities.value = _capabilities.value.copy(
+            account = session.accountApi.readAccount(),
+            pendingLoginId = null,
+            accountStatus = null,
+            accountError = null,
+        )
     }
 
     suspend fun refreshMcp() = capabilityOperation { refreshMcpPages() }
@@ -854,7 +864,7 @@ internal fun applyAccountLoginCompletion(state: CodexCapabilitiesUiState, event:
     if (event.loginId != null && pending != null && event.loginId != pending) return state
     return state.copy(
         pendingLoginId = null,
-        accountStatus = if (event.success) "Sign-in completed" else event.error ?: "Sign-in failed",
+        accountStatus = if (event.success) null else event.error ?: "Sign-in failed",
         accountError = event.error,
     )
 }

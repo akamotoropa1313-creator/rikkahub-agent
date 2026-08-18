@@ -16,7 +16,7 @@ class WorkspaceCodexAppServerLauncherTest {
         val base = createTempDirectory("connection-factory").toFile()
         val manager = WorkspaceManager(base, shellRunner = runner)
         manager.ensureWorkspace("workspace")
-        val connection = WorkspaceCodexAppServerConnectionFactory(manager, "0.1.0")
+        val connection = WorkspaceCodexAppServerConnectionFactory(manager, CodexRuntimeResolver { CodexRuntimeReady("codex", "test", "test", managed = false) }, "0.1.0")
             .create("workspace")
 
         val initialize = async(Dispatchers.Default) { connection.initialize() }
@@ -54,8 +54,8 @@ class WorkspaceCodexAppServerLauncherTest {
         manager.ensureWorkspace("workspace")
         File(manager.filesDir("workspace"), "project").mkdirs()
 
-        val transport = WorkspaceCodexAppServerLauncher(manager).launch("workspace", "project")
-        assertEquals("exec codex app-server --listen stdio://", runner.context.command)
+        val transport = WorkspaceCodexAppServerLauncher(manager).launch("workspace", "project", CodexRuntimeReady("codex", "test", "test", managed = false))
+        assertEquals("exec 'codex' app-server --listen stdio://", runner.context.command)
         assertEquals("workspace", runner.context.root)
         assertEquals("project", runner.context.cwd)
         assertEquals(File(manager.filesDir("workspace"), "project"), runner.context.workingDir)
@@ -68,7 +68,7 @@ class WorkspaceCodexAppServerLauncherTest {
         val base = createTempDirectory("launcher").toFile()
         val manager = WorkspaceManager(base, shellRunner = runner)
         manager.ensureWorkspace("workspace")
-        val transport = WorkspaceCodexAppServerLauncher(manager).launch("workspace")
+        val transport = WorkspaceCodexAppServerLauncher(manager).launch("workspace", runtime = CodexRuntimeReady("codex", "test", "test", managed = false))
         val dispatcher = CodexAppServerRequestDispatcher(transport)
 
         val response = async(Dispatchers.Default) { dispatcher.sendRequest("test/method") }

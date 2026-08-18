@@ -30,7 +30,7 @@ class CodexAppServerThreadApiStdioIntegrationTest {
                 shellRunner = AppServerRecordingRunner(process),
             )
             manager.ensureWorkspace("workspace")
-            val connection = WorkspaceCodexAppServerConnectionFactory(manager, "0.1.0").create("workspace")
+            val connection = WorkspaceCodexAppServerConnectionFactory(manager, CodexRuntimeResolver { CodexRuntimeReady("codex", "test", "test", managed = false) }, "0.1.0").create("workspace")
             val api = CodexAppServerThreadApi(connection)
 
             val initializing = async(Dispatchers.Default) { connection.initialize() }

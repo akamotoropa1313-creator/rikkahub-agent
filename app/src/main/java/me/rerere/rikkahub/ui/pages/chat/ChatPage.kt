@@ -297,6 +297,7 @@ private fun ChatPageContent(
     val codexCapabilities by vm.codexCapabilities.collectAsStateWithLifecycle()
     val codexReview by vm.codexReview.collectAsStateWithLifecycle()
     val codexOperationBusy by vm.codexOperationBusy.collectAsStateWithLifecycle()
+    val codexPrepareJob by vm.codexPrepareJob.collectAsStateWithLifecycle()
     val selectedCodexSkill by vm.selectedCodexSkill.collectAsStateWithLifecycle()
 
     val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
@@ -552,8 +553,9 @@ private fun ChatPageContent(
                 hasCodexBinding = hasCodexBinding,
                 vm = vm,
                 onDismiss = { showFilesSheet = false },
-                onOpenCodexControls = { showFilesSheet = false; showCodexControls = true },
+                onOpenCodexControls = { vm.retryCodexSetup(); showFilesSheet = false; showCodexControls = true },
                 codexOperationBusy = codexOperationBusy,
+                codexPrepareJobActive = codexPrepareJob?.isActive == true,
             )
         }
         if (showCodexControls) {
@@ -600,6 +602,7 @@ private fun ChatFilesPickerSheet(
     onDismiss: () -> Unit,
     onOpenCodexControls: () -> Unit,
     codexOperationBusy: Boolean,
+    codexPrepareJobActive: Boolean,
 ) {
     val context = LocalContext.current
     val toaster = LocalToaster.current
@@ -769,18 +772,18 @@ private fun ChatFilesPickerSheet(
                 vm.updateSettings(
                     setting.copy(
                         assistants = setting.assistants.map { assistant ->
-                            if (assistant.id == it.id) {
-                                it
-                            } else {
-                                assistant
-                            }
+                            if (assistant.id == it.id) it else assistant
                         }
                     )
                 )
             },
+            onCodexAppServerEnabledChange = { enabled -> vm.setCodexAppServerEnabled(assistant, enabled) },
             hasCodexBinding = hasCodexBinding,
             onResetCodexSession = vm::resetCodexSession,
             codexOperationBusy = codexOperationBusy,
+            codexPrepareJobActive = codexPrepareJobActive,
+            onCancelCodexSetup = vm::cancelCodexSetup,
+            onRetryCodexSetup = vm::retryCodexSetup,
             onOpenCodexControls = onOpenCodexControls,
             onUpdateConversation = {
                 vm.updateConversation(it)

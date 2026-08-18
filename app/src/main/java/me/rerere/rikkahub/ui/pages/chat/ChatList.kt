@@ -105,6 +105,7 @@ import me.rerere.rikkahub.ui.components.codex.CodexFileChangeApprovalCard
 import me.rerere.rikkahub.ui.components.codex.CodexCommandExecutionCard
 import me.rerere.rikkahub.ui.components.codex.CodexFileChangeCard
 import me.rerere.rikkahub.ui.components.codex.CodexTurnDiffCard
+import me.rerere.rikkahub.ui.components.codex.codexTurnErrorPresentation
 import me.rerere.rikkahub.ui.components.message.ChatMessage
 import me.rerere.rikkahub.ui.components.ui.ErrorCardsDisplay
 import me.rerere.rikkahub.ui.components.ui.ListSelectableItem
@@ -662,6 +663,12 @@ private fun CodexLiveActivity(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Codex activity", style = MaterialTheme.typography.titleSmall)
             CodexActivityContent(phaseActivity)
+            if (state is CodexConversationUiState.Terminal) {
+                codexTurnErrorPresentation(state.diagnostics)?.let { presentation ->
+                    Text(presentation.title, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleSmall)
+                    presentation.detail?.takeIf { it.isNotBlank() }?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            }
         }
         return
     }
@@ -671,7 +678,9 @@ private fun CodexLiveActivity(
         CodexConversationUiState.Opening -> "Opening Codex App Server…"
         is CodexConversationUiState.Ready -> "Codex ready · ${state.threadId}"
         is CodexConversationUiState.Running -> "Codex running · ${state.turnId}"
-        is CodexConversationUiState.Terminal -> "Codex ${state.status.wireValue}"
+        is CodexConversationUiState.Terminal -> codexTurnErrorPresentation(state.diagnostics)?.let { presentation ->
+            presentation.detail?.takeIf { it.isNotBlank() }?.let { "${presentation.title}: $it" } ?: presentation.title
+        } ?: "Codex ${state.status.wireValue}"
         is CodexConversationUiState.WaitingForApproval -> "Codex is waiting for your approval"
         is CodexConversationUiState.StaleBinding -> "Codex binding is stale: ${state.reason}"
         is CodexConversationUiState.WorkspaceMismatch -> "Codex workspace mismatch"

@@ -36,7 +36,7 @@ class CodexAppServerSessionRecoveryStdioIntegrationTest {
     @Test fun `two workspace process lifetimes start bind and recover by exact thread id`() = runBlocking {
         val first = AppServerTestProcess(); val second = AppServerTestProcess()
         val runner = QueueRunner(first, second); val manager = manager(runner)
-        val factory = WorkspaceCodexAppServerConnectionFactory(manager, "test")
+        val factory = WorkspaceCodexAppServerConnectionFactory(manager, CodexRuntimeResolver { CodexRuntimeReady("codex", "test", "test", managed = false) }, "test")
         val dao = StdioBindingDao(); val local = StdioLocalState(); var now = 10L
         val repository = CodexAppServerSessionBindingRepository(dao, local) { now }
 
@@ -68,7 +68,7 @@ class CodexAppServerSessionRecoveryStdioIntegrationTest {
         val dao = StdioBindingDao(); val local = StdioLocalState(); val repository = CodexAppServerSessionBindingRepository(dao, local) { 10 }
         repository.bindPersistentThread("conversation-1", "workspace-1", "project", snapshot("thread-1"))
         val recovering = async(Dispatchers.Default) {
-            CodexAppServerSessionRecovery(repository, local, WorkspaceCodexAppServerConnectionFactory(manager, "test")).recover("conversation-1")
+            CodexAppServerSessionRecovery(repository, local, WorkspaceCodexAppServerConnectionFactory(manager, CodexRuntimeResolver { CodexRuntimeReady("codex", "test", "test", managed = false) }, "test")).recover("conversation-1")
         }
         respondInitialize(second); val resume = awaitLine(second, 2)
         assertEquals(JsonObject(mapOf("threadId" to JsonPrimitive("thread-1"))), resume["params"])
@@ -105,7 +105,7 @@ class CodexAppServerStage13ConversationSessionStdioIntegrationTest {
         val manager = WorkspaceManager(createTempDirectory("stage13-session").toFile(), shellRunner = runner).also {
             it.ensureWorkspace("workspace-1"); java.io.File(it.filesDir("workspace-1"), "project").mkdirs()
         }
-        val factory = WorkspaceCodexAppServerConnectionFactory(manager, "test")
+        val factory = WorkspaceCodexAppServerConnectionFactory(manager, CodexRuntimeResolver { CodexRuntimeReady("codex", "test", "test", managed = false) }, "test")
         val dao = StdioBindingDao(); val local = StdioLocalState(); var now = 10L
         val repository = CodexAppServerSessionBindingRepository(dao, local) { now }
         val recovery = CodexAppServerSessionRecovery(repository, local, factory)

@@ -15,6 +15,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -86,6 +87,8 @@ class ChatVM(
     val codexCapabilities = chatService.getCodexCapabilitiesStateFlow(_conversationId)
     val codexReview = chatService.getCodexReviewStateFlow(_conversationId)
     val codexOperationBusy = chatService.getCodexOperationBusyFlow(_conversationId)
+    private val _codexPrepareJob = MutableStateFlow<Job?>(null)
+    val codexPrepareJob: StateFlow<Job?> = _codexPrepareJob
     private val _selectedCodexSkill = MutableStateFlow<CodexSkillMetadata?>(null)
     val selectedCodexSkill: StateFlow<CodexSkillMetadata?> = _selectedCodexSkill
     fun selectCodexSkill(skill: CodexSkillMetadata?) { _selectedCodexSkill.value = skill }
@@ -100,6 +103,33 @@ class ChatVM(
         _hasCodexBinding.value = false
     } }
     fun reconnectCodexSession() { viewModelScope.launch { runCatching { chatService.reconnectCodexSession(_conversationId) } } }
+    private fun launchCodexPreparation() {
+        if (_codexPrepareJob.value?.isActive == true) return
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            runCatching { chatService.prepareCodexSession(_conversationId) }
+            _hasCodexBinding.value = chatService.hasCodexBinding(_conversationId)
+        }
+        _codexPrepareJob.value = job
+        job.invokeOnCompletion { if (_codexPrepareJob.value === job) _codexPrepareJob.value = null }
+        job.start()
+    }
+    fun retryCodexSetup() = launchCodexPreparation()
+    fun cancelCodexSetup() { _codexPrepareJob.value?.cancel() }
+    fun setCodexAppServerEnabled(assistant: Assistant, enabled: Boolean) {
+        viewModelScope.launch {
+            settingsStore.update { settings ->
+                settings.copy(
+                    assistants = settings.assistants.map {
+                        if (it.id == assistant.id) it.copy(codexAppServerEnabled = enabled) else it
+                    },
+                )
+            }
+            if (enabled) launchCodexPreparation() else {
+                cancelCodexSetup()
+                _selectedCodexSkill.value = null
+            }
+        }
+    }
     fun interruptCodexTurn() { viewModelScope.launch { chatService.stopGeneration(_conversationId) } }
     fun refreshCodexSkills() { viewModelScope.launch { runCatching { chatService.refreshCodexSkills(_conversationId) } } }
     fun refreshCodexModels() { viewModelScope.launch { runCatching { chatService.refreshCodexModels(_conversationId) } } }
@@ -159,7 +189,15 @@ class ChatVM(
             chatService.initializeConversation(_conversationId)
             _hasCodexBinding.value = chatService.hasCodexBinding(_conversationId)
         }
-        viewModelScope.launch { codexEnabled.collect { if (!it) _selectedCodexSkill.value = null } }
+        viewModelScope.launch {
+            codexEnabled.collect { enabled ->
+                if (enabled) launchCodexPreparation()
+                else {
+                    cancelCodexSetup()
+                    _selectedCodexSkill.value = null
+                }
+            }
+        }
         viewModelScope.launch {
             codexState.collect { state ->
                 if (state is CodexConversationUiState.Ready || state is CodexConversationUiState.Running ||
