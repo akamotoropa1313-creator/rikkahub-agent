@@ -5,14 +5,14 @@ RikkaHub Agent manages the Codex App Server runtime automatically. Normal use do
 ## Normal first-run flow
 
 1. Open a chat and select a ready Workspace.
-2. Enable **Codex Coding Agent (App Server)**.
+2. Enable **Codex コーディングエージェント（App Server）**. The switch itself immediately starts managed runtime provisioning when the runtime is not ready; sending a chat message is not required to begin installation.
 3. Wait for **Codex環境** to reach the ready state. RikkaHub performs Workspace/platform checks, downloads the pinned supported OpenAI Codex standalone runtime when necessary, verifies its SHA-256 digest, installs it atomically in app-managed storage, and starts `codex app-server` for the conversation.
-4. Open **Codex App Server設定**.
-5. If required, choose **ChatGPTでサインイン**. This App Server account is independent from the normal **Settings > Providers > Codex** provider account.
+4. Open **Codex App Serverの設定**.
+5. If required, choose **ChatGPTでサインイン**. This App Server account is independent from the normal **設定 > プロバイダー > Codex** provider account.
 6. Load the model catalog and select a model, or keep the server default.
 7. Send a normal chat message.
 
-No dummy first message is required to make Account, Model, Skills, MCP, thread history, or configuration capabilities available once the App Server is ready.
+No dummy first message is required to start runtime installation or to make Account, Model, Skills, MCP, thread history, or configuration capabilities available once the App Server is ready.
 
 ## Runtime policy
 
@@ -38,7 +38,7 @@ Because the primary path is a standalone binary install, Debian package-manager 
 The two Codex features in RikkaHub are intentionally separate:
 
 - **Codex Provider** uses the user's ChatGPT/OpenAI authorization as a conventional LLM provider.
-- **Codex Coding Agent (App Server)** runs the Codex CLI App Server harness and has its own App Server account state.
+- **Codex コーディングエージェント（App Server）** runs the Codex CLI App Server harness and has its own App Server account state.
 
 Signing in to one does not imply that the other is authenticated.
 
