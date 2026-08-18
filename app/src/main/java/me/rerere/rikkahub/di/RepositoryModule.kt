@@ -28,41 +28,28 @@ import org.koin.dsl.module
 import java.io.File
 
 val repositoryModule = module {
-    // Consumers depend on the interface, so register the implementation under that interface.
-    // A concrete-only `single { RoomCodexAppServerLocalState(...) }` cannot satisfy
-    // `get<CodexAppServerLocalState>()` and makes ChatService creation fail on app startup.
     single<CodexAppServerLocalState> { RoomCodexAppServerLocalState(get(), get()) }
     single { CodexAppServerSessionBindingRepository(get(), get()) }
-    single { CodexRuntimeManager(get(), get()) }
+    single {
+        val context: Context = get()
+        CodexRuntimeManager(
+            workspaceManager = get(),
+            httpClient = get(),
+            runtimeBaseDir = File(context.filesDir, CodexRuntimeManager.RUNTIME_HOST_DIR_NAME).apply { mkdirs() },
+        )
+    }
     single<CodexAppServerConnectionCreator> {
         WorkspaceCodexAppServerConnectionFactory(get(), get(), BuildConfig.VERSION_NAME)
     }
     single { CodexAppServerSessionRecovery(get(), get(), get()) }
     single { CodexAppServerConversationSessionOpener(get(), get(), get(), get()) }
 
-    single {
-        ConversationRepository(get(), get(), get(), get(), get(), get(), get())
-    }
-
-    single {
-        FolderRepository(get(), get())
-    }
-
-    single {
-        MemoryRepository(get())
-    }
-
-    single {
-        GenMediaRepository(get())
-    }
-
-    single {
-        FilesRepository(get())
-    }
-
-    single {
-        FavoriteRepository(get())
-    }
+    single { ConversationRepository(get(), get(), get(), get(), get(), get(), get()) }
+    single { FolderRepository(get(), get()) }
+    single { MemoryRepository(get()) }
+    single { GenMediaRepository(get()) }
+    single { FilesRepository(get()) }
+    single { FavoriteRepository(get()) }
 
     single {
         val context: Context = get()
@@ -71,7 +58,6 @@ val repositoryModule = module {
             shellRunner = ProotShellRunner(
                 nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir),
             ),
-            // 同一份挂载表既用于 PRoot 的 -b 参数, 也用于文件工具的路径解析, 避免两处漂移
             bindMounts = listOf(
                 WorkspaceBindMount(
                     source = File(context.filesDir, FileFolders.SKILLS).apply { mkdirs() },
@@ -85,23 +71,16 @@ val repositoryModule = module {
                     source = File(context.filesDir, FileFolders.UPLOAD).apply { mkdirs() },
                     target = "/upload",
                 ),
+                WorkspaceBindMount(
+                    source = File(context.filesDir, CodexRuntimeManager.RUNTIME_HOST_DIR_NAME).apply { mkdirs() },
+                    target = CodexRuntimeManager.RUNTIME_BIND_ROOT,
+                ),
             ),
         )
     }
 
-    single {
-        RootfsInstaller(get())
-    }
-
-    single {
-        WorkspaceRepository(get(), get(), get(), get())
-    }
-
-    single {
-        FilesManager(get(), get(), get())
-    }
-
-    single {
-        SkillManager(get(), get())
-    }
+    single { RootfsInstaller(get()) }
+    single { WorkspaceRepository(get(), get(), get(), get()) }
+    single { FilesManager(get(), get(), get()) }
+    single { SkillManager(get(), get()) }
 }
