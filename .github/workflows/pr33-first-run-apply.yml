@@ -21,6 +21,7 @@ jobs:
 
       - name: Apply first-run and compatibility fixes
         run: |
+          python3 .github/scripts/pr33_fix_apply_script.py
           python3 .github/scripts/pr33_first_run_apply.py
           git diff --check
 
