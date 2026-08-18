@@ -40,8 +40,9 @@ val repositoryModule = module {
         )
     }
     single<CodexRuntimeResolver> {
-        val runtimeManager: CodexRuntimeManager = get()
-        CodexRuntimeResolver { root -> runtimeManager.ensureReady(root) }
+        CodexRuntimeResolver { root ->
+            get<CodexRuntimeManager>().ensureReady(root)
+        }
     }
     single<CodexAppServerConnectionCreator> {
         WorkspaceCodexAppServerConnectionFactory(get(), get(), BuildConfig.VERSION_NAME)
