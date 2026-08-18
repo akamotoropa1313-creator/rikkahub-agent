@@ -9,6 +9,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.WorkspaceCodexAppServerConnectionFactory
 import me.rerere.rikkahub.data.codex.appserver.RoomCodexAppServerLocalState
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConnectionCreator
+import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeManager
 import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.files.SkillManager
@@ -32,8 +33,9 @@ val repositoryModule = module {
     // `get<CodexAppServerLocalState>()` and makes ChatService creation fail on app startup.
     single<CodexAppServerLocalState> { RoomCodexAppServerLocalState(get(), get()) }
     single { CodexAppServerSessionBindingRepository(get(), get()) }
+    single { CodexRuntimeManager(get(), get()) }
     single<CodexAppServerConnectionCreator> {
-        WorkspaceCodexAppServerConnectionFactory(get(), BuildConfig.VERSION_NAME)
+        WorkspaceCodexAppServerConnectionFactory(get(), get(), BuildConfig.VERSION_NAME)
     }
     single { CodexAppServerSessionRecovery(get(), get(), get()) }
     single { CodexAppServerConversationSessionOpener(get(), get(), get(), get()) }
