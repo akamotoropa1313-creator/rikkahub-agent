@@ -1,28 +1,35 @@
 package me.rerere.rikkahub.data.codex.appserver
 
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Process-transient knowledge learned from an explicit model/list refresh. It is intentionally not
  * persisted: after process restart saved preferences remain durable, but new thread creation only
  * emits model-sensitive overrides that the current App Server catalog has confirmed again.
  *
- * The complete visible catalog is also retained as a process-local snapshot for the unified model
- * picker. This does not turn ChatGPT models into persisted RikkaHub providers: the picker reads the
- * authoritative App Server catalog while the assistant persists only its typed model target.
+ * The complete visible catalog is also retained as a process-local observable snapshot for the
+ * unified model picker. This does not turn ChatGPT models into persisted RikkaHub providers: the
+ * picker reads the authoritative App Server catalog while the assistant persists only its typed
+ * model target.
  */
 object CodexModelCatalogKnowledge {
     private val personalitySupport = ConcurrentHashMap<String, Boolean>()
     private val serviceTierSupport = ConcurrentHashMap<String, List<String>>()
     private val serviceTierMetadataKnown = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var defaultModel: String? = null
-    @Volatile private var visibleModels: List<CodexAppServerModel> = emptyList()
+
+    private val mutableModels = MutableStateFlow<List<CodexAppServerModel>>(emptyList())
+    val modelsFlow: StateFlow<List<CodexAppServerModel>> = mutableModels.asStateFlow()
 
     fun replace(models: List<CodexAppServerModel>) {
         personalitySupport.clear()
         serviceTierSupport.clear()
         serviceTierMetadataKnown.clear()
-        visibleModels = models.filterNot { it.hidden }.toList()
+        val visibleModels = models.filterNot { it.hidden }.toList()
+        mutableModels.value = visibleModels
         defaultModel = visibleModels.firstOrNull { it.isDefault }?.model
         visibleModels.forEach { model ->
             personalitySupport[model.model] = model.supportsPersonality
@@ -33,8 +40,8 @@ object CodexModelCatalogKnowledge {
         }
     }
 
-    /** Immutable process-local snapshot for UI surfaces such as the unified model picker. */
-    fun modelsSnapshot(): List<CodexAppServerModel> = visibleModels.toList()
+    /** Immutable process-local snapshot for non-reactive consumers. */
+    fun modelsSnapshot(): List<CodexAppServerModel> = mutableModels.value.toList()
 
     fun defaultModel(): String? = defaultModel
 
@@ -58,6 +65,6 @@ object CodexModelCatalogKnowledge {
         serviceTierSupport.clear()
         serviceTierMetadataKnown.clear()
         defaultModel = null
-        visibleModels = emptyList()
+        mutableModels.value = emptyList()
     }
 }
