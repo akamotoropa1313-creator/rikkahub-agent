@@ -48,7 +48,7 @@ object CodexHarnessModelRouteResolver {
                 CodexHarnessModelRoute.ChatGptAccount(target.model)
 
             is CodexHarnessModelTarget.RikkaHubProvider -> {
-                val model = settings.findModelById(target.modelId)
+                val model = settings.providers.findModelById(target.modelId)
                     ?: return CodexHarnessModelRoute.MissingProviderModel(target.modelId.toString())
                 val provider = model.findProvider(settings.providers)
                     ?: return CodexHarnessModelRoute.MissingProviderModel(target.modelId.toString())
