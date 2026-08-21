@@ -4,18 +4,17 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -45,10 +44,10 @@ import me.rerere.rikkahub.data.codex.appserver.CodexHarnessSelectionPolicy
 import me.rerere.rikkahub.data.codex.appserver.CodexModelCatalogKnowledge
 import me.rerere.rikkahub.data.codex.appserver.effectiveCodexHarnessModelTarget
 import me.rerere.rikkahub.data.model.Assistant
-import me.rerere.rikkahub.ui.components.ai.AutoAIIcon
 import me.rerere.rikkahub.ui.components.ai.ModelAbilityTag
 import me.rerere.rikkahub.ui.components.ai.ModelModalityTag
 import me.rerere.rikkahub.ui.components.ai.ModelTypeTag
+import me.rerere.rikkahub.ui.components.ui.AutoAIIcon
 
 /**
  * Unified Codex-harness model picker that intentionally mirrors RikkaHub's existing ModelListSheet:
