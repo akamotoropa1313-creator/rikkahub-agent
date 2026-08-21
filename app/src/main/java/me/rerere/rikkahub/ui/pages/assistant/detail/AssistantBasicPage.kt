@@ -12,7 +12,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
@@ -41,6 +40,7 @@ import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.ui.components.ai.ModelSelector
 import me.rerere.rikkahub.ui.components.ai.ReasoningButton
+import me.rerere.rikkahub.ui.components.codex.CodexHarnessModelSelector
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.FormItem
 import me.rerere.rikkahub.ui.components.ui.Select
@@ -146,8 +146,7 @@ internal fun AssistantBasicContent(
                     Text(stringResource(R.string.assistant_page_name))
                 },
                 modifier = Modifier.padding(8.dp),
-
-                ) {
+            ) {
                 OutlinedTextField(
                     value = assistant.name,
                     onValueChange = {
@@ -244,18 +243,26 @@ internal fun AssistantBasicContent(
                     Text(stringResource(R.string.assistant_page_chat_model_desc))
                 },
                 content = {
-                    ModelSelector(
-                        modelId = assistant.chatModelId,
-                        providers = providers,
-                        type = ModelType.CHAT,
-                        onSelect = {
-                            onUpdate(
-                                assistant.copy(
-                                    chatModelId = it.id
+                    if (assistant.codexAppServerEnabled) {
+                        CodexHarnessModelSelector(
+                            assistant = assistant,
+                            providers = providers,
+                            onUpdateAssistant = vm::updateAssistant,
+                        )
+                    } else {
+                        ModelSelector(
+                            modelId = assistant.chatModelId,
+                            providers = providers,
+                            type = ModelType.CHAT,
+                            onSelect = {
+                                onUpdate(
+                                    assistant.copy(
+                                        chatModelId = it.id
+                                    )
                                 )
-                            )
-                        },
-                    )
+                            },
+                        )
+                    }
                 }
             )
             HorizontalDivider()
