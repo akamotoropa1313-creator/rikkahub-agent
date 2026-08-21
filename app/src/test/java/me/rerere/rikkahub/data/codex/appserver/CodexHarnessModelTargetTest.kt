@@ -1,22 +1,22 @@
 package me.rerere.rikkahub.data.codex.appserver
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
 import kotlin.uuid.Uuid
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
 
 class CodexHarnessModelTargetTest {
     @Test
     fun `legacy null codex model keeps app server default semantics`() {
         val target = legacyCodexModelTarget(null)
-        val account = assertIs<CodexHarnessModelTarget.ChatGptAccount>(target)
-        assertEquals(null, account.model)
+        val account = target as CodexHarnessModelTarget.ChatGptAccount
+        assertNull(account.model)
     }
 
     @Test
     fun `legacy explicit codex model migrates losslessly`() {
         val target = legacyCodexModelTarget("gpt-5.6-sol")
-        val account = assertIs<CodexHarnessModelTarget.ChatGptAccount>(target)
+        val account = target as CodexHarnessModelTarget.ChatGptAccount
         assertEquals("gpt-5.6-sol", account.model)
     }
 
