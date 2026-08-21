@@ -9,6 +9,7 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.rikkahub.data.ai.tools.LenientLocalToolListSerializer
 import me.rerere.rikkahub.data.ai.tools.LocalToolOption
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelTarget
 import me.rerere.rikkahub.utils.SimpleCache
 import java.util.concurrent.TimeUnit
 import kotlin.uuid.Uuid
@@ -45,8 +46,17 @@ data class Assistant(
     val workspaceId: Uuid? = null,
     /** Explicit opt-in; existing assistants continue through the provider path. */
     val codexAppServerEnabled: Boolean = false,
-    /** App Server overrides; null means RikkaHub has never selected an override. */
+    /**
+     * Legacy ChatGPT/App Server model preference. Kept for lossless compatibility with existing
+     * saved assistants and older builds. New unified-picker writes also persist
+     * [codexHarnessModelTarget]; execution always prefers the typed target when present.
+     */
     val codexModel: String? = null,
+    /**
+     * Source-aware Codex harness selection. Null means this assistant predates the unified picker;
+     * in that case [codexModel] is projected to a ChatGPT-account target at runtime.
+     */
+    val codexHarnessModelTarget: CodexHarnessModelTarget? = null,
     val codexReasoningEffort: String? = null,
     val codexReasoningSummary: CodexReasoningSummaryPreference? = null,
     val codexPersonality: CodexPersonalityPreference? = null,
@@ -210,7 +220,7 @@ sealed class PromptInjection {
     ) : PromptInjection()
 
     /**
-     * 正则注入 - 基于内容匹配触发（世界书）
+     * 正则注入 - 基于内容匹配
      */
     @Serializable
     @SerialName("regex")
