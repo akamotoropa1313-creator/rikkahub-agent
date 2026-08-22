@@ -75,9 +75,10 @@ fun CodexHarnessModelSelector(
             }
         }
         is CodexHarnessModelTarget.RikkaHubProvider -> {
-            providers.asSequence().flatMap { it.models.asSequence() }
-                .firstOrNull { it.id == target.modelId }?.displayName
-                ?: "利用できないモデル"
+            providers.firstNotNullOfOrNull { provider ->
+                provider.models.firstOrNull { it.id == target.modelId }
+                    ?.let { model -> "${provider.name} · ${model.displayName}" }
+            } ?: "利用できないモデル"
         }
     }
 
