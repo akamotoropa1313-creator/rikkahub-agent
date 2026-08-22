@@ -20,6 +20,20 @@ import org.junit.Test
 import kotlin.uuid.Uuid
 
 class CodexHarnessResponsesGatewayServerTest {
+    companion object {
+        init {
+            // The production app intentionally ships an Android SLF4J provider. Local JVM unit
+            // tests have android.jar stubs rather than a real android.util.Log implementation, so
+            // loading that provider throws from Log.isLoggable before Ktor can start. SLF4J 2.x
+            // supports an explicit provider; its API-bundled NOP provider keeps this HTTP boundary
+            // test JVM-only without changing the Android runtime logging configuration.
+            System.setProperty(
+                "slf4j.provider",
+                "org.slf4j.helpers.NOP_FallbackServiceProvider",
+            )
+        }
+    }
+
     private val client = OkHttpClient()
 
     @Test
