@@ -2,9 +2,9 @@ name: Apply Codex typed preflight patch
 
 # One-shot guarded applier. The successful job removes this workflow in its own commit.
 on:
-  push:
-    branches:
-      - codex/unified-harness-model-picker
+  pull_request:
+    paths:
+      - .github/workflows/codex-typed-preflight-patch.yml
 
 permissions:
   contents: write
