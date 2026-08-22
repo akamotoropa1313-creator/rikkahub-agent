@@ -78,6 +78,21 @@ open class CodexAppServerConversationSession internal constructor(
                 }
             }
         }
+        // ChatGPT-account models are process-transient App Server knowledge rather than persisted
+        // RikkaHub providers. Populate that catalog as soon as the first connected session exists
+        // so the unified picker does not depend on opening Control Center and pressing refresh.
+        // A failed background discovery is deliberately non-fatal; manual refresh remains available.
+        if (CodexModelCatalogKnowledge.modelsSnapshot().isEmpty()) {
+            scope.launch {
+                try {
+                    modelApi.listAllVisible()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    // Catalog discovery must never make an otherwise usable Codex session fail.
+                }
+            }
+        }
     }
 
     internal fun installCloseHook(hook: () -> Unit) {
