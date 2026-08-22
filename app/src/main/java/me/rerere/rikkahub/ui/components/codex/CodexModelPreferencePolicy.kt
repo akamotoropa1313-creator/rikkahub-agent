@@ -1,6 +1,8 @@
 package me.rerere.rikkahub.ui.components.codex
 
+import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerModel
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelPresentationResolver
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelTarget
 import me.rerere.rikkahub.data.codex.appserver.effectiveCodexHarnessModelTarget
 import me.rerere.rikkahub.data.codex.appserver.serviceTierIds
@@ -79,12 +81,17 @@ internal fun applyCodexModelSelection(
 internal fun codexComposerLabel(
     assistant: Assistant,
     models: List<CodexAppServerModel>,
+    providers: List<ProviderSetting> = emptyList(),
 ): String {
     if (!assistant.codexAppServerEnabled) return ""
     val target = assistant.effectiveCodexHarnessModelTarget()
     if (target is CodexHarnessModelTarget.RikkaHubProvider) {
-        val effort = assistant.codexReasoningEffort?.let { " · $it" }.orEmpty()
-        return "Codex · RikkaHubモデル$effort"
+        val modelLabel = if (providers.isEmpty()) {
+            "RikkaHubモデル"
+        } else {
+            CodexHarnessModelPresentationResolver.resolve(target, providers, models).compactLabel
+        }
+        return "Codex · $modelLabel"
     }
     target as CodexHarnessModelTarget.ChatGptAccount
     val selected = selectedCodexModel(target.model, models)
