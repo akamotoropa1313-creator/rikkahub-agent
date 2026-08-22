@@ -15,6 +15,13 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 
+interface CodexHarnessRawResponsesBackend {
+    suspend fun open(
+        bearerToken: String?,
+        request: JsonObject,
+    ): CodexHarnessRawResponsesProxy.OpenedResponse
+}
+
 /**
  * Credential-brokered raw Responses proxy for configured OpenAI-compatible providers that already
  * speak the Responses API.
@@ -29,8 +36,8 @@ class CodexHarnessRawResponsesProxy(
     private val settingsStore: SettingsStore,
     private val client: OkHttpClient,
     private val keyRoulette: KeyRoulette = KeyRoulette.default(),
-) {
-    suspend fun open(
+) : CodexHarnessRawResponsesBackend {
+    override suspend fun open(
         bearerToken: String?,
         request: JsonObject,
     ): OpenedResponse {
@@ -70,8 +77,6 @@ class CodexHarnessRawResponsesProxy(
                 "Bearer ${keyRoulette.next(openAi.apiKey, openAi.id.toString())}",
             )
 
-        // Gateway Authorization is never forwarded. Model-level custom headers are resolved only
-        // inside the app and may not override transport/authentication headers owned by the broker.
         rawResponsesCustomHeaders(model).forEach { (name, value) ->
             requestBuilder.header(name, value)
         }
@@ -99,11 +104,6 @@ class CodexHarnessRawResponsesProxy(
     }
 }
 
-/**
- * Preserve the Codex Responses payload while applying RikkaHub's model-level custom body fields.
- * The session-selected model is written last so neither the client nor a custom body can pivot an
- * opaque token to another upstream model.
- */
 internal fun prepareRawResponsesBody(
     request: JsonObject,
     model: Model,
@@ -115,7 +115,6 @@ internal fun prepareRawResponsesBody(
     return JsonObject(fields)
 }
 
-/** Headers whose ownership is safe to delegate to per-model RikkaHub configuration. */
 internal fun rawResponsesCustomHeaders(model: Model): List<Pair<String, String>> =
     model.customHeaders.mapNotNull { header ->
         val name = header.name.trim()
