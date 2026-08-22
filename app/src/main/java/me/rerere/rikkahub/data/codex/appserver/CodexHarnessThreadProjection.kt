@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.data.codex.appserver
 
+import java.security.MessageDigest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -18,10 +19,17 @@ data class CodexHarnessThreadProjection(
     val modelProvider: String?,
     val config: Map<String, JsonElement>?,
 ) {
-    val isGatewayBacked: Boolean get() = modelProvider == CODEX_HARNESS_GATEWAY_PROVIDER_ID
+    val isGatewayBacked: Boolean get() = modelProvider?.startsWith(CODEX_HARNESS_GATEWAY_PROVIDER_PREFIX) == true
 }
 
-internal const val CODEX_HARNESS_GATEWAY_PROVIDER_ID = "rikkahub_gateway"
+internal const val CODEX_HARNESS_GATEWAY_PROVIDER_PREFIX = "rikkahub_gateway_"
+
+internal fun CodexHarnessExecutionPlan.LocalResponsesGateway.gatewayProviderId(): String {
+    val route = "${providerId}:${modelId}"
+    val digest = MessageDigest.getInstance("SHA-256").digest(route.toByteArray(Charsets.UTF_8))
+    val suffix = digest.take(8).joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    return CODEX_HARNESS_GATEWAY_PROVIDER_PREFIX + suffix
+}
 
 object CodexHarnessThreadProjector {
     fun project(
@@ -44,6 +52,7 @@ object CodexHarnessThreadProjector {
                 } }
             val token = requireNotNull(gatewayBearerToken).trim()
                 .also { require(it.isNotEmpty()) { "Codex harness gateway token must not be blank" } }
+            val providerId = plan.gatewayProviderId()
 
             val providerConfig = JsonObject(
                 mapOf(
@@ -60,10 +69,10 @@ object CodexHarnessThreadProjector {
             )
             CodexHarnessThreadProjection(
                 model = plan.wireModel,
-                modelProvider = CODEX_HARNESS_GATEWAY_PROVIDER_ID,
+                modelProvider = providerId,
                 config = mapOf(
                     "model_providers" to JsonObject(
-                        mapOf(CODEX_HARNESS_GATEWAY_PROVIDER_ID to providerConfig)
+                        mapOf(providerId to providerConfig)
                     )
                 ),
             )
