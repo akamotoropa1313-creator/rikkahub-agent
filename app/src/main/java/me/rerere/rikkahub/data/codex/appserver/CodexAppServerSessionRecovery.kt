@@ -27,12 +27,21 @@ class CodexAppServerRecoveredSession internal constructor(
     repository: CodexAppServerSessionBindingRepository,
     usageTracker: CodexTokenUsageTracker,
     effectiveCwd: String?,
-) : CodexAppServerConversationSession(binding, connection, repository, usageTracker, effectiveCwd)
+    autoRefreshModelCatalog: Boolean = false,
+) : CodexAppServerConversationSession(
+    binding,
+    connection,
+    repository,
+    usageTracker,
+    effectiveCwd,
+    autoRefreshModelCatalog,
+)
 
 class CodexAppServerSessionRecovery(
     private val repository: CodexAppServerSessionBindingRepository,
     private val localState: CodexAppServerLocalState,
     private val connectionFactory: CodexAppServerConnectionCreator,
+    private val autoRefreshModelCatalog: Boolean = false,
 ) {
     suspend fun recover(
         conversationId: String,
@@ -84,6 +93,7 @@ class CodexAppServerSessionRecovery(
                 repository,
                 checkNotNull(usageTracker),
                 effectiveCwd,
+                autoRefreshModelCatalog,
             )
             ownershipTransferred = true
             return CodexAppServerSessionRecoveryResult.Recovered(session)

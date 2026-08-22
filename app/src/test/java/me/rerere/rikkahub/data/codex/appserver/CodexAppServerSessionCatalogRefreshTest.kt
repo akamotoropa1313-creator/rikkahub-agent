@@ -23,7 +23,7 @@ class CodexAppServerSessionCatalogRefreshTest {
     private val codec = CodexAppServerJsonRpc()
 
     @Test
-    fun `first connected session populates empty process model catalog automatically`() = runBlocking {
+    fun `opted in connected session populates empty process model catalog automatically`() = runBlocking {
         CodexModelCatalogKnowledge.clearForTest()
         val binding = CodexAppServerSessionBindingEntity(
             conversationId = "conversation-catalog",
@@ -58,7 +58,12 @@ class CodexAppServerSessionCatalogRefreshTest {
         initialize.await()
         transport.takeClientLine() // initialized notification
 
-        val session = CodexAppServerConversationSession(binding, connection, repository)
+        val session = CodexAppServerConversationSession(
+            binding,
+            connection,
+            repository,
+            autoRefreshModelCatalog = true,
+        )
         try {
             val request = withTimeout(5_000) { decodeRequest(transport.takeClientLine()) }
             assertEquals("model/list", request.method)

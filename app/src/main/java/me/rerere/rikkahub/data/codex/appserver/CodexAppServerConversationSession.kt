@@ -29,6 +29,7 @@ open class CodexAppServerConversationSession internal constructor(
     private val bindingRepository: CodexAppServerSessionBindingRepository,
     val tokenUsageTracker: CodexTokenUsageTracker = CodexTokenUsageTracker(connection, binding.threadId),
     val effectiveCwd: String? = null,
+    private val autoRefreshModelCatalog: Boolean = false,
 ) : Closeable {
     val conversationId: String get() = binding.conversationId
     val workspaceId: String get() = binding.workspaceId
@@ -78,11 +79,10 @@ open class CodexAppServerConversationSession internal constructor(
                 }
             }
         }
-        // ChatGPT-account models are process-transient App Server knowledge rather than persisted
-        // RikkaHub providers. Populate that catalog as soon as the first connected session exists
-        // so the unified picker does not depend on opening Control Center and pressing refresh.
-        // A failed background discovery is deliberately non-fatal; manual refresh remains available.
-        if (CodexModelCatalogKnowledge.modelsSnapshot().isEmpty()) {
+        // Production-created sessions opt in to background catalog discovery. Direct protocol
+        // sessions keep this disabled by default so an unrelated model/list request cannot race
+        // deterministic low-level request/response tests or other embedders of this session type.
+        if (autoRefreshModelCatalog && CodexModelCatalogKnowledge.modelsSnapshot().isEmpty()) {
             scope.launch {
                 try {
                     modelApi.listAllVisible()
@@ -193,6 +193,7 @@ class CodexAppServerConversationSessionOpener(
     private val connectionFactory: CodexAppServerConnectionCreator,
     private val recovery: CodexAppServerSessionRecovery,
     private val harnessProjectionResolver: CodexHarnessConversationProjectionResolver? = null,
+    private val autoRefreshModelCatalog: Boolean = false,
 ) {
     /** Recovery-only entry point: never creates a thread or binding. */
     suspend fun recoverBound(
@@ -278,7 +279,13 @@ class CodexAppServerConversationSessionOpener(
             val binding = repository.createPersistentThreadBinding(
                 conversationId, workspaceId, workspaceCwd, started.thread,
             )
-            val session = CodexAppServerConversationSession(binding, connection, repository, effectiveCwd = effectiveCwd)
+            val session = CodexAppServerConversationSession(
+                binding,
+                connection,
+                repository,
+                effectiveCwd = effectiveCwd,
+                autoRefreshModelCatalog = autoRefreshModelCatalog,
+            )
             installHarnessCleanup(session, conversationId, projection)
             transferred = true
             return CodexAppServerConversationSessionOpenResult.Started(session, started)
