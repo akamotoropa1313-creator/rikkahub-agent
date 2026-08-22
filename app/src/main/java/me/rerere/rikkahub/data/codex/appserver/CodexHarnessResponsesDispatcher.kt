@@ -41,6 +41,9 @@ class CodexHarnessResponsesDispatcher(
     ): Flow<CodexHarnessResponsesSseEvent> = flow {
         val session = sessionRegistry.resolve(bearerToken)
             ?: throw CodexHarnessGatewayUnauthorizedException()
+        if (session.mode != CodexHarnessExecutionPlan.GatewayMode.TRANSLATE) {
+            throw CodexHarnessGatewayRouteException("Selected provider requires raw Responses passthrough")
+        }
         val settings = settingsStore.settingsFlow.value
         val providerSetting = settings.providers.firstOrNull { it.id == session.providerId }
             ?: throw CodexHarnessGatewayRouteException("Selected provider no longer exists")
