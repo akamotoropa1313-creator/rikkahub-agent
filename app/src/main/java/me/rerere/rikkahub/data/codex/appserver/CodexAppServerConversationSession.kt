@@ -2,6 +2,7 @@ package me.rerere.rikkahub.data.codex.appserver
 
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CancellationException
@@ -13,12 +14,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonElement
 import me.rerere.rikkahub.data.db.entity.CodexAppServerSessionBindingEntity
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * The lifecycle boundary for one conversation-bound App Server process.  Protocol APIs exposed by
+ * The lifecycle boundary for one conversation-bound App Server process. Protocol APIs exposed by
  * this object all use [connection]; this class does not provide a second execution runtime.
  */
 open class CodexAppServerConversationSession internal constructor(
@@ -44,6 +46,7 @@ open class CodexAppServerConversationSession internal constructor(
     val configApi = CodexAppServerConfigApi(connection)
 
     private val terminated = AtomicBoolean(false)
+    private val closeHook = AtomicReference<(() -> Unit)?>(null)
     private val job = SupervisorJob()
     private val scope = CoroutineScope(job + Dispatchers.IO)
     private val mutableFailure = MutableStateFlow<Throwable?>(null)
@@ -75,6 +78,16 @@ open class CodexAppServerConversationSession internal constructor(
                 }
             }
         }
+    }
+
+    internal fun installCloseHook(hook: () -> Unit) {
+        if (terminated.get()) {
+            hook()
+            return
+        }
+        val previous = closeHook.getAndSet(hook)
+        previous?.invoke()
+        if (terminated.get() && closeHook.compareAndSet(hook, null)) hook()
     }
 
     suspend fun startTurn(
@@ -134,6 +147,7 @@ open class CodexAppServerConversationSession internal constructor(
         job.cancel()
         tokenUsageTracker.close()
         connection.close()
+        closeHook.getAndSet(null)?.invoke()
         if (cause != null) mutableFailure.value = cause
     }
 
@@ -163,6 +177,7 @@ class CodexAppServerConversationSessionOpener(
     private val localState: CodexAppServerLocalState,
     private val connectionFactory: CodexAppServerConnectionCreator,
     private val recovery: CodexAppServerSessionRecovery,
+    private val harnessProjectionResolver: CodexHarnessConversationProjectionResolver? = null,
 ) {
     /** Recovery-only entry point: never creates a thread or binding. */
     suspend fun recoverBound(
@@ -171,12 +186,23 @@ class CodexAppServerConversationSessionOpener(
         routeGuard: CodexHarnessExistingThreadRouteGuard? = null,
     ): CodexAppServerConversationSessionOpenResult {
         require(conversationId.isNotBlank())
-        val binding = repository.getBinding(conversationId) ?: error("Codex conversation is not bound")
-        return when (val recovered = recovery.recover(conversationId, overrides, routeGuard)) {
+        repository.getBinding(conversationId) ?: error("Codex conversation is not bound")
+        val projection = harnessProjectionResolver?.resolve(conversationId)
+        val effectiveOverrides = overrides.withHarnessProjection(projection)
+        val effectiveGuard = routeGuard ?: projection?.let(CodexHarnessExistingThreadRouteGuard::from)
+        val result = when (val recovered = recovery.recover(conversationId, effectiveOverrides, effectiveGuard)) {
             CodexAppServerSessionRecoveryResult.NotBound -> error("Binding disappeared while reconnecting")
-            is CodexAppServerSessionRecoveryResult.Recovered -> CodexAppServerConversationSessionOpenResult.Recovered(recovered.session)
-            is CodexAppServerSessionRecoveryResult.StaleBinding -> CodexAppServerConversationSessionOpenResult.StaleBinding(recovered.binding, recovered.reason)
+            is CodexAppServerSessionRecoveryResult.Recovered ->
+                CodexAppServerConversationSessionOpenResult.Recovered(recovered.session)
+            is CodexAppServerSessionRecoveryResult.StaleBinding ->
+                CodexAppServerConversationSessionOpenResult.StaleBinding(recovered.binding, recovered.reason)
         }
+        if (result is CodexAppServerConversationSessionOpenResult.Recovered) {
+            installHarnessCleanup(result.session, conversationId, projection)
+        } else if (projection?.isGatewayBacked == true) {
+            harnessProjectionResolver?.release(conversationId)
+        }
+        return result
     }
 
     suspend fun open(
@@ -189,25 +215,35 @@ class CodexAppServerConversationSessionOpener(
         require(conversationId.isNotBlank()) { "conversationId must not be blank" }
         require(workspaceId.isNotBlank()) { "workspaceId must not be blank" }
 
+        val projection = harnessProjectionResolver?.resolve(conversationId)
+        val effectiveOverrides = overrides.withHarnessProjection(projection)
+        val effectiveGuard = routeGuard ?: projection?.let(CodexHarnessExistingThreadRouteGuard::from)
+
         if (repository.getBinding(conversationId) != null) {
             val resumeOverrides = CodexAppServerThreadResumeParams(
-                model = overrides.model,
-                modelProvider = overrides.modelProvider,
-                cwd = overrides.cwd,
-                config = overrides.config,
-                baseInstructions = overrides.baseInstructions,
-                developerInstructions = overrides.developerInstructions,
-                personality = overrides.personality,
-                sandbox = overrides.sandbox,
-                approvalPolicy = overrides.approvalPolicy,
+                model = effectiveOverrides.model,
+                modelProvider = effectiveOverrides.modelProvider,
+                cwd = effectiveOverrides.cwd,
+                config = effectiveOverrides.config,
+                baseInstructions = effectiveOverrides.baseInstructions,
+                developerInstructions = effectiveOverrides.developerInstructions,
+                personality = effectiveOverrides.personality,
+                sandbox = effectiveOverrides.sandbox,
+                approvalPolicy = effectiveOverrides.approvalPolicy,
             )
-            return when (val recovered = recovery.recover(conversationId, resumeOverrides, routeGuard)) {
+            val result = when (val recovered = recovery.recover(conversationId, resumeOverrides, effectiveGuard)) {
                 CodexAppServerSessionRecoveryResult.NotBound -> error("Binding disappeared while opening session")
                 is CodexAppServerSessionRecoveryResult.Recovered ->
                     CodexAppServerConversationSessionOpenResult.Recovered(recovered.session)
                 is CodexAppServerSessionRecoveryResult.StaleBinding ->
                     CodexAppServerConversationSessionOpenResult.StaleBinding(recovered.binding, recovered.reason)
             }
+            if (result is CodexAppServerConversationSessionOpenResult.Recovered) {
+                installHarnessCleanup(result.session, conversationId, projection)
+            } else if (projection?.isGatewayBacked == true) {
+                harnessProjectionResolver?.release(conversationId)
+            }
+            return result
         }
 
         check(localState.conversationExists(conversationId)) { "Conversation $conversationId does not exist" }
@@ -222,16 +258,62 @@ class CodexAppServerConversationSessionOpener(
         try {
             connection.initialize()
             val started = CodexAppServerThreadApi(connection).startThread(
-                overrides.copy(ephemeral = false),
+                effectiveOverrides.copy(ephemeral = false),
             )
             val binding = repository.createPersistentThreadBinding(
                 conversationId, workspaceId, workspaceCwd, started.thread,
             )
             val session = CodexAppServerConversationSession(binding, connection, repository, effectiveCwd = effectiveCwd)
+            installHarnessCleanup(session, conversationId, projection)
             transferred = true
             return CodexAppServerConversationSessionOpenResult.Started(session, started)
         } finally {
-            if (!transferred) connection.close()
+            if (!transferred) {
+                connection.close()
+                if (projection?.isGatewayBacked == true) harnessProjectionResolver?.release(conversationId)
+            }
         }
+    }
+
+    private fun installHarnessCleanup(
+        session: CodexAppServerConversationSession,
+        conversationId: String,
+        projection: CodexHarnessThreadProjection?,
+    ) {
+        if (projection?.isGatewayBacked != true) return
+        session.installCloseHook { harnessProjectionResolver?.release(conversationId) }
+    }
+}
+
+private fun CodexAppServerThreadStartParams.withHarnessProjection(
+    projection: CodexHarnessThreadProjection?,
+): CodexAppServerThreadStartParams {
+    if (projection == null) return this
+    return copy(
+        model = projection.model,
+        modelProvider = projection.modelProvider,
+        config = mergeHarnessConfig(config, projection.config),
+    )
+}
+
+private fun CodexAppServerThreadResumeParams.withHarnessProjection(
+    projection: CodexHarnessThreadProjection?,
+): CodexAppServerThreadResumeParams {
+    if (projection == null) return this
+    return copy(
+        model = projection.model,
+        modelProvider = projection.modelProvider,
+        config = mergeHarnessConfig(config, projection.config),
+    )
+}
+
+private fun mergeHarnessConfig(
+    existing: Map<String, JsonElement>?,
+    harness: Map<String, JsonElement>?,
+): Map<String, JsonElement>? {
+    if (existing == null && harness == null) return null
+    return buildMap {
+        existing?.let(::putAll)
+        harness?.let(::putAll)
     }
 }
