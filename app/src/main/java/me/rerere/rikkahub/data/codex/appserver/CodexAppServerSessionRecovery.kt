@@ -5,6 +5,10 @@ import me.rerere.rikkahub.data.db.entity.CodexAppServerSessionBindingEntity
 sealed interface CodexAppServerStaleBindingReason {
     data object MissingConversation : CodexAppServerStaleBindingReason
     data object MissingWorkspace : CodexAppServerStaleBindingReason
+    data class HarnessRouteChanged(
+        val existingModelProvider: String?,
+        val expectedModelProvider: String?,
+    ) : CodexAppServerStaleBindingReason
 }
 
 sealed interface CodexAppServerSessionRecoveryResult {
@@ -33,6 +37,7 @@ class CodexAppServerSessionRecovery(
     suspend fun recover(
         conversationId: String,
         overrides: CodexAppServerThreadResumeParams = CodexAppServerThreadResumeParams(),
+        routeGuard: CodexHarnessExistingThreadRouteGuard? = null,
     ): CodexAppServerSessionRecoveryResult {
         require(conversationId.isNotBlank()) { "conversationId must not be blank" }
         val binding = repository.getBinding(conversationId)
@@ -53,6 +58,21 @@ class CodexAppServerSessionRecovery(
         var usageTracker: CodexTokenUsageTracker? = null
         try {
             connection.initialize()
+            if (routeGuard != null) {
+                val existing = CodexAppServerThreadApi(connection).readThread(binding.threadId)
+                if (!routeGuard.accepts(existing.modelProvider)) {
+                    return CodexAppServerSessionRecoveryResult.StaleBinding(
+                        binding,
+                        CodexAppServerStaleBindingReason.HarnessRouteChanged(
+                            existingModelProvider = existing.modelProvider,
+                            expectedModelProvider = when (routeGuard) {
+                                CodexHarnessExistingThreadRouteGuard.NativeAccount -> null
+                                is CodexHarnessExistingThreadRouteGuard.Gateway -> routeGuard.expectedModelProvider
+                            },
+                        ),
+                    )
+                }
+            }
             // Establish the no-replay subscription synchronously before resume can emit replay.
             usageTracker = CodexTokenUsageTracker(connection, binding.threadId)
             val resumed = CodexAppServerThreadApi(connection).resumeThread(binding.threadId, overrides)
