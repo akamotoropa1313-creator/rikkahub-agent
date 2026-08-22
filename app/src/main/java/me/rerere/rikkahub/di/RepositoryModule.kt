@@ -7,6 +7,10 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerLocalState
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionRecovery
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessGatewaySessionRegistry
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessResponsesDispatcher
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessResponsesGatewayServer
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessThreadConfigurationResolver
 import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeManager
 import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeResolver
 import me.rerere.rikkahub.data.codex.appserver.RoomCodexAppServerLocalState
@@ -49,6 +53,13 @@ val repositoryModule = module {
     }
     single { CodexAppServerSessionRecovery(get(), get(), get()) }
     single { CodexAppServerConversationSessionOpener(get(), get(), get(), get()) }
+
+    // Codex harness model-provider bridge. These are lazy Koin singletons: the loopback server is
+    // not started until an Assistant actually selects an external RikkaHub provider model.
+    single { CodexHarnessGatewaySessionRegistry() }
+    single { CodexHarnessResponsesDispatcher(get(), get(), get()) }
+    single { CodexHarnessResponsesGatewayServer(get(), get()) }
+    single { CodexHarnessThreadConfigurationResolver(get(), get()) }
 
     single { ConversationRepository(get(), get(), get(), get(), get(), get(), get()) }
     single { FolderRepository(get(), get()) }
