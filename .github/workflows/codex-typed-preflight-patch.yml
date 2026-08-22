@@ -1,5 +1,6 @@
 name: Apply Codex typed preflight patch
 
+# One-shot guarded applier. The successful job removes this workflow in its own commit.
 on:
   push:
     branches:
