@@ -170,7 +170,7 @@ private fun CodexHarnessModelSheet(
                 if (accountModels.isEmpty()) {
                     item(key = "chatgpt-empty") {
                         Text(
-                            "ChatGPTモデルはまだ読み込まれていません。Codexアカウントでサインインし、コントロールセンターのモデル更新を実行するとここへ反映されます。",
+                            "個別のChatGPTモデルは、Codexで最初の接続が完了すると自動的に表示されます。それまでは「サーバー既定」または下のRikkaHubプロバイダーモデルを選択できます。",
                             modifier = Modifier.padding(12.dp),
                             style = MaterialTheme.typography.bodySmall,
                         )
