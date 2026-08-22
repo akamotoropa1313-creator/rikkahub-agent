@@ -168,10 +168,11 @@ class CodexAppServerConversationSessionOpener(
     suspend fun recoverBound(
         conversationId: String,
         overrides: CodexAppServerThreadResumeParams = CodexAppServerThreadResumeParams(),
+        routeGuard: CodexHarnessExistingThreadRouteGuard? = null,
     ): CodexAppServerConversationSessionOpenResult {
         require(conversationId.isNotBlank())
         val binding = repository.getBinding(conversationId) ?: error("Codex conversation is not bound")
-        return when (val recovered = recovery.recover(conversationId, overrides)) {
+        return when (val recovered = recovery.recover(conversationId, overrides, routeGuard)) {
             CodexAppServerSessionRecoveryResult.NotBound -> error("Binding disappeared while reconnecting")
             is CodexAppServerSessionRecoveryResult.Recovered -> CodexAppServerConversationSessionOpenResult.Recovered(recovered.session)
             is CodexAppServerSessionRecoveryResult.StaleBinding -> CodexAppServerConversationSessionOpenResult.StaleBinding(recovered.binding, recovered.reason)
@@ -183,6 +184,7 @@ class CodexAppServerConversationSessionOpener(
         workspaceId: String,
         workspaceCwd: String,
         overrides: CodexAppServerThreadStartParams = CodexAppServerThreadStartParams(),
+        routeGuard: CodexHarnessExistingThreadRouteGuard? = null,
     ): CodexAppServerConversationSessionOpenResult {
         require(conversationId.isNotBlank()) { "conversationId must not be blank" }
         require(workspaceId.isNotBlank()) { "workspaceId must not be blank" }
@@ -199,7 +201,7 @@ class CodexAppServerConversationSessionOpener(
                 sandbox = overrides.sandbox,
                 approvalPolicy = overrides.approvalPolicy,
             )
-            return when (val recovered = recovery.recover(conversationId, resumeOverrides)) {
+            return when (val recovered = recovery.recover(conversationId, resumeOverrides, routeGuard)) {
                 CodexAppServerSessionRecoveryResult.NotBound -> error("Binding disappeared while opening session")
                 is CodexAppServerSessionRecoveryResult.Recovered ->
                     CodexAppServerConversationSessionOpenResult.Recovered(recovered.session)
