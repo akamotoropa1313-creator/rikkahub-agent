@@ -1,0 +1,73 @@
+name: Apply Codex typed preflight patch
+
+on:
+  push:
+    branches:
+      - codex/unified-harness-model-picker
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/unified-harness-model-picker
+          fetch-depth: 0
+
+      - name: Apply guarded ChatService patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/src/main/java/me/rerere/rikkahub/service/ChatService.kt')
+          text = path.read_text()
+
+          old_import = '''import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability
+          import me.rerere.rikkahub.data.codex.appserver.codexInputCapability
+          '''
+          new_import = '''import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability
+          import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelRouteResolver
+          import me.rerere.rikkahub.data.codex.appserver.codexHarnessInputCapability
+          '''
+          if text.count(old_import) != 1:
+              raise SystemExit(f'expected one Codex input-capability import block, found {text.count(old_import)}')
+          text = text.replace(old_import, new_import, 1)
+
+          old = '''        val loadedCatalog = runtime.capabilities.value.models.takeIf { it.isNotEmpty() }
+          if (parts.any { it is UIMessagePart.Image } &&
+              codexInputCapability(assistant.codexModel, loadedCatalog, "image") == CodexInputCapability.Unsupported
+          ) throw IllegalArgumentException("The selected Codex model does not support images")
+          if (parts.any { it is UIMessagePart.Audio } &&
+              codexInputCapability(assistant.codexModel, loadedCatalog, "audio") == CodexInputCapability.Unsupported
+          ) throw IllegalArgumentException("The selected Codex model does not support audio")
+          '''
+          new = '''        val loadedCatalog = runtime.capabilities.value.models.takeIf { it.isNotEmpty() }
+          val harnessRoute = CodexHarnessModelRouteResolver.resolve(assistant, settingsStore.settingsFlow.value)
+          if (parts.any { it is UIMessagePart.Image } &&
+              codexHarnessInputCapability(harnessRoute, loadedCatalog, "image") == CodexInputCapability.Unsupported
+          ) throw IllegalArgumentException("The selected Codex model does not support images")
+          if (parts.any { it is UIMessagePart.Audio } &&
+              codexHarnessInputCapability(harnessRoute, loadedCatalog, "audio") == CodexInputCapability.Unsupported
+          ) throw IllegalArgumentException("The selected Codex model does not support audio")
+          '''
+          count = text.count(old)
+          if count != 2:
+              raise SystemExit(f'expected exactly two legacy Codex preflight blocks, found {count}')
+          text = text.replace(old, new)
+          path.write_text(text)
+          PY
+
+      - name: Commit patch and remove one-shot workflow
+        shell: bash
+        run: |
+          rm .github/workflows/codex-typed-preflight-patch.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/me/rerere/rikkahub/service/ChatService.kt .github/workflows/codex-typed-preflight-patch.yml
+          git diff --cached --check
+          git commit -m "fix(codex): apply typed model preflight in chat service"
+          git push origin HEAD:codex/unified-harness-model-picker
