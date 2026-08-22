@@ -9,6 +9,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepos
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionRecovery
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessConversationProjectionResolver
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessGatewaySessionRegistry
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessProviderSettingsSource
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessRawResponsesBackend
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessRawResponsesProxy
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessResponsesDispatcher
@@ -18,6 +19,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexHarnessTranslatedResponsesBa
 import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeManager
 import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeResolver
 import me.rerere.rikkahub.data.codex.appserver.RoomCodexAppServerLocalState
+import me.rerere.rikkahub.data.codex.appserver.SettingsStoreCodexHarnessProviderSettingsSource
 import me.rerere.rikkahub.data.codex.appserver.WorkspaceCodexAppServerConnectionFactory
 import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.data.files.FilesManager
@@ -61,6 +63,7 @@ val repositoryModule = module {
     // not started until an Assistant actually selects an external RikkaHub provider model.
     single { CodexHarnessGatewaySessionRegistry() }
     single<CodexHarnessTranslatedResponsesBackend> { CodexHarnessResponsesDispatcher(get(), get(), get()) }
+    single<CodexHarnessProviderSettingsSource> { SettingsStoreCodexHarnessProviderSettingsSource(get()) }
     single<CodexHarnessRawResponsesBackend> { CodexHarnessRawResponsesProxy(get(), get(), get()) }
     single { CodexHarnessResponsesGatewayServer(get(), get(), get()) }
     single { CodexHarnessThreadConfigurationResolver(get(), get()) }
