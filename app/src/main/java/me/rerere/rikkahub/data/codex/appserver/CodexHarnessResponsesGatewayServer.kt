@@ -40,6 +40,7 @@ data class CodexHarnessGatewayEndpoint(
 class CodexHarnessResponsesGatewayServer(
     private val sessionRegistry: CodexHarnessGatewaySessionRegistry,
     private val dispatcher: CodexHarnessResponsesDispatcher,
+    private val rawResponsesProxy: CodexHarnessRawResponsesProxy,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) : Closeable {
     private val lifecycleMutex = Mutex()
@@ -57,7 +58,8 @@ class CodexHarnessResponsesGatewayServer(
                         return@post
                     }
                     val token = call.request.headers[HttpHeaders.Authorization].extractBearerToken()
-                    if (token == null || sessionRegistry.resolve(token) == null) {
+                    val session = token?.let(sessionRegistry::resolve)
+                    if (token == null || session == null) {
                         call.respondGatewayError(HttpStatusCode.Unauthorized, "invalid_gateway_token", "Invalid gateway token")
                         return@post
                     }
@@ -73,6 +75,47 @@ class CodexHarnessResponsesGatewayServer(
                         ?.takeUnless { it.isString }
                         ?.content
                         ?.toBooleanStrictOrNull() == true
+
+                    if (session.mode == CodexHarnessExecutionPlan.GatewayMode.RESPONSES_PASSTHROUGH) {
+                        try {
+                            rawResponsesProxy.open(token, request).use { opened ->
+                                val status = HttpStatusCode.fromValue(opened.statusCode)
+                                val contentType = opened.contentType
+                                    ?.let { raw -> runCatching { ContentType.parse(raw) }.getOrNull() }
+                                    ?: if (streaming) ContentType.Text.EventStream else ContentType.Application.Json
+
+                                if (streaming) {
+                                    call.respondTextWriter(contentType = contentType, status = status) {
+                                        val source = opened.response.body.source()
+                                        while (true) {
+                                            val line = source.readUtf8Line() ?: break
+                                            write(line)
+                                            write("\n")
+                                            flush()
+                                        }
+                                    }
+                                } else {
+                                    call.respondText(
+                                        opened.response.body.string(),
+                                        contentType,
+                                        status,
+                                    )
+                                }
+                            }
+                        } catch (cancelled: CancellationException) {
+                            // Closing the downstream Codex request cancels the OkHttp call owned by
+                            // the raw proxy through its Closeable response lifecycle.
+                            throw cancelled
+                        } catch (failure: Throwable) {
+                            val status = if (failure is CodexHarnessGatewayUnauthorizedException) {
+                                HttpStatusCode.Unauthorized
+                            } else {
+                                HttpStatusCode.BadGateway
+                            }
+                            call.respondGatewayError(status, "provider_request_failed", failure.safeGatewayMessage())
+                        }
+                        return@post
+                    }
 
                     if (streaming) {
                         call.respondTextWriter(contentType = ContentType.Text.EventStream) {
