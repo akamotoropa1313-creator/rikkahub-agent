@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.di
 
 import android.content.Context
+import android.net.ConnectivityManager
 import me.rerere.rikkahub.BuildConfig
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConnectionCreator
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSessionOpener
@@ -83,6 +84,15 @@ val repositoryModule = module {
             baseDir = File(context.filesDir, "workspaces"),
             shellRunner = ProotShellRunner(
                 nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir),
+                nameserversProvider = {
+                    val connectivity = context.getSystemService(ConnectivityManager::class.java)
+                    val activeNetwork = connectivity?.activeNetwork
+                    val linkProperties = activeNetwork?.let { connectivity.getLinkProperties(it) }
+                    linkProperties?.dnsServers
+                        ?.mapNotNull { it.hostAddress }
+                        ?.filter { it.isNotBlank() }
+                        .orEmpty()
+                },
             ),
             bindMounts = listOf(
                 WorkspaceBindMount(
