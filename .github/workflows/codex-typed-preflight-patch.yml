@@ -27,38 +27,34 @@ jobs:
           path = Path('app/src/main/java/me/rerere/rikkahub/service/ChatService.kt')
           text = path.read_text()
 
-          old_import = '''import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability
-          import me.rerere.rikkahub.data.codex.appserver.codexInputCapability
-          '''
-          new_import = '''import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability
-          import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelRouteResolver
-          import me.rerere.rikkahub.data.codex.appserver.codexHarnessInputCapability
-          '''
-          if text.count(old_import) != 1:
-              raise SystemExit(f'expected one Codex input-capability import block, found {text.count(old_import)}')
+          old_import = "import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability\nimport me.rerere.rikkahub.data.codex.appserver.codexInputCapability\n"
+          new_import = "import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability\nimport me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelRouteResolver\nimport me.rerere.rikkahub.data.codex.appserver.codexHarnessInputCapability\n"
+          import_count = text.count(old_import)
+          if import_count != 1:
+              raise SystemExit(f'expected one Codex input-capability import block, found {import_count}')
           text = text.replace(old_import, new_import, 1)
 
-          old = '''        val loadedCatalog = runtime.capabilities.value.models.takeIf { it.isNotEmpty() }
-          if (parts.any { it is UIMessagePart.Image } &&
-              codexInputCapability(assistant.codexModel, loadedCatalog, "image") == CodexInputCapability.Unsupported
-          ) throw IllegalArgumentException("The selected Codex model does not support images")
-          if (parts.any { it is UIMessagePart.Audio } &&
-              codexInputCapability(assistant.codexModel, loadedCatalog, "audio") == CodexInputCapability.Unsupported
-          ) throw IllegalArgumentException("The selected Codex model does not support audio")
-          '''
-          new = '''        val loadedCatalog = runtime.capabilities.value.models.takeIf { it.isNotEmpty() }
-          val harnessRoute = CodexHarnessModelRouteResolver.resolve(assistant, settingsStore.settingsFlow.value)
-          if (parts.any { it is UIMessagePart.Image } &&
-              codexHarnessInputCapability(harnessRoute, loadedCatalog, "image") == CodexInputCapability.Unsupported
-          ) throw IllegalArgumentException("The selected Codex model does not support images")
-          if (parts.any { it is UIMessagePart.Audio } &&
-              codexHarnessInputCapability(harnessRoute, loadedCatalog, "audio") == CodexInputCapability.Unsupported
-          ) throw IllegalArgumentException("The selected Codex model does not support audio")
-          '''
-          count = text.count(old)
-          if count != 2:
-              raise SystemExit(f'expected exactly two legacy Codex preflight blocks, found {count}')
-          text = text.replace(old, new)
+          catalog = "        val loadedCatalog = runtime.capabilities.value.models.takeIf { it.isNotEmpty() }\n"
+          route = "        val harnessRoute = CodexHarnessModelRouteResolver.resolve(assistant, settingsStore.settingsFlow.value)\n"
+          catalog_count = text.count(catalog)
+          if catalog_count != 2:
+              raise SystemExit(f'expected exactly two loadedCatalog sites, found {catalog_count}')
+          text = text.replace(catalog, catalog + route)
+
+          old_image = 'codexInputCapability(assistant.codexModel, loadedCatalog, "image")'
+          new_image = 'codexHarnessInputCapability(harnessRoute, loadedCatalog, "image")'
+          image_count = text.count(old_image)
+          if image_count != 2:
+              raise SystemExit(f'expected exactly two legacy image capability calls, found {image_count}')
+          text = text.replace(old_image, new_image)
+
+          old_audio = 'codexInputCapability(assistant.codexModel, loadedCatalog, "audio")'
+          new_audio = 'codexHarnessInputCapability(harnessRoute, loadedCatalog, "audio")'
+          audio_count = text.count(old_audio)
+          if audio_count != 2:
+              raise SystemExit(f'expected exactly two legacy audio capability calls, found {audio_count}')
+          text = text.replace(old_audio, new_audio)
+
           path.write_text(text)
           PY
 
