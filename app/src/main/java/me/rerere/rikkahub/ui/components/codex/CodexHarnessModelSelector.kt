@@ -37,6 +37,7 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Search01
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerModel
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelPresentationResolver
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessPickerCatalogBuilder
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessSelectionPolicy
@@ -65,22 +66,11 @@ fun CodexHarnessModelSelector(
     val target = assistant.effectiveCodexHarnessModelTarget()
     var visible by remember { mutableStateOf(false) }
 
-    val selectedLabel = when (target) {
-        is CodexHarnessModelTarget.ChatGptAccount -> {
-            if (target.model == null) {
-                "ChatGPT · サーバー既定"
-            } else {
-                accountModels.firstOrNull { it.model == target.model }?.displayName
-                    ?: target.model
-            }
-        }
-        is CodexHarnessModelTarget.RikkaHubProvider -> {
-            providers.firstNotNullOfOrNull { provider ->
-                provider.models.firstOrNull { it.id == target.modelId }
-                    ?.let { model -> "${provider.name} · ${model.displayName}" }
-            } ?: "利用できないモデル"
-        }
-    }
+    val selectedLabel = CodexHarnessModelPresentationResolver.resolve(
+        target = target,
+        providers = providers,
+        chatGptModels = accountModels,
+    ).compactLabel
 
     TextButton(
         onClick = { visible = true },
