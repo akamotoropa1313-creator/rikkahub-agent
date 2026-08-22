@@ -23,6 +23,22 @@ interface CodexHarnessRawResponsesBackend {
 }
 
 /**
+ * Narrow read-only seam for provider configuration used by the credential broker. Production uses
+ * the live SettingsStore snapshot; JVM integration tests can supply an in-memory provider without
+ * constructing Android DataStore. Keeping the seam at provider-list level preserves the same route
+ * validation and secret-injection code in both environments.
+ */
+fun interface CodexHarnessProviderSettingsSource {
+    fun currentProviders(): List<ProviderSetting>
+}
+
+class SettingsStoreCodexHarnessProviderSettingsSource(
+    private val settingsStore: SettingsStore,
+) : CodexHarnessProviderSettingsSource {
+    override fun currentProviders(): List<ProviderSetting> = settingsStore.settingsFlow.value.providers
+}
+
+/**
  * Credential-brokered raw Responses proxy for configured OpenAI-compatible providers that already
  * speak the Responses API.
  *
@@ -33,7 +49,7 @@ interface CodexHarnessRawResponsesBackend {
  */
 class CodexHarnessRawResponsesProxy(
     private val sessionRegistry: CodexHarnessGatewaySessionRegistry,
-    private val settingsStore: SettingsStore,
+    private val providerSettingsSource: CodexHarnessProviderSettingsSource,
     private val client: OkHttpClient,
     private val keyRoulette: KeyRoulette = KeyRoulette.default(),
 ) : CodexHarnessRawResponsesBackend {
@@ -47,8 +63,7 @@ class CodexHarnessRawResponsesProxy(
             throw CodexHarnessGatewayRouteException("Selected provider requires Responses translation")
         }
 
-        val settings = settingsStore.settingsFlow.value
-        val provider = settings.providers.firstOrNull { it.id == session.providerId }
+        val provider = providerSettingsSource.currentProviders().firstOrNull { it.id == session.providerId }
             ?: throw CodexHarnessGatewayRouteException("Selected provider no longer exists")
         if (!provider.enabled) {
             throw CodexHarnessGatewayRouteException("Selected provider is disabled")
