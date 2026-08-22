@@ -12,6 +12,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.response.respondTextWriter
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -82,6 +83,10 @@ class CodexHarnessResponsesGatewayServer(
                                 }
                                 write("data: [DONE]\n\n")
                                 flush()
+                            } catch (cancelled: CancellationException) {
+                                // Client disconnect / turn cancellation must cancel collection so
+                                // ProviderManager can stop the upstream network request as well.
+                                throw cancelled
                             } catch (failure: Throwable) {
                                 val payload = JsonObject(mapOf(
                                     "type" to JsonPrimitive("error"),
@@ -110,6 +115,8 @@ class CodexHarnessResponsesGatewayServer(
                                 "output" to kotlinx.serialization.json.JsonArray(emptyList()),
                             ))
                             call.respondText(body.toString(), ContentType.Application.Json, HttpStatusCode.OK)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
                         } catch (failure: Throwable) {
                             val status = if (failure is CodexHarnessGatewayUnauthorizedException) {
                                 HttpStatusCode.Unauthorized
