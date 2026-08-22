@@ -189,7 +189,7 @@ class CodexAppServerConversationSessionOpener(
         repository.getBinding(conversationId) ?: error("Codex conversation is not bound")
         val projection = harnessProjectionResolver?.resolve(conversationId)
         val effectiveOverrides = overrides.withHarnessProjection(projection)
-        val effectiveGuard = routeGuard ?: projection?.let(CodexHarnessExistingThreadRouteGuard::from)
+        val effectiveGuard = routeGuard ?: projection?.let { CodexHarnessExistingThreadRouteGuard.from(it) }
         val result = when (val recovered = recovery.recover(conversationId, effectiveOverrides, effectiveGuard)) {
             CodexAppServerSessionRecoveryResult.NotBound -> error("Binding disappeared while reconnecting")
             is CodexAppServerSessionRecoveryResult.Recovered ->
@@ -217,7 +217,7 @@ class CodexAppServerConversationSessionOpener(
 
         val projection = harnessProjectionResolver?.resolve(conversationId)
         val effectiveOverrides = overrides.withHarnessProjection(projection)
-        val effectiveGuard = routeGuard ?: projection?.let(CodexHarnessExistingThreadRouteGuard::from)
+        val effectiveGuard = routeGuard ?: projection?.let { CodexHarnessExistingThreadRouteGuard.from(it) }
 
         if (repository.getBinding(conversationId) != null) {
             val resumeOverrides = CodexAppServerThreadResumeParams(
