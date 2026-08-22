@@ -1,10 +1,23 @@
 package me.rerere.rikkahub.data.codex.appserver
 
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.cio.CIO
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.request.receiveText
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.post
+import io.ktor.server.routing.routing
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import me.rerere.ai.provider.CustomBody
+import me.rerere.ai.provider.CustomHeader
+import me.rerere.ai.provider.Model
+import me.rerere.ai.provider.ProviderSetting
 import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -159,6 +172,94 @@ class CodexHarnessResponsesGatewayServerTest {
             assertTrue(rawCalled)
         } finally {
             server.stop()
+        }
+    }
+
+    @Test
+    fun `raw route brokers provider credential and authoritative model through real loopback upstream`() = runBlocking {
+        var upstreamAuthorization: String? = null
+        var upstreamTrace: String? = null
+        var upstreamBody: String? = null
+        val upstream = embeddedServer(CIO, host = "127.0.0.1", port = 0) {
+            routing {
+                post("/v1/responses") {
+                    upstreamAuthorization = call.request.headers["Authorization"]
+                    upstreamTrace = call.request.headers["X-Trace"]
+                    upstreamBody = call.receiveText()
+                    call.respondText(
+                        text = "{\"id\":\"resp_upstream\",\"status\":\"completed\"}",
+                        contentType = ContentType.Application.Json,
+                        status = HttpStatusCode.Accepted,
+                    )
+                }
+            }
+        }.start(wait = false)
+
+        val registry = CodexHarnessGatewaySessionRegistry()
+        var gateway: CodexHarnessResponsesGatewayServer? = null
+        try {
+            val upstreamPort = upstream.engine.resolvedConnectors().first().port
+            val providerId = Uuid.random()
+            val modelId = Uuid.random()
+            val model = Model(
+                id = modelId,
+                modelId = "provider-wire-model",
+                displayName = "Provider Wire Model",
+                customHeaders = listOf(
+                    CustomHeader("Authorization", "Bearer attacker"),
+                    CustomHeader("X-Trace", "kept"),
+                ),
+                customBodies = listOf(
+                    CustomBody("model", JsonPrimitive("custom-body-model")),
+                    CustomBody("service_tier", JsonPrimitive("fast")),
+                ),
+            )
+            val provider = ProviderSetting.OpenAI(
+                id = providerId,
+                models = listOf(model),
+                apiKey = "provider-secret",
+                baseUrl = "http://127.0.0.1:$upstreamPort/v1",
+                useResponseApi = true,
+            )
+            val rawProxy = CodexHarnessRawResponsesProxy(
+                sessionRegistry = registry,
+                providerSettingsSource = CodexHarnessProviderSettingsSource { listOf(provider) },
+                client = client,
+            )
+            gateway = newServer(registry, raw = rawProxy)
+
+            val plan = CodexHarnessExecutionPlan.LocalResponsesGateway(
+                providerId = providerId,
+                modelId = modelId,
+                wireModel = "provider-wire-model",
+                mode = CodexHarnessExecutionPlan.GatewayMode.RESPONSES_PASSTHROUGH,
+            )
+            val gatewayToken = registry.issue(plan).first
+            val endpoint = gateway.ensureStarted()
+            val response = post(
+                endpoint = endpoint,
+                json = "{\"model\":\"client-controlled-model\",\"input\":\"hello\",\"stream\":false}",
+                token = gatewayToken,
+            )
+
+            response.use {
+                assertEquals(202, it.code)
+                assertTrue(it.header("Content-Type").orEmpty().startsWith("application/json"))
+                assertEquals("{\"id\":\"resp_upstream\",\"status\":\"completed\"}", it.body.string())
+            }
+
+            assertEquals("Bearer provider-secret", upstreamAuthorization)
+            assertFalse(upstreamAuthorization.orEmpty().contains(gatewayToken))
+            assertEquals("kept", upstreamTrace)
+            val parsed = Json.parseToJsonElement(checkNotNull(upstreamBody)) as JsonObject
+            assertEquals("provider-wire-model", (parsed["model"] as JsonPrimitive).content)
+            assertEquals("hello", (parsed["input"] as JsonPrimitive).content)
+            assertEquals("fast", (parsed["service_tier"] as JsonPrimitive).content)
+            assertFalse(checkNotNull(upstreamBody).contains("client-controlled-model"))
+            assertFalse(checkNotNull(upstreamBody).contains(gatewayToken))
+        } finally {
+            gateway?.stop()
+            upstream.stop(100, 1_000)
         }
     }
 
