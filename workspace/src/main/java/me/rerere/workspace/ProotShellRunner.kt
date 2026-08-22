@@ -14,6 +14,7 @@ data class WorkspaceBindMount(
 class ProotShellRunner(
     private val nativeLibraryDir: File,
     private val patcher: RootfsPatcher = RootfsPatcher(),
+    private val nameserversProvider: () -> List<String> = { emptyList() },
 ) : WorkspaceShellRunner {
     override fun execute(context: WorkspaceShellContext): WorkspaceCommandResult {
         if (!context.linuxDir.hasUsableRootfs()) {
@@ -42,7 +43,7 @@ class ProotShellRunner(
         }
 
         context.tempDir.mkdirs()
-        patcher.patch(context.linuxDir)
+        patchRootfsForCurrentNetwork(context)
         val process = newProcessBuilder(context, proot, loader).start()
 
         return process.readResult(context.timeoutMillis, context.stdin)
@@ -63,8 +64,17 @@ class ProotShellRunner(
         }
 
         context.tempDir.mkdirs()
-        patcher.patch(context.linuxDir)
+        patchRootfsForCurrentNetwork(context)
         return newProcessBuilder(context, proot, loader).start()
+    }
+
+    private fun patchRootfsForCurrentNetwork(context: WorkspaceShellContext) {
+        val nameservers = runCatching { nameserversProvider() }
+            .getOrDefault(emptyList())
+        patcher.patch(
+            context.linuxDir,
+            RootfsPatchOptions(nameservers = nameservers),
+        )
     }
 
     private fun newProcessBuilder(
