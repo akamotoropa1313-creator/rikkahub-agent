@@ -20,7 +20,7 @@ class CodexHarnessConversationProjectionResolver(
         val conversation = conversationDao.getConversationById(conversationId) ?: return null
         val settings = settingsStore.settingsFlow.value
         val assistantId = runCatching { Uuid.parse(conversation.assistantId) }.getOrNull()
-        val assistant = assistantId?.let(settings::getAssistantById) ?: settings.getCurrentAssistant()
+        val assistant = assistantId?.let { settings.getAssistantById(it) } ?: settings.getCurrentAssistant()
         if (!assistant.codexAppServerEnabled) return null
         return threadConfigurationResolver.resolve(conversationId, assistant, settings)
     }
