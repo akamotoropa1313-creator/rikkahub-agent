@@ -1,14 +1,26 @@
 package me.rerere.rikkahub.data.codex.appserver
 
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.provider.ModelAbility
 import me.rerere.ai.provider.ProviderManager
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.rikkahub.data.datastore.SettingsStore
+
+/**
+ * Narrow gateway seam used by the HTTP server. Keeping the server dependent on the Responses
+ * contract instead of ProviderManager details lets JVM tests exercise the real loopback HTTP
+ * boundary without constructing Android DataStore/provider state.
+ */
+interface CodexHarnessTranslatedResponsesBackend {
+    fun stream(
+        bearerToken: String?,
+        request: JsonObject,
+    ): Flow<CodexHarnessResponsesSseEvent>
+}
 
 /**
  * Credential-brokered dispatch core used by the loopback Responses HTTP server.
@@ -22,8 +34,8 @@ class CodexHarnessResponsesDispatcher(
     private val sessionRegistry: CodexHarnessGatewaySessionRegistry,
     private val settingsStore: SettingsStore,
     private val providerManager: ProviderManager,
-) {
-    fun stream(
+) : CodexHarnessTranslatedResponsesBackend {
+    override fun stream(
         bearerToken: String?,
         request: JsonObject,
     ): Flow<CodexHarnessResponsesSseEvent> = flow {
