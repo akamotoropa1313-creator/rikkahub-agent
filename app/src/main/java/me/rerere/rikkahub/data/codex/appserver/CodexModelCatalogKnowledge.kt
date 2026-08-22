@@ -40,6 +40,19 @@ object CodexModelCatalogKnowledge {
         }
     }
 
+    /**
+     * Discards account-scoped App Server model knowledge immediately after an authentication
+     * identity transition. Keeping the previous account's catalog would let the unified picker and
+     * model-sensitive thread options present capabilities that the new account may not own.
+     */
+    fun invalidateAccountCatalog() {
+        personalitySupport.clear()
+        serviceTierSupport.clear()
+        serviceTierMetadataKnown.clear()
+        defaultModel = null
+        mutableModels.value = emptyList()
+    }
+
     /** Immutable process-local snapshot for non-reactive consumers. */
     fun modelsSnapshot(): List<CodexAppServerModel> = mutableModels.value.toList()
 
@@ -60,11 +73,5 @@ object CodexModelCatalogKnowledge {
         return resolvedModel in serviceTierMetadataKnown && serviceTierSupport[resolvedModel]?.contains(tier) == true
     }
 
-    internal fun clearForTest() {
-        personalitySupport.clear()
-        serviceTierSupport.clear()
-        serviceTierMetadataKnown.clear()
-        defaultModel = null
-        mutableModels.value = emptyList()
-    }
+    internal fun clearForTest() = invalidateAccountCatalog()
 }
