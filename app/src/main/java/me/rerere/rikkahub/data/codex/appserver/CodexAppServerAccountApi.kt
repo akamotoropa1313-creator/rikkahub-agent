@@ -2,6 +2,7 @@ package me.rerere.rikkahub.data.codex.appserver
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.onEach
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -99,8 +100,20 @@ fun Flow<CodexAppServerEvent>.toCodexAppServerAccountEvents(): Flow<CodexAppServ
     }
 }
 
+internal fun CodexAppServerAccountEvent.invalidatesModelCatalog(): Boolean = when (this) {
+    is CodexAppServerAccountEvent.LoginCompleted -> success
+    is CodexAppServerAccountEvent.Updated -> true
+    is CodexAppServerAccountEvent.MalformedNotification -> false
+}
+
 class CodexAppServerAccountApi(private val connection: CodexAppServerConnection) {
-    val events: Flow<CodexAppServerAccountEvent> = connection.events.toCodexAppServerAccountEvents()
+    val events: Flow<CodexAppServerAccountEvent> = connection.events
+        .toCodexAppServerAccountEvents()
+        .onEach { event ->
+            if (event.invalidatesModelCatalog()) {
+                CodexModelCatalogKnowledge.invalidateAccountCatalog()
+            }
+        }
 
     suspend fun readAccount(refreshToken: Boolean = false): CodexAppServerAccountSnapshot {
         val params = if (refreshToken) buildJsonObject { put("refreshToken", true) } else JsonObject(emptyMap())
@@ -136,6 +149,7 @@ class CodexAppServerAccountApi(private val connection: CodexAppServerConnection)
     suspend fun logout() {
         connection.sendRequestAfterReady("account/logout", JsonObject(emptyMap()))
             .requiredObject("account/logout result")
+        CodexModelCatalogKnowledge.invalidateAccountCatalog()
     }
 }
 
