@@ -1,6 +1,9 @@
 package me.rerere.rikkahub.data.codex.appserver
 
 import kotlinx.serialization.json.JsonObject
+import me.rerere.ai.provider.Modality
+import me.rerere.ai.provider.Model
+import me.rerere.ai.provider.ProviderSetting
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -32,5 +35,61 @@ class CodexInputCapabilitiesTest {
         assertEquals(CodexInputCapability.Unknown, codexInputCapability("gone", models, "image"))
         assertEquals(CodexInputCapability.Unsupported, codexInputCapability("gone", models, "audio"))
         assertEquals(CodexInputCapability.Supported, codexInputCapability(null, models, "audio"))
+    }
+
+    @Test fun `translated external route uses rikkahub model instead of chatgpt default`() {
+        val external = Model(
+            modelId = "external-text-only",
+            displayName = "External Text Only",
+            inputModalities = listOf(Modality.TEXT),
+        )
+        val provider = ProviderSetting.Google(models = listOf(external))
+        val chatGptCatalog = listOf(
+            model("chatgpt", "chatgpt-default", true, listOf("text", "image", "audio")),
+        )
+        val route = CodexHarnessModelRoute.BridgeRequired(external, provider)
+
+        assertEquals(
+            CodexInputCapability.Unsupported,
+            codexHarnessInputCapability(route, chatGptCatalog, "image"),
+        )
+        assertEquals(
+            CodexInputCapability.Unsupported,
+            codexHarnessInputCapability(route, chatGptCatalog, "audio"),
+        )
+    }
+
+    @Test fun `raw responses external route uses image metadata and leaves audio unknown`() {
+        val external = Model(
+            modelId = "external-vision",
+            displayName = "External Vision",
+            inputModalities = listOf(Modality.TEXT, Modality.IMAGE),
+        )
+        val provider = ProviderSetting.OpenAI(
+            models = listOf(external),
+            useResponseApi = true,
+        )
+        val route = CodexHarnessModelRoute.DirectResponses(external, provider)
+
+        assertEquals(
+            CodexInputCapability.Supported,
+            codexHarnessInputCapability(route, null, "image"),
+        )
+        assertEquals(
+            CodexInputCapability.Unknown,
+            codexHarnessInputCapability(route, null, "audio"),
+        )
+    }
+
+    @Test fun `missing external model fails closed`() {
+        val route = CodexHarnessModelRoute.MissingProviderModel("gone")
+        assertEquals(
+            CodexInputCapability.Unsupported,
+            codexHarnessInputCapability(route, null, "image"),
+        )
+        assertEquals(
+            CodexInputCapability.Unsupported,
+            codexHarnessInputCapability(route, null, "audio"),
+        )
     }
 }
