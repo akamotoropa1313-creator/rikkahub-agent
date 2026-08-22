@@ -27,6 +27,10 @@ jobs:
           path = Path('app/src/main/java/me/rerere/rikkahub/service/ChatService.kt')
           text = path.read_text()
 
+          total_legacy_calls = text.count('codexInputCapability(')
+          if total_legacy_calls != 2:
+              raise SystemExit(f'expected exactly two legacy capability calls total, found {total_legacy_calls}')
+
           old_import = "import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability\nimport me.rerere.rikkahub.data.codex.appserver.codexInputCapability\n"
           new_import = "import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability\nimport me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelRouteResolver\nimport me.rerere.rikkahub.data.codex.appserver.codexHarnessInputCapability\n"
           import_count = text.count(old_import)
@@ -37,24 +41,26 @@ jobs:
           catalog = "        val loadedCatalog = runtime.capabilities.value.models.takeIf { it.isNotEmpty() }\n"
           route = "        val harnessRoute = CodexHarnessModelRouteResolver.resolve(assistant, settingsStore.settingsFlow.value)\n"
           catalog_count = text.count(catalog)
-          if catalog_count != 2:
-              raise SystemExit(f'expected exactly two loadedCatalog sites, found {catalog_count}')
-          text = text.replace(catalog, catalog + route)
+          if catalog_count != 1:
+              raise SystemExit(f'expected exactly one loadedCatalog site, found {catalog_count}')
+          text = text.replace(catalog, catalog + route, 1)
 
           old_image = 'codexInputCapability(assistant.codexModel, loadedCatalog, "image")'
           new_image = 'codexHarnessInputCapability(harnessRoute, loadedCatalog, "image")'
           image_count = text.count(old_image)
-          if image_count != 2:
-              raise SystemExit(f'expected exactly two legacy image capability calls, found {image_count}')
-          text = text.replace(old_image, new_image)
+          if image_count != 1:
+              raise SystemExit(f'expected exactly one legacy image capability call, found {image_count}')
+          text = text.replace(old_image, new_image, 1)
 
           old_audio = 'codexInputCapability(assistant.codexModel, loadedCatalog, "audio")'
           new_audio = 'codexHarnessInputCapability(harnessRoute, loadedCatalog, "audio")'
           audio_count = text.count(old_audio)
-          if audio_count != 2:
-              raise SystemExit(f'expected exactly two legacy audio capability calls, found {audio_count}')
-          text = text.replace(old_audio, new_audio)
+          if audio_count != 1:
+              raise SystemExit(f'expected exactly one legacy audio capability call, found {audio_count}')
+          text = text.replace(old_audio, new_audio, 1)
 
+          if 'codexInputCapability(' in text:
+              raise SystemExit('legacy capability call remained after guarded replacement')
           path.write_text(text)
           PY
 
