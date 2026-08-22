@@ -37,6 +37,22 @@ class CodexInputCapabilitiesTest {
         assertEquals(CodexInputCapability.Supported, codexInputCapability(null, models, "audio"))
     }
 
+    @Test fun `chatgpt harness route still delegates to app server catalog`() {
+        val catalog = listOf(
+            model("selected", "chatgpt-wire", false, listOf("text", "image", "audio")),
+        )
+        val route = CodexHarnessModelRoute.ChatGptAccount("chatgpt-wire")
+
+        assertEquals(
+            CodexInputCapability.Supported,
+            codexHarnessInputCapability(route, catalog, "image"),
+        )
+        assertEquals(
+            CodexInputCapability.Supported,
+            codexHarnessInputCapability(route, catalog, "audio"),
+        )
+    }
+
     @Test fun `translated external route uses rikkahub model instead of chatgpt default`() {
         val external = Model(
             modelId = "external-text-only",
