@@ -23,24 +23,15 @@ import java.io.Closeable
 
 private const val CODEX_HARNESS_GATEWAY_HOST = "127.0.0.1"
 
-/** Public endpoint information safe to inject into a Codex thread config. */
 data class CodexHarnessGatewayEndpoint(
     val baseUrl: String,
     val port: Int,
 )
 
-/**
- * App-private OpenAI Responses-compatible gateway used only by the managed Codex subprocess.
- *
- * The listener is hard-bound to IPv4 loopback and additionally rejects any non-loopback peer.
- * Each request must carry a short-lived opaque bearer token issued by
- * [CodexHarnessGatewaySessionRegistry]. No provider credential is accepted from, or returned to,
- * the Codex subprocess.
- */
 class CodexHarnessResponsesGatewayServer(
     private val sessionRegistry: CodexHarnessGatewaySessionRegistry,
-    private val dispatcher: CodexHarnessResponsesDispatcher,
-    private val rawResponsesProxy: CodexHarnessRawResponsesProxy,
+    private val dispatcher: CodexHarnessTranslatedResponsesBackend,
+    private val rawResponsesProxy: CodexHarnessRawResponsesBackend,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) : Closeable {
     private val lifecycleMutex = Mutex()
@@ -95,16 +86,10 @@ class CodexHarnessResponsesGatewayServer(
                                         }
                                     }
                                 } else {
-                                    call.respondText(
-                                        opened.response.body.string(),
-                                        contentType,
-                                        status,
-                                    )
+                                    call.respondText(opened.response.body.string(), contentType, status)
                                 }
                             }
                         } catch (cancelled: CancellationException) {
-                            // Closing the downstream Codex request cancels the OkHttp call owned by
-                            // the raw proxy through its Closeable response lifecycle.
                             throw cancelled
                         } catch (failure: Throwable) {
                             val status = if (failure is CodexHarnessGatewayUnauthorizedException) {
@@ -127,8 +112,6 @@ class CodexHarnessResponsesGatewayServer(
                                 write("data: [DONE]\n\n")
                                 flush()
                             } catch (cancelled: CancellationException) {
-                                // Client disconnect / turn cancellation must cancel collection so
-                                // ProviderManager can stop the upstream network request as well.
                                 throw cancelled
                             } catch (failure: Throwable) {
                                 val payload = JsonObject(mapOf(
@@ -166,11 +149,7 @@ class CodexHarnessResponsesGatewayServer(
                             } else {
                                 HttpStatusCode.BadGateway
                             }
-                            call.respondGatewayError(
-                                status,
-                                "provider_request_failed",
-                                failure.safeGatewayMessage(),
-                            )
+                            call.respondGatewayError(status, "provider_request_failed", failure.safeGatewayMessage())
                         }
                     }
                 }
@@ -200,8 +179,6 @@ class CodexHarnessResponsesGatewayServer(
     }
 
     override fun close() {
-        // Lifecycle owners that can suspend should call stop(). close() is a best-effort fallback
-        // and deliberately does not block an Android main thread waiting for engine shutdown.
         server?.stop(0, 1_000)
         server = null
         endpoint = null
