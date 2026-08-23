@@ -84,6 +84,10 @@ jobs:
       - name: Run all JVM unit tests
         run: ./gradlew testDebugUnitTest --continue
 
+      - name: Run Android lint
+        if: always()
+        run: ./gradlew lintDebug --continue
+
       - name: Print JUnit failure details
         if: failure()
         shell: bash
@@ -97,5 +101,14 @@ jobs:
         with:
           name: all-jvm-junit-results
           path: "**/build/test-results/testDebugUnitTest/*.xml"
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload Android lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-lint-reports
+          path: "**/build/reports/lint-results-debug.*"
           if-no-files-found: warn
           retention-days: 7

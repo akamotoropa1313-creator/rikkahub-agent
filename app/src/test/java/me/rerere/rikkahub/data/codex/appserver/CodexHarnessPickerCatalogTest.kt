@@ -20,7 +20,7 @@ class CodexHarnessPickerCatalogTest {
 
         val result = CodexHarnessPickerCatalogBuilder.build(
             providers = listOf(enabled, disabled),
-            chatGptModels = listOf(account, hidden),
+            chatGptModels = listOf(account, account, hidden),
         )
 
         assertEquals(listOf("gpt-account"), result.chatGptModels.map { it.model })
@@ -36,6 +36,9 @@ class CodexHarnessPickerCatalogTest {
         assertTrue(CodexHarnessPickerCatalogBuilder.matchesSearch(account, "friendly"))
         assertTrue(CodexHarnessPickerCatalogBuilder.matchesSearch(account, "gpt-wire"))
         assertTrue(CodexHarnessPickerCatalogBuilder.matchesSearch(providerModel, "vendor/wire"))
+        assertTrue(CodexHarnessPickerCatalogBuilder.matchesAccountDefaultSearch("既定"))
+        assertTrue(CodexHarnessPickerCatalogBuilder.matchesAccountDefaultSearch("default"))
+        assertTrue(!CodexHarnessPickerCatalogBuilder.matchesAccountDefaultSearch("missing"))
     }
 
     private fun accountModel(

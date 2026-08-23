@@ -180,6 +180,9 @@ private fun CodexHarnessModelSheet(
     val accountMatches = remember(catalog.chatGptModels, query) {
         catalog.chatGptModels.filter { CodexHarnessPickerCatalogBuilder.matchesSearch(it, query) }
     }
+    val showAccountDefault = remember(query) {
+        CodexHarnessPickerCatalogBuilder.matchesAccountDefaultSearch(query)
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -219,7 +222,7 @@ private fun CodexHarnessModelSheet(
                 stickyHeader(key = "chatgpt-header") {
                     ProviderHeader("ChatGPTアカウント")
                 }
-                if (query.isBlank() || "サーバー既定".contains(query, ignoreCase = true) || "default".contains(query, ignoreCase = true)) {
+                if (showAccountDefault) {
                     item(key = "chatgpt-default") {
                         AccountModelRow(
                             title = "サーバー既定",
@@ -229,7 +232,7 @@ private fun CodexHarnessModelSheet(
                         )
                     }
                 }
-                if (catalog.chatGptModels.isEmpty()) {
+                if (catalog.chatGptModels.isEmpty() && query.isBlank()) {
                     item(key = "chatgpt-empty") {
                         Text(
                             "個別のChatGPTモデルは、Codexで最初の接続が完了すると自動的に表示されます。それまでは「サーバー既定」または下のRikkaHubプロバイダーモデルを選択できます。",
@@ -248,7 +251,7 @@ private fun CodexHarnessModelSheet(
                     }
                 }
 
-                if (query.isNotBlank() && accountMatches.isEmpty() && catalog.providerGroups.none { group ->
+                if (query.isNotBlank() && !showAccountDefault && accountMatches.isEmpty() && catalog.providerGroups.none { group ->
                         group.models.any { CodexHarnessPickerCatalogBuilder.matchesSearch(it, query) }
                     }
                 ) {
