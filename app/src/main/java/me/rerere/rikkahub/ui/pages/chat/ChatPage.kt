@@ -8,9 +8,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
@@ -80,6 +82,7 @@ import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.ai.SearchMode
 import me.rerere.rikkahub.ui.components.codex.CodexControlSheet
+import me.rerere.rikkahub.ui.components.codex.CodexHarnessModelSelector
 import me.rerere.rikkahub.ui.components.codex.codexComposerLabel
 import me.rerere.rikkahub.ui.components.codex.compactContextText
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
@@ -343,9 +346,17 @@ private fun ChatPageContent(
             bottomBar = {
                 Column {
                     selectedCodexSkill?.let { skill ->
-                        TextButton(onClick = { vm.selectCodexSkill(null) }) {
-                            Text("${skill.name}  ×", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
+                        AssistChip(
+                            onClick = { vm.selectCodexSkill(null) },
+                            label = {
+                                Text(
+                                    "スキル: ${skill.name}  ×",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                        )
                     }
                     if (assistant.codexAppServerEnabled) {
                         val currentUsage = when (val state = codexState) {
@@ -382,6 +393,20 @@ private fun ChatPageContent(
                         settings = setting,
                         hazeState = hazeState,
                         completionProviders = completionProviders,
+                        modelSelectorContent = if (assistant.codexAppServerEnabled) {
+                            {
+                                CodexHarnessModelSelector(
+                                    assistant = assistant,
+                                    providers = setting.providers,
+                                    onUpdateAssistant = vm::updateCodexModelSelection,
+                                    hasBoundSession = hasCodexBinding,
+                                    enabled = !codexOperationBusy && loadingJob == null,
+                                )
+                            }
+                        } else {
+                            null
+                        },
+                        showStandardGenerationControls = !assistant.codexAppServerEnabled,
                         onCancelClick = {
                             vm.stopGeneration()
                         },

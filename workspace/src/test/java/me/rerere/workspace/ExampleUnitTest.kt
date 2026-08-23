@@ -3,6 +3,7 @@ package me.rerere.workspace
 import com.sun.net.httpserver.HttpServer
 import org.junit.Assert.*
 import org.junit.Test
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.InetSocketAddress
@@ -38,6 +39,26 @@ class ExampleUnitTest {
             rejected = true
         }
         assertTrue(rejected)
+    }
+
+    @Test
+    fun managerUsesImportCapInsteadOfTextWriteCap() {
+        val baseDir = Files.createTempDirectory("workspace-import-test").toFile()
+        val manager = WorkspaceManager(
+            baseDir = baseDir,
+            config = WorkspaceConfig(maxWriteBytes = 4, maxImportBytes = 8),
+        )
+        val root = "test-workspace"
+        manager.ensureWorkspace(root)
+
+        val entry = manager.importFile(
+            root = root,
+            destinationPath = "",
+            fileName = "upload.bin",
+            inputStream = ByteArrayInputStream(ByteArray(8)),
+        )
+
+        assertEquals(8L, entry.sizeBytes)
     }
 
     @Test

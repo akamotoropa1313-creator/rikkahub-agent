@@ -42,6 +42,8 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDeci
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeResolver
 import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
+import me.rerere.rikkahub.data.codex.appserver.codexHarnessModelChangeRequiresSessionReset
+import me.rerere.rikkahub.data.codex.appserver.effectiveCodexHarnessModelTarget
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Avatar
 import me.rerere.rikkahub.data.model.Conversation
@@ -189,19 +191,47 @@ class ChatVM(
 
     /** Apply only a Codex preference delta against the newest Assistant inside SettingsStore.update. */
     fun updateCodexPreferences(transform: (Assistant) -> Assistant) {
+        viewModelScope.launch { updateCodexPreferencesNow(transform) }
+    }
+
+    /**
+     * A persisted Codex thread cannot safely change between account and gateway model routes.
+     * Release that thread first, then persist the new target so the next send opens the right one.
+     */
+    fun updateCodexModelSelection(transform: (Assistant) -> Assistant) {
         viewModelScope.launch {
-            settingsStore.update { settings ->
-                val activeConversation = conversation.value
-                val latestAssistant = settings.getAssistantById(activeConversation.assistantId)
-                    ?: settings.getCurrentAssistant()
-                val updated = transform(latestAssistant)
-                check(updated.id == latestAssistant.id) { "Codex preference update cannot replace assistant identity" }
-                settings.copy(
-                    assistants = settings.assistants.map { assistant ->
-                        if (assistant.id == latestAssistant.id) updated else assistant
-                    },
-                )
+            val currentSettings = settingsStore.settingsFlow.first()
+            val activeConversation = conversation.value
+            val currentAssistant = currentSettings.getAssistantById(activeConversation.assistantId)
+                ?: currentSettings.getCurrentAssistant()
+            val requestedAssistant = transform(currentAssistant)
+            val requiresReset = codexHarnessModelChangeRequiresSessionReset(
+                currentAssistant.effectiveCodexHarnessModelTarget(),
+                requestedAssistant.effectiveCodexHarnessModelTarget(),
+            )
+            if (requiresReset && chatService.hasCodexBinding(_conversationId)) {
+                chatService.resetCodexSession(_conversationId)
+                _selectedCodexSkill.value = null
+                _hasCodexBinding.value = false
             }
+            updateCodexPreferencesNow(transform)
+        }
+    }
+
+    private suspend fun updateCodexPreferencesNow(transform: (Assistant) -> Assistant) {
+        settingsStore.update { settings ->
+            val activeConversation = conversation.value
+            val latestAssistant = settings.getAssistantById(activeConversation.assistantId)
+                ?: settings.getCurrentAssistant()
+            val updated = transform(latestAssistant)
+            check(updated.id == latestAssistant.id) {
+                "Codex preference update cannot replace assistant identity"
+            }
+            settings.copy(
+                assistants = settings.assistants.map { assistant ->
+                    if (assistant.id == latestAssistant.id) updated else assistant
+                },
+            )
         }
     }
 

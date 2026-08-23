@@ -2,7 +2,7 @@ package me.rerere.rikkahub.ui.components.codex
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
@@ -77,9 +77,9 @@ fun CodexFileChangeApprovalCard(
 @Composable private fun ApprovalSurface(title:String, modifier:Modifier, content:@Composable ()->Unit) = Card(modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) { Text(title, style=MaterialTheme.typography.titleLarge); content() } }
 @Composable private fun LabeledPlainText(label:String, value:String, monospace:Boolean=false) { Text(label, style=MaterialTheme.typography.labelMedium); Text(value, fontFamily=if(monospace) FontFamily.Monospace else FontFamily.Default) }
 @Composable private fun ApprovalActions(approveEnabled:Boolean, rejectEnabled:Boolean = approveEnabled, approve:()->Unit, session:()->Unit, decline:()->Unit, cancel:()->Unit) {
-    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { Button(approve, enabled=approveEnabled) { Text("今回のみ承認") }; OutlinedButton(session, enabled=approveEnabled) { Text("このセッションで承認") } }
+    FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) { Button(approve, enabled=approveEnabled) { Text("今回のみ承認") }; OutlinedButton(session, enabled=approveEnabled) { Text("このセッションで承認") } }
     Text("「拒否」はこの操作だけを拒否してターンを続行します。「ターンをキャンセル」は操作を拒否してターンも停止します。", style=MaterialTheme.typography.bodySmall)
-    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { OutlinedButton(decline, enabled=rejectEnabled) { Text("拒否") }; OutlinedButton(cancel, enabled=rejectEnabled) { Text("ターンをキャンセル") } }
+    FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) { OutlinedButton(decline, enabled=rejectEnabled) { Text("拒否") }; OutlinedButton(cancel, enabled=rejectEnabled) { Text("ターンをキャンセル") } }
 }
 
 internal data class ApprovalActionAvailability(val approveEnabled: Boolean, val rejectEnabled: Boolean)

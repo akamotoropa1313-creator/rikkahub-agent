@@ -126,7 +126,10 @@ import me.rerere.rikkahub.data.codex.appserver.serviceTierIds
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnInput
 import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelRouteResolver
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelTarget
+import me.rerere.rikkahub.data.codex.appserver.codexHarnessModelChangeRequiresSessionReset
 import me.rerere.rikkahub.data.codex.appserver.codexHarnessInputCapability
+import me.rerere.rikkahub.data.codex.appserver.effectiveCodexHarnessModelTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
@@ -724,6 +727,12 @@ class ChatService(
         assistant: Assistant,
         content: List<UIMessagePart>,
     ) {
+        getOrCreateSession(conversationId).codexRuntime?.harnessTarget?.let { openedTarget ->
+            val requestedTarget = assistant.effectiveCodexHarnessModelTarget()
+            check(!codexHarnessModelChangeRequiresSessionReset(openedTarget, requestedTarget)) {
+                "Codex model source changed. Reset the Codex session before sending so the previous provider is not reused."
+            }
+        }
         content.forEach { part ->
             require(part is UIMessagePart.Text || part is UIMessagePart.Image || part is UIMessagePart.Audio) {
                 when (part) {
@@ -792,8 +801,10 @@ class ChatService(
                     ),
                 )
                 when (opened) {
-                    is CodexAppServerConversationSessionOpenResult.Started -> installCodexRuntime(conversationId, owner, opened.session)
-                    is CodexAppServerConversationSessionOpenResult.Recovered -> installCodexRuntime(conversationId, owner, opened.session)
+                    is CodexAppServerConversationSessionOpenResult.Started ->
+                        installCodexRuntime(conversationId, owner, opened.session, assistant.effectiveCodexHarnessModelTarget())
+                    is CodexAppServerConversationSessionOpenResult.Recovered ->
+                        installCodexRuntime(conversationId, owner, opened.session, assistant.effectiveCodexHarnessModelTarget())
                     is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
                         owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason.toString()))
                         error("The existing Codex binding is stale; reset is required")
@@ -866,6 +877,7 @@ class ChatService(
                     session = protocolSession,
                     scope = appScope,
                     onAgentText = { turnId, itemId, text -> persistCodexAgentText(conversationId, turnId, itemId, text) },
+                    harnessTarget = assistant.effectiveCodexHarnessModelTarget(),
                     onTurnTerminal = { persistStreamingStateNow(conversationId, updateSearchIndex = true) },
                     onInterruptFailure = { cause -> addError(cause, conversationId, title = "Codex interrupt failed") },
                     onFailure = { failed, cause ->
@@ -1008,8 +1020,10 @@ class ChatService(
                         approvalPolicy = CodexAppServerApprovalPolicy.fromPreference(assistant.codexApprovalPolicy),
                     ),
                 )) {
-                    is CodexAppServerConversationSessionOpenResult.Recovered -> installCodexRuntime(conversationId, owner, opened.session)
-                    is CodexAppServerConversationSessionOpenResult.Started -> installCodexRuntime(conversationId, owner, opened.session)
+                    is CodexAppServerConversationSessionOpenResult.Recovered ->
+                        installCodexRuntime(conversationId, owner, opened.session, assistant.effectiveCodexHarnessModelTarget())
+                    is CodexAppServerConversationSessionOpenResult.Started ->
+                        installCodexRuntime(conversationId, owner, opened.session, assistant.effectiveCodexHarnessModelTarget())
                     is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
                         owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason.toString()))
                         error("The existing Codex binding is stale")
@@ -1022,10 +1036,16 @@ class ChatService(
         } finally { owner.endCodexOperation() }
     }
 
-    private fun installCodexRuntime(conversationId: Uuid, owner: ConversationSession, protocolSession: me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession): CodexChatRuntime {
+    private fun installCodexRuntime(
+        conversationId: Uuid,
+        owner: ConversationSession,
+        protocolSession: me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession,
+        harnessTarget: CodexHarnessModelTarget,
+    ): CodexChatRuntime {
         lateinit var installed: CodexChatRuntime
         installed = CodexChatRuntime(protocolSession, appScope,
             onAgentText = { turnId, itemId, text -> persistCodexAgentText(conversationId, turnId, itemId, text) },
+            harnessTarget = harnessTarget,
             onTurnTerminal = { persistStreamingStateNow(conversationId, updateSearchIndex = true) },
             onInterruptFailure = { addError(it, conversationId, title = "Codex interrupt failed") },
             onFailure = { failed, cause -> appScope.launch { owner.publishCodexState(CodexConversationUiState.Failed(cause.message ?: cause.toString())); if (owner.detachCodexRuntime(failed)) failed.close() } },

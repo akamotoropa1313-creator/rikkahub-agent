@@ -540,9 +540,19 @@ private fun historyUserInputText(input: CodexAppServerUserInput): String = when 
 
 @Composable
 private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) =
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        content()
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            content()
+        }
     }
 
 private fun connectionLabel(state: CodexConversationUiState, bound: Boolean) = when (state) {

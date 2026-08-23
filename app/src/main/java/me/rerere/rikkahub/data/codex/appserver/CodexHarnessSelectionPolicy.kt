@@ -33,3 +33,15 @@ object CodexHarnessSelectionPolicy {
         codexServiceTier = null,
     )
 }
+
+/**
+ * ChatGPT account models can change through turn/start. A gateway route is bound to the thread's
+ * provider definition and short-lived token, so entering, leaving, or changing it needs a thread
+ * reset instead of silently continuing on the previous provider.
+ */
+fun codexHarnessModelChangeRequiresSessionReset(
+    current: CodexHarnessModelTarget,
+    requested: CodexHarnessModelTarget,
+): Boolean = current != requested &&
+    (current is CodexHarnessModelTarget.RikkaHubProvider ||
+        requested is CodexHarnessModelTarget.RikkaHubProvider)

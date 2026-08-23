@@ -2,7 +2,7 @@ package me.rerere.rikkahub.ui.components.codex
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
@@ -61,7 +61,10 @@ fun CodexAccountCard(
             Text("Codexアカウント")
             presentation.lines.forEach { Text(it) }
             statusMessage?.let { Text(it) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 if (presentation.showCancel) OutlinedButton(onCancelSignIn, enabled = presentation.actionsEnabled) { Text("キャンセル") }
                 else if (presentation.showSignIn) {
                     Button(onSignIn, enabled = presentation.actionsEnabled) { Text("ChatGPTでサインイン") }

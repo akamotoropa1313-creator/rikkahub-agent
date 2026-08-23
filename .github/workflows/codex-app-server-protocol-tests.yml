@@ -81,43 +81,21 @@ jobs:
             exit 1
           fi
 
-      - name: Run Codex App Server protocol unit tests
-        run: >-
-          ./gradlew :app:testDebugUnitTest
-          --tests 'me.rerere.rikkahub.data.codex.appserver.*Test'
-          --tests 'me.rerere.rikkahub.ui.components.codex.*Test'
-          --tests 'me.rerere.rikkahub.service.Codex*Test'
-          --tests 'me.rerere.rikkahub.di.CodexRepositoryModuleTest'
-          --tests 'me.rerere.rikkahub.utils.CrashHandlerTest'
+      - name: Run all JVM unit tests
+        run: ./gradlew testDebugUnitTest --continue
 
-      - name: Run workspace interactive process unit tests
-        run: >-
-          ./gradlew :workspace:testDebugUnitTest
-          --tests 'me.rerere.workspace.*Interactive*Test'
-
-      - name: Print Codex App Server JUnit failure details
+      - name: Print JUnit failure details
         if: failure()
         shell: bash
         run: |
-          find app/build/test-results/testDebugUnitTest \
-            \( -name 'TEST-me.rerere.rikkahub.data.codex.appserver.*Test.xml' \
-            -o -name 'TEST-me.rerere.rikkahub.ui.components.codex.*Test.xml' \
-            -o -name 'TEST-me.rerere.rikkahub.service.Codex*Test.xml' \
-            -o -name 'TEST-me.rerere.rikkahub.di.CodexRepositoryModuleTest.xml' \
-            -o -name 'TEST-me.rerere.rikkahub.utils.CrashHandlerTest.xml' \) \
+          find . -path '*/build/test-results/testDebugUnitTest/TEST-*.xml' \
             -print -exec cat {} \; 2>/dev/null || true
 
-      - name: Upload app JUnit results
+      - name: Upload JUnit results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: codex-app-junit-results
-          path: app/build/test-results/testDebugUnitTest/*.xml
+          name: all-jvm-junit-results
+          path: "**/build/test-results/testDebugUnitTest/*.xml"
           if-no-files-found: warn
           retention-days: 7
-
-      - name: Print workspace interactive process JUnit failure details
-        if: failure()
-        shell: bash
-        run: |
-          find workspace/build/test-results/testDebugUnitTest -name '*Interactive*Test.xml' -print -exec cat {} \; 2>/dev/null || true

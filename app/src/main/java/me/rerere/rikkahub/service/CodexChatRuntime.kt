@@ -28,6 +28,7 @@ class CodexChatRuntime(
     val session: CodexAppServerConversationSession,
     private val scope: CoroutineScope,
     private val onAgentText: suspend (turnId: String, itemId: String, text: String) -> Unit,
+    val harnessTarget: CodexHarnessModelTarget? = null,
     private val onTurnTerminal: suspend (turnId: String) -> Unit = {},
     private val onFailure: (CodexChatRuntime, Throwable) -> Unit = { _, _ -> },
     private val onInterruptFailure: (Throwable) -> Unit = {},

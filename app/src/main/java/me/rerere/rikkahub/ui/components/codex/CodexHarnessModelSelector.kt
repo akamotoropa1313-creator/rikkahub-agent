@@ -2,6 +2,7 @@ package me.rerere.rikkahub.ui.components.codex
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -14,6 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -41,6 +43,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelPresentationReso
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessPickerCatalogBuilder
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessSelectionPolicy
+import me.rerere.rikkahub.data.codex.appserver.codexHarnessModelChangeRequiresSessionReset
 import me.rerere.rikkahub.data.codex.appserver.CodexModelCatalogKnowledge
 import me.rerere.rikkahub.data.codex.appserver.effectiveCodexHarnessModelTarget
 import me.rerere.rikkahub.data.model.Assistant
@@ -61,10 +64,13 @@ fun CodexHarnessModelSelector(
     providers: List<ProviderSetting>,
     onUpdateAssistant: ((Assistant) -> Assistant) -> Unit,
     modifier: Modifier = Modifier,
+    hasBoundSession: Boolean = false,
+    enabled: Boolean = true,
 ) {
     val accountModels by CodexModelCatalogKnowledge.modelsFlow.collectAsStateWithLifecycle()
     val target = assistant.effectiveCodexHarnessModelTarget()
     var visible by remember { mutableStateOf(false) }
+    var pendingSelection by remember { mutableStateOf<PendingCodexModelSelection?>(null) }
 
     val selectedLabel = CodexHarnessModelPresentationResolver.resolve(
         target = target,
@@ -75,30 +81,86 @@ fun CodexHarnessModelSelector(
     TextButton(
         onClick = { visible = true },
         modifier = modifier,
+        enabled = enabled,
     ) {
         Text(selectedLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 
-    if (!visible) return
+    fun applySelection(selection: PendingCodexModelSelection) {
+        onUpdateAssistant { latest ->
+            when (selection) {
+                PendingCodexModelSelection.AccountDefault ->
+                    CodexHarnessSelectionPolicy.selectChatGptServerDefault(latest)
+                is PendingCodexModelSelection.AccountModel ->
+                    applyCodexModelSelection(latest, selection.model)
+                is PendingCodexModelSelection.ProviderModel ->
+                    CodexHarnessSelectionPolicy.selectRikkaHubProviderModel(latest, selection.model.id)
+            }
+        }
+        pendingSelection = null
+        visible = false
+    }
 
-    CodexHarnessModelSheet(
-        target = target,
-        providers = providers,
-        accountModels = accountModels,
-        onDismiss = { visible = false },
-        onSelectAccountDefault = {
-            onUpdateAssistant { latest -> CodexHarnessSelectionPolicy.selectChatGptServerDefault(latest) }
+    fun requestSelection(selection: PendingCodexModelSelection) {
+        if (selection.target == target) {
             visible = false
-        },
-        onSelectAccountModel = { model ->
-            onUpdateAssistant { latest -> applyCodexModelSelection(latest, model) }
+        } else if (hasBoundSession && codexHarnessModelChangeRequiresSessionReset(target, selection.target)) {
             visible = false
-        },
-        onSelectProviderModel = { model ->
-            onUpdateAssistant { latest -> CodexHarnessSelectionPolicy.selectRikkaHubProviderModel(latest, model.id) }
-            visible = false
-        },
-    )
+            pendingSelection = selection
+        } else {
+            applySelection(selection)
+        }
+    }
+
+    if (visible) {
+        CodexHarnessModelSheet(
+            target = target,
+            providers = providers,
+            accountModels = accountModels,
+            onDismiss = { visible = false },
+            onSelectAccountDefault = {
+                requestSelection(PendingCodexModelSelection.AccountDefault)
+            },
+            onSelectAccountModel = { model ->
+                requestSelection(PendingCodexModelSelection.AccountModel(model))
+            },
+            onSelectProviderModel = { model ->
+                requestSelection(PendingCodexModelSelection.ProviderModel(model))
+            },
+        )
+    }
+
+    pendingSelection?.let { selection ->
+        AlertDialog(
+            onDismissRequest = { pendingSelection = null },
+            title = { Text("モデルを変更しますか？") },
+            text = {
+                Text("Codexの実行先を安全に切り替えるため、現在のCodexスレッドをリセットします。RikkaHubの会話履歴は残りますが、Codex側のスレッド継続性は失われます。")
+            },
+            confirmButton = {
+                TextButton(onClick = { applySelection(selection) }) { Text("変更してリセット") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingSelection = null }) { Text("キャンセル") }
+            },
+        )
+    }
+}
+
+private sealed interface PendingCodexModelSelection {
+    val target: CodexHarnessModelTarget
+
+    data object AccountDefault : PendingCodexModelSelection {
+        override val target = CodexHarnessModelTarget.ChatGptAccount(model = null)
+    }
+
+    data class AccountModel(val model: CodexAppServerModel) : PendingCodexModelSelection {
+        override val target = CodexHarnessModelTarget.ChatGptAccount(model.model)
+    }
+
+    data class ProviderModel(val model: Model) : PendingCodexModelSelection {
+        override val target = CodexHarnessModelTarget.RikkaHubProvider(model.id)
+    }
 }
 
 @Composable
@@ -115,8 +177,8 @@ private fun CodexHarnessModelSheet(
     val catalog = remember(providers, accountModels) {
         CodexHarnessPickerCatalogBuilder.build(providers, accountModels)
     }
-    val accountMatches = remember(accountModels, query) {
-        accountModels.filter { CodexHarnessPickerCatalogBuilder.matchesSearch(it, query) }
+    val accountMatches = remember(catalog.chatGptModels, query) {
+        catalog.chatGptModels.filter { CodexHarnessPickerCatalogBuilder.matchesSearch(it, query) }
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -167,7 +229,7 @@ private fun CodexHarnessModelSheet(
                         )
                     }
                 }
-                if (accountModels.isEmpty()) {
+                if (catalog.chatGptModels.isEmpty()) {
                     item(key = "chatgpt-empty") {
                         Text(
                             "個別のChatGPTモデルは、Codexで最初の接続が完了すると自動的に表示されます。それまでは「サーバー既定」または下のRikkaHubプロバイダーモデルを選択できます。",
@@ -182,6 +244,20 @@ private fun CodexHarnessModelSheet(
                             description = model.description,
                             selected = target is CodexHarnessModelTarget.ChatGptAccount && target.model == model.model,
                             onClick = { onSelectAccountModel(model) },
+                        )
+                    }
+                }
+
+                if (query.isNotBlank() && accountMatches.isEmpty() && catalog.providerGroups.none { group ->
+                        group.models.any { CodexHarnessPickerCatalogBuilder.matchesSearch(it, query) }
+                    }
+                ) {
+                    item(key = "no-search-results") {
+                        Text(
+                            "該当するモデルがありません",
+                            modifier = Modifier.padding(12.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
@@ -272,7 +348,10 @@ private fun ProviderModelRow(
             AutoAIIcon(name = model.modelId, modifier = Modifier.size(40.dp), color = Color.Transparent)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(model.displayName, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
                     ModelTypeTag(model)
                     ModelModalityTag(model)
                     ModelAbilityTag(model)
