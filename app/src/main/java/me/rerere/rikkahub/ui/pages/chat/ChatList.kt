@@ -146,6 +146,7 @@ fun ChatList(
     onJumpToMessage: (Int) -> Unit = {},
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String, scope: me.rerere.rikkahub.service.ChatService.ApprovalScope, toolName: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
+    onRerunTool: (suspend (toolCallId: String) -> me.rerere.rikkahub.service.ChatService.RerunToolResult)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
     onCodexCommandApproval: (JsonRpcId, CodexAppServerCommandApprovalDecision) -> Unit = { _, _ -> },
@@ -191,6 +192,7 @@ fun ChatList(
                 animatedVisibilityScope = this@AnimatedContent,
                 onToolApproval = onToolApproval,
                 onToolAnswer = onToolAnswer,
+                onRerunTool = onRerunTool,
                 onToggleFavorite = onToggleFavorite,
                 onConversationSystemPromptChange = onConversationSystemPromptChange,
                 onCodexCommandApproval = onCodexCommandApproval,
@@ -224,6 +226,7 @@ private fun ChatListNormal(
     animatedVisibilityScope: AnimatedVisibilityScope,
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String, scope: me.rerere.rikkahub.service.ChatService.ApprovalScope, toolName: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
+    onRerunTool: (suspend (toolCallId: String) -> me.rerere.rikkahub.service.ChatService.RerunToolResult)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
     onCodexCommandApproval: (JsonRpcId, CodexAppServerCommandApprovalDecision) -> Unit,
@@ -363,6 +366,11 @@ private fun ChatListNormal(
                             model = node.currentMessage.modelId?.let(modelById::get),
                             assistant = assistant,
                             loading = loading && node.id == lastMessageNodeId,
+                            // Un-narrowed: whether ANY generation is running in this
+                            // conversation, not just one targeting this message - the
+                            // rerun button in an older message's tool-call sheet must stay
+                            // hidden while a newer message is still streaming.
+                            generationActive = loading,
                             onRegenerate = {
                                 onRegenerate(node.currentMessage)
                             },
@@ -392,6 +400,7 @@ private fun ChatListNormal(
                             onClearTranslation = onClearTranslation,
                             onToolApproval = onToolApproval,
                             onToolAnswer = onToolAnswer,
+                            onRerunTool = onRerunTool,
                             lastMessage = node.id == lastMessageNodeId,
                         )
                     }

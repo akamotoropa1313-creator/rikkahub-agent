@@ -13,13 +13,13 @@ class WorkspaceFileSystemImportBytesTest {
     @get:Rule
     val tempFolder = TemporaryFolder()
 
-    private fun fileSystem(maxWriteBytes: Long) =
-        WorkspaceFileSystem(WorkspaceConfig(maxWriteBytes = maxWriteBytes))
+    private fun fileSystem(maxImportBytes: Long) =
+        WorkspaceFileSystem(WorkspaceConfig(maxImportBytes = maxImportBytes))
 
     @Test
-    fun `importBytes rejects a stream larger than the write cap`() {
+    fun `importBytes rejects a stream larger than the import cap`() {
         val root = tempFolder.newFolder("workspace")
-        val fs = fileSystem(maxWriteBytes = 10)
+        val fs = fileSystem(maxImportBytes = 10)
         val oversized = ByteArrayInputStream(ByteArray(11) { 'a'.code.toByte() })
 
         assertThrows(IllegalArgumentException::class.java) {
@@ -30,7 +30,7 @@ class WorkspaceFileSystemImportBytesTest {
     @Test
     fun `importBytes deletes the partial file after rejecting an oversized stream`() {
         val root = tempFolder.newFolder("workspace")
-        val fs = fileSystem(maxWriteBytes = 10)
+        val fs = fileSystem(maxImportBytes = 10)
         val oversized = ByteArrayInputStream(ByteArray(11) { 'a'.code.toByte() })
 
         assertThrows(IllegalArgumentException::class.java) {
@@ -41,9 +41,9 @@ class WorkspaceFileSystemImportBytesTest {
     }
 
     @Test
-    fun `importBytes accepts a stream within the write cap`() {
+    fun `importBytes accepts a stream within the import cap`() {
         val root = tempFolder.newFolder("workspace")
-        val fs = fileSystem(maxWriteBytes = 10)
+        val fs = fileSystem(maxImportBytes = 10)
         val withinCap = ByteArrayInputStream(ByteArray(10) { 'a'.code.toByte() })
 
         val entry = fs.importBytes(root, "upload.bin", withinCap)
@@ -52,9 +52,20 @@ class WorkspaceFileSystemImportBytesTest {
     }
 
     @Test
-    fun `per-call import cap can exceed global write cap without changing later defaults`() {
+    fun `importBytes cap is independent of the write cap`() {
         val root = tempFolder.newFolder("workspace")
-        val fs = fileSystem(maxWriteBytes = 4)
+        val fs = WorkspaceFileSystem(WorkspaceConfig(maxWriteBytes = 10, maxImportBytes = 100))
+        val largerThanWriteCap = ByteArrayInputStream(ByteArray(11) { 'a'.code.toByte() })
+
+        val entry = fs.importBytes(root, "upload.bin", largerThanWriteCap)
+
+        assertEquals(11L, entry.sizeBytes)
+    }
+
+    @Test
+    fun `per-call import cap can exceed default without changing later imports`() {
+        val root = tempFolder.newFolder("workspace")
+        val fs = fileSystem(maxImportBytes = 4)
 
         val staged = fs.importBytes(
             root,
@@ -73,7 +84,7 @@ class WorkspaceFileSystemImportBytesTest {
     @Test
     fun `streaming import cannot escape workspace root`() {
         val root = tempFolder.newFolder("workspace")
-        val fs = fileSystem(maxWriteBytes = 10)
+        val fs = fileSystem(maxImportBytes = 10)
 
         assertThrows(IllegalArgumentException::class.java) {
             fs.importBytes(root, "../../outside.bin", ByteArrayInputStream(byteArrayOf(1)), maxBytes = 10)
