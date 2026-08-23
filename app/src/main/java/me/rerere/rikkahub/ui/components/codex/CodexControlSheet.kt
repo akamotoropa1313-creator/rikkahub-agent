@@ -3,7 +3,6 @@ package me.rerere.rikkahub.ui.components.codex
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -443,13 +442,12 @@ fun CodexControlSheet(
                 capabilities.skillsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
-        capabilities.skillGroups.forEachIndexed { groupIndex, group ->
-            item(key = "skill-group:$groupIndex:${group.cwd}") {
+        capabilities.skillGroups.forEach { group ->
+            item {
                 Text(group.cwd, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             items(
                 items = group.skills.distinctBy { it.path },
-                key = { "skill:$groupIndex:${it.path}" },
             ) { skill ->
                 ListItem(
                     headlineContent = { Text(skill.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -465,10 +463,7 @@ fun CodexControlSheet(
                     },
                 )
             }
-            itemsIndexed(
-                items = group.errors,
-                key = { errorIndex, error -> "skill-error:$groupIndex:$errorIndex:${error.path}" },
-            ) { _, error ->
+            items(items = group.errors) { error ->
                 Text(error.message, color = MaterialTheme.colorScheme.error)
             }
         }
@@ -489,7 +484,6 @@ fun CodexControlSheet(
         }
         items(
             items = capabilities.mcpServers.distinctBy { it.name },
-            key = { "mcp:${it.name}" },
         ) { server ->
             ListItem(
                 headlineContent = { Text(server.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
