@@ -188,7 +188,12 @@ object PermissionInventory {
             )
         }
 
-        val protectionBase = info.protection
+        val protectionBase = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.protection
+        } else {
+            @Suppress("DEPRECATION")
+            info.protectionLevel and PermissionInfo.PROTECTION_MASK_BASE
+        }
         val isDangerous = protectionBase == PermissionInfo.PROTECTION_DANGEROUS
         val granted = ContextCompat.checkSelfPermission(context, perm) ==
             PackageManager.PERMISSION_GRANTED

@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.ai.tools.local
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.location.Location
 import android.location.LocationManager
@@ -42,6 +43,11 @@ private fun JsonObjectBuilder.putLocation(loc: Location, providerName: String) {
     put("timestamp_ms", loc.time)
 }
 
+// The execute block performs an explicit ACCESS_FINE_LOCATION check before entering the
+// location branch, and every provider call is still exception-safe in case the permission
+// is revoked between that check and the call. Lint cannot follow the Tool lambda plus our
+// PermissionHelper abstraction, so document the precondition here.
+@SuppressLint("MissingPermission")
 fun locationTool(context: Context): Tool = Tool(
     name = "get_location",
     description = """
