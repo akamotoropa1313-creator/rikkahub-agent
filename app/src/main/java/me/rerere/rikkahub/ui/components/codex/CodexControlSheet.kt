@@ -3,6 +3,7 @@ package me.rerere.rikkahub.ui.components.codex
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -442,11 +443,14 @@ fun CodexControlSheet(
                 capabilities.skillsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
-        capabilities.skillGroups.forEach { group ->
-            item {
+        capabilities.skillGroups.forEachIndexed { groupIndex, group ->
+            item(key = "skill-group:$groupIndex:${group.cwd}") {
                 Text(group.cwd, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            items(group.skills, key = { it.path }) { skill ->
+            items(
+                items = group.skills.distinctBy { it.path },
+                key = { "skill:$groupIndex:${it.path}" },
+            ) { skill ->
                 ListItem(
                     headlineContent = { Text(skill.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     supportingContent = { Text(skill.shortDescription ?: skill.description, maxLines = 2, overflow = TextOverflow.Ellipsis) },
@@ -461,7 +465,12 @@ fun CodexControlSheet(
                     },
                 )
             }
-            items(group.errors, key = { it.path }) { Text(it.message, color = MaterialTheme.colorScheme.error) }
+            itemsIndexed(
+                items = group.errors,
+                key = { errorIndex, error -> "skill-error:$groupIndex:$errorIndex:${error.path}" },
+            ) { _, error ->
+                Text(error.message, color = MaterialTheme.colorScheme.error)
+            }
         }
         item {
             Section("Codex MCP") {
@@ -478,7 +487,10 @@ fun CodexControlSheet(
                 capabilities.mcpError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
-        items(capabilities.mcpServers, key = { it.name }) { server ->
+        items(
+            items = capabilities.mcpServers.distinctBy { it.name },
+            key = { "mcp:${it.name}" },
+        ) { server ->
             ListItem(
                 headlineContent = { Text(server.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 supportingContent = { Text("${server.authStatus.wireValue} · ツール ${server.tools.size}件 · リソース ${server.resources.size}件") },
