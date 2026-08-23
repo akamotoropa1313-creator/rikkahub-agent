@@ -55,4 +55,12 @@ interface CodexAppServerSessionBindingDao {
 
     @Query("DELETE FROM codex_app_server_session_bindings WHERE conversation_id = :conversationId")
     suspend fun deleteByConversationId(conversationId: String): Int
+
+    /** Deletes only while the caller still owns the exact binding it inspected. */
+    @Transaction
+    suspend fun deleteIfOwned(conversationId: String, expectedThreadId: String): Int {
+        val binding = getByConversationId(conversationId) ?: return 0
+        if (binding.threadId != expectedThreadId) return 0
+        return deleteByConversationId(conversationId)
+    }
 }

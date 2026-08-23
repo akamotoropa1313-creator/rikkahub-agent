@@ -947,11 +947,11 @@ class ChatService(
                     ),
                 )) {
                     is CodexAppServerConversationSessionOpenResult.Recovered -> installCodexRuntime(conversationId, owner, opened.session)
+                    is CodexAppServerConversationSessionOpenResult.Started -> installCodexRuntime(conversationId, owner, opened.session)
                     is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
                         owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason.toString()))
                         error("The existing Codex binding is stale")
                     }
-                    is CodexAppServerConversationSessionOpenResult.Started -> error("Recovery-only reconnect unexpectedly started a thread")
                 }
             }
         } catch (failure: Throwable) {

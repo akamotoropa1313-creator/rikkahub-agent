@@ -134,6 +134,51 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun prootRunnerPassesManagedEnvironmentIntoSanitizedRootfs() {
+        val baseDir = Files.createTempDirectory("workspace-proot-environment-test").toFile()
+        val runner = ProotShellRunner(
+            nativeLibraryDir = File(baseDir, "native"),
+            environmentProvider = {
+                mapOf(
+                    "SSL_CERT_FILE" to "/rikkahub_runtime/android-ca.pem",
+                    "CODEX_CA_CERTIFICATE" to "/rikkahub_runtime/android-ca.pem",
+                )
+            },
+        )
+        val context = WorkspaceShellContext(
+            root = "test-workspace",
+            command = "env",
+            cwd = "",
+            filesDir = File(baseDir, "files"),
+            linuxDir = File(baseDir, "linux"),
+            tempDir = File(baseDir, "tmp"),
+            workingDir = File(baseDir, "files"),
+            timeoutMillis = 1_000,
+        )
+
+        val command = runner.buildCommand(context, File(baseDir, "native/libproot_exec.so"))
+        val envStart = command.indexOf("/usr/bin/env")
+        val shellStart = command.indexOf("/bin/bash")
+
+        assertTrue(envStart >= 0)
+        assertTrue(shellStart > envStart)
+        assertEquals(
+            listOf(
+                "/usr/bin/env",
+                "-i",
+                "HOME=/root",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "TERM=xterm-256color",
+                "LANG=C.UTF-8",
+                "LC_ALL=C.UTF-8",
+                "CODEX_CA_CERTIFICATE=/rikkahub_runtime/android-ca.pem",
+                "SSL_CERT_FILE=/rikkahub_runtime/android-ca.pem",
+            ),
+            command.subList(envStart, shellStart),
+        )
+    }
+
+    @Test
     fun commandOutputIsTruncatedAtLimit() {
         val baseDir = Files.createTempDirectory("workspace-truncate-test").toFile()
         val manager = WorkspaceManager(baseDir)

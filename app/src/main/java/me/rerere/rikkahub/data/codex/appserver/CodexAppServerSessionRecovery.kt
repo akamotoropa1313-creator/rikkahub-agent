@@ -5,6 +5,7 @@ import me.rerere.rikkahub.data.db.entity.CodexAppServerSessionBindingEntity
 sealed interface CodexAppServerStaleBindingReason {
     data object MissingConversation : CodexAppServerStaleBindingReason
     data object MissingWorkspace : CodexAppServerStaleBindingReason
+    data object ThreadNotLoaded : CodexAppServerStaleBindingReason
     data class HarnessRouteChanged(
         val existingModelProvider: String?,
         val expectedModelProvider: String?,
@@ -97,8 +98,19 @@ class CodexAppServerSessionRecovery(
             )
             ownershipTransferred = true
             return CodexAppServerSessionRecoveryResult.Recovered(session)
+        } catch (failure: CodexAppServerResponseException) {
+            if (failure.isThreadNotLoaded(binding.threadId)) {
+                return CodexAppServerSessionRecoveryResult.StaleBinding(
+                    binding,
+                    CodexAppServerStaleBindingReason.ThreadNotLoaded,
+                )
+            }
+            throw failure
         } finally {
             if (!ownershipTransferred) { usageTracker?.close(); connection.close() }
         }
     }
 }
+
+private fun CodexAppServerResponseException.isThreadNotLoaded(threadId: String): Boolean =
+    error.code == -32600L && error.message == "thread not loaded: $threadId"

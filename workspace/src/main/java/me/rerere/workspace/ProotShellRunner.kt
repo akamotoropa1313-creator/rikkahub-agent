@@ -15,6 +15,7 @@ class ProotShellRunner(
     private val nativeLibraryDir: File,
     private val patcher: RootfsPatcher = RootfsPatcher(),
     private val nameserversProvider: () -> List<String> = { emptyList() },
+    private val environmentProvider: () -> Map<String, String> = { emptyMap() },
 ) : WorkspaceShellRunner {
     override fun execute(context: WorkspaceShellContext): WorkspaceCommandResult {
         if (!context.linuxDir.hasUsableRootfs()) {
@@ -91,7 +92,7 @@ class ProotShellRunner(
                 environment()["TMPDIR"] = context.tempDir.absolutePath
             }
 
-    private fun buildCommand(
+    internal fun buildCommand(
         context: WorkspaceShellContext,
         proot: File,
     ): List<String> {
@@ -123,6 +124,12 @@ class ProotShellRunner(
             }
         }
 
+        val additionalEnvironment = environmentProvider().toSortedMap().map { (name, value) ->
+            require(ENVIRONMENT_NAME.matches(name)) { "Invalid workspace environment name: $name" }
+            require('\u0000' !in value) { "Workspace environment value contains NUL: $name" }
+            "$name=$value"
+        }
+
         command += listOf(
             "/usr/bin/env",
             "-i",
@@ -131,6 +138,9 @@ class ProotShellRunner(
             "TERM=xterm-256color",
             "LANG=C.UTF-8",
             "LC_ALL=C.UTF-8",
+        )
+        command += additionalEnvironment
+        command += listOf(
             "/bin/bash",
             "-l",
             "-c",
@@ -149,6 +159,7 @@ class ProotShellRunner(
     private companion object {
         private const val PROOT_EXEC = "libproot_exec.so"
         private const val PROOT_LOADER = "libproot_loader.so"
+        private val ENVIRONMENT_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
         private val WORKSPACE_DIR = WorkspaceManager.ROOTFS_WORKSPACE_DIR
     }
 }

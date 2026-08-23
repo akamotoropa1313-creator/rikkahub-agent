@@ -8,6 +8,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerLocalState
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionRecovery
+import me.rerere.rikkahub.data.codex.appserver.AndroidTrustStoreCaBundle
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessConversationProjectionResolver
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessGatewaySessionRegistry
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessProviderSettingsSource
@@ -40,6 +41,12 @@ import org.koin.dsl.module
 import java.io.File
 
 val repositoryModule = module {
+    single {
+        val context: Context = get()
+        AndroidTrustStoreCaBundle(
+            File(context.filesDir, "${CodexRuntimeManager.RUNTIME_HOST_DIR_NAME}/android-ca-certificates.pem"),
+        )
+    }
     single<CodexAppServerLocalState> { RoomCodexAppServerLocalState(get(), get()) }
     single { CodexAppServerSessionBindingRepository(get(), get()) }
     single {
@@ -80,6 +87,7 @@ val repositoryModule = module {
 
     single {
         val context: Context = get()
+        val caBundle: AndroidTrustStoreCaBundle = get()
         WorkspaceManager(
             baseDir = File(context.filesDir, "workspaces"),
             shellRunner = ProotShellRunner(
@@ -92,6 +100,13 @@ val repositoryModule = module {
                         ?.mapNotNull { it.hostAddress }
                         ?.filter { it.isNotBlank() }
                         .orEmpty()
+                },
+                environmentProvider = {
+                    caBundle.ensureReady()
+                    mapOf(
+                        "CODEX_CA_CERTIFICATE" to "$CA_BUNDLE_ROOTFS_PATH",
+                        "SSL_CERT_FILE" to "$CA_BUNDLE_ROOTFS_PATH",
+                    )
                 },
             ),
             bindMounts = listOf(
@@ -120,3 +135,6 @@ val repositoryModule = module {
     single { FilesManager(get(), get(), get()) }
     single { SkillManager(get(), get()) }
 }
+
+private const val CA_BUNDLE_ROOTFS_PATH =
+    "${CodexRuntimeManager.RUNTIME_BIND_ROOT}/android-ca-certificates.pem"

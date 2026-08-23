@@ -195,7 +195,7 @@ class CodexAppServerConversationSessionOpener(
     private val harnessProjectionResolver: CodexHarnessConversationProjectionResolver? = null,
     private val autoRefreshModelCatalog: Boolean = false,
 ) {
-    /** Recovery-only entry point: never creates a thread or binding. */
+    /** Recovery entry point. Replaces only a server-missing binding that has never observed a turn. */
     suspend fun recoverBound(
         conversationId: String,
         overrides: CodexAppServerThreadResumeParams = CodexAppServerThreadResumeParams(),
@@ -210,8 +210,16 @@ class CodexAppServerConversationSessionOpener(
             CodexAppServerSessionRecoveryResult.NotBound -> error("Binding disappeared while reconnecting")
             is CodexAppServerSessionRecoveryResult.Recovered ->
                 CodexAppServerConversationSessionOpenResult.Recovered(recovered.session)
-            is CodexAppServerSessionRecoveryResult.StaleBinding ->
+            is CodexAppServerSessionRecoveryResult.StaleBinding -> {
+                if (recovered.canSafelyReplaceUnmaterializedThread()) {
+                    return replaceUnmaterializedThread(
+                        recovered.binding,
+                        effectiveOverrides.toStartParams(),
+                        projection,
+                    )
+                }
                 CodexAppServerConversationSessionOpenResult.StaleBinding(recovered.binding, recovered.reason)
+            }
         }
         if (result is CodexAppServerConversationSessionOpenResult.Recovered) {
             installHarnessCleanup(result.session, conversationId, projection)
@@ -251,8 +259,16 @@ class CodexAppServerConversationSessionOpener(
                 CodexAppServerSessionRecoveryResult.NotBound -> error("Binding disappeared while opening session")
                 is CodexAppServerSessionRecoveryResult.Recovered ->
                     CodexAppServerConversationSessionOpenResult.Recovered(recovered.session)
-                is CodexAppServerSessionRecoveryResult.StaleBinding ->
+                is CodexAppServerSessionRecoveryResult.StaleBinding -> {
+                    if (recovered.canSafelyReplaceUnmaterializedThread()) {
+                        return replaceUnmaterializedThread(
+                            recovered.binding,
+                            effectiveOverrides,
+                            projection,
+                        )
+                    }
                     CodexAppServerConversationSessionOpenResult.StaleBinding(recovered.binding, recovered.reason)
+                }
             }
             if (result is CodexAppServerConversationSessionOpenResult.Recovered) {
                 installHarnessCleanup(result.session, conversationId, projection)
@@ -262,6 +278,42 @@ class CodexAppServerConversationSessionOpener(
             return result
         }
 
+        return startNewThread(
+            conversationId,
+            workspaceId,
+            workspaceCwd,
+            effectiveOverrides,
+            projection,
+        )
+    }
+
+    private suspend fun replaceUnmaterializedThread(
+        binding: CodexAppServerSessionBindingEntity,
+        overrides: CodexAppServerThreadStartParams,
+        projection: CodexHarnessThreadProjection?,
+    ): CodexAppServerConversationSessionOpenResult {
+        if (!repository.clearBindingIfOwned(binding.conversationId, binding.threadId)) {
+            if (projection?.isGatewayBacked == true) {
+                harnessProjectionResolver?.release(binding.conversationId)
+            }
+            error("Binding changed while replacing an unmaterialized Codex thread")
+        }
+        return startNewThread(
+            binding.conversationId,
+            binding.workspaceId,
+            binding.workspaceCwd,
+            overrides,
+            projection,
+        )
+    }
+
+    private suspend fun startNewThread(
+        conversationId: String,
+        workspaceId: String,
+        workspaceCwd: String,
+        overrides: CodexAppServerThreadStartParams,
+        projection: CodexHarnessThreadProjection?,
+    ): CodexAppServerConversationSessionOpenResult {
         check(localState.conversationExists(conversationId)) { "Conversation $conversationId does not exist" }
         val workspace = checkNotNull(localState.getWorkspace(workspaceId)) { "Workspace $workspaceId does not exist" }
         // Validate before launching a process. The repository remains the canonical validator.
@@ -274,7 +326,7 @@ class CodexAppServerConversationSessionOpener(
         try {
             connection.initialize()
             val started = CodexAppServerThreadApi(connection).startThread(
-                effectiveOverrides.copy(ephemeral = false),
+                overrides.copy(ephemeral = false),
             )
             val binding = repository.createPersistentThreadBinding(
                 conversationId, workspaceId, workspaceCwd, started.thread,
@@ -306,6 +358,22 @@ class CodexAppServerConversationSessionOpener(
         session.installCloseHook { harnessProjectionResolver?.release(conversationId) }
     }
 }
+
+private fun CodexAppServerSessionRecoveryResult.StaleBinding.canSafelyReplaceUnmaterializedThread(): Boolean =
+    reason == CodexAppServerStaleBindingReason.ThreadNotLoaded && binding.lastObservedTurnId == null
+
+private fun CodexAppServerThreadResumeParams.toStartParams(): CodexAppServerThreadStartParams =
+    CodexAppServerThreadStartParams(
+        model = model,
+        modelProvider = modelProvider,
+        cwd = cwd,
+        config = config,
+        baseInstructions = baseInstructions,
+        developerInstructions = developerInstructions,
+        personality = personality,
+        sandbox = sandbox,
+        approvalPolicy = approvalPolicy,
+    )
 
 private fun CodexAppServerThreadStartParams.withHarnessProjection(
     projection: CodexHarnessThreadProjection?,
