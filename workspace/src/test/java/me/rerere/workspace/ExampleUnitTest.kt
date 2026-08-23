@@ -9,7 +9,7 @@ import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.util.zip.GZIPOutputStream
 
-class WorkspaceCoreTest {
+class ExampleUnitTest {
     @Test
     fun fileOperationsWorkInsideWorkspaceRoot() {
         val root = Files.createTempDirectory("workspace-test").toFile()
