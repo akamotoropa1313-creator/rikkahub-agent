@@ -79,6 +79,28 @@ fun CodexControlSheet(
     ) {
         item { Text("Codex コントロールセンター", style = MaterialTheme.typography.headlineSmall) }
         item {
+            Section("接続") {
+                Text(connectionLabel(connection, hasBinding))
+                if (codexReconnectEligible(connection, hasBinding, capabilities.connected, operationBusy)) {
+                    Button(onClick = onReconnect) { Text("Codexに再接続") }
+                }
+            }
+        }
+        item {
+            CodexAccountCard(
+                snapshot = capabilities.account,
+                loginPending = capabilities.pendingLoginId != null,
+                onSignIn = onSignIn,
+                onCancelSignIn = onCancelSignIn,
+                onRefresh = onRefreshAccount,
+                onLogout = onLogout,
+                enabled = capabilities.connected && !capabilities.accountLoading && !operationBusy,
+                submitting = capabilities.accountSubmitting,
+                statusMessage = capabilities.accountError ?: capabilities.accountStatus,
+                statusIsError = capabilities.accountError != null,
+            )
+        }
+        item {
             Section("スレッド履歴") {
                 val history = capabilities.threadHistory
                 if (history.selectedThreadId != null) {
@@ -408,29 +430,6 @@ fun CodexControlSheet(
                         }
                     }
                 }
-            }
-        }
-        item {
-            Section("接続") {
-                Text(connectionLabel(connection, hasBinding))
-                if (codexReconnectEligible(connection, hasBinding, capabilities.connected, operationBusy)) {
-                    Button(onClick = onReconnect) { Text("Codexに再接続") }
-                }
-            }
-        }
-        item {
-            Section("アカウント") {
-                CodexAccountCard(
-                    snapshot = capabilities.account,
-                    loginPending = capabilities.pendingLoginId != null,
-                    onSignIn = onSignIn,
-                    onCancelSignIn = onCancelSignIn,
-                    onRefresh = onRefreshAccount,
-                    onLogout = onLogout,
-                    enabled = capabilities.connected && !capabilities.accountLoading && !operationBusy,
-                    submitting = capabilities.accountSubmitting,
-                    statusMessage = capabilities.accountError ?: capabilities.accountStatus,
-                )
             }
         }
         item {

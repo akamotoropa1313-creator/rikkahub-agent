@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -54,13 +56,28 @@ fun CodexAccountCard(
     enabled: Boolean = true,
     submitting: Boolean = false,
     statusMessage: String? = null,
+    statusIsError: Boolean = false,
 ) {
     val presentation = codexAccountPresentation(snapshot, loginPending, enabled, submitting)
-    Card(modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Codexアカウント")
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Codexアカウント", style = MaterialTheme.typography.titleMedium)
             presentation.lines.forEach { Text(it) }
-            statusMessage?.let { Text(it) }
+            statusMessage?.let {
+                Text(
+                    it,
+                    color = if (statusIsError) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
