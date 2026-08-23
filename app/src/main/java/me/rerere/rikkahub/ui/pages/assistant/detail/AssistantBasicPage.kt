@@ -12,7 +12,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
@@ -41,6 +40,7 @@ import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.ui.components.ai.ModelSelector
 import me.rerere.rikkahub.ui.components.ai.ReasoningButton
+import me.rerere.rikkahub.ui.components.codex.CodexHarnessModelSelector
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.FormItem
 import me.rerere.rikkahub.ui.components.ui.Select
@@ -146,8 +146,7 @@ internal fun AssistantBasicContent(
                     Text(stringResource(R.string.assistant_page_name))
                 },
                 modifier = Modifier.padding(8.dp),
-
-                ) {
+            ) {
                 OutlinedTextField(
                     value = assistant.name,
                     onValueChange = {
@@ -185,7 +184,11 @@ internal fun AssistantBasicContent(
                     Text(stringResource(R.string.assistant_page_workspace))
                 },
                 description = {
-                    Text(stringResource(R.string.assistant_page_workspace_desc))
+                    if (assistant.codexAppServerEnabled) {
+                        Text("Codex App ServerではWorkspaceが実行環境になります。Codexを使うアシスタントにはWorkspaceを選択してください。")
+                    } else {
+                        Text(stringResource(R.string.assistant_page_workspace_desc))
+                    }
                 },
                 modifier = Modifier.padding(8.dp),
             ) {
@@ -205,6 +208,13 @@ internal fun AssistantBasicContent(
                         workspace?.name ?: stringResource(R.string.workspace_no_binding)
                     },
                 )
+                if (assistant.codexAppServerEnabled && selectedWorkspace == null) {
+                    Text(
+                        "Codexを実行する前にWorkspaceを選択してください。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
 
             HorizontalDivider()
@@ -244,259 +254,279 @@ internal fun AssistantBasicContent(
                     Text(stringResource(R.string.assistant_page_chat_model_desc))
                 },
                 content = {
-                    ModelSelector(
-                        modelId = assistant.chatModelId,
-                        providers = providers,
-                        type = ModelType.CHAT,
-                        onSelect = {
-                            onUpdate(
-                                assistant.copy(
-                                    chatModelId = it.id
+                    if (assistant.codexAppServerEnabled) {
+                        CodexHarnessModelSelector(
+                            assistant = assistant,
+                            providers = providers,
+                            onUpdateAssistant = vm::updateAssistant,
+                        )
+                    } else {
+                        ModelSelector(
+                            modelId = assistant.chatModelId,
+                            providers = providers,
+                            type = ModelType.CHAT,
+                            onSelect = {
+                                onUpdate(
+                                    assistant.copy(
+                                        chatModelId = it.id
+                                    )
                                 )
-                            )
-                        },
-                    )
+                            },
+                        )
+                    }
                 }
             )
-            HorizontalDivider()
-            FormItem(
-                modifier = Modifier.padding(8.dp),
-                label = {
-                    Text(stringResource(R.string.assistant_page_temperature))
-                },
-                description = {
-                    Text(
-                        text = buildAnnotatedString {
-                            append(stringResource(R.string.assistant_page_temperature_warning))
-                        }
-                    )
-                },
-                tail = {
-                    Switch(
-                        checked = assistant.temperature != null,
-                        onCheckedChange = { enabled ->
-                            onUpdate(
-                                assistant.copy(
-                                    temperature = if (enabled) 1.0f else null
-                                )
-                            )
-                        }
-                    )
-                }
-            ) {
-                if (assistant.temperature != null) {
-                    var temperatureInput by remember(assistant.id) {
-                        mutableStateOf(assistant.temperature.toString())
-                    }
-                    val temperatureValue = temperatureInput.toFloatOrNull()
-                    OutlinedTextField(
-                        value = temperatureInput,
-                        onValueChange = { value ->
-                            temperatureInput = value
-                            value.toFloatOrNull()?.takeIf { it in 0f..2f }?.let { temperature ->
-                                onUpdate(
-                                    assistant.copy(
-                                        temperature = temperature
-                                    )
-                                )
+
+            if (assistant.codexAppServerEnabled) {
+                HorizontalDivider()
+                FormItem(
+                    modifier = Modifier.padding(8.dp),
+                    label = { Text("Codex実行設定") },
+                    description = {
+                        Text("温度、Top P、通常チャットの履歴件数、ストリーム出力、Fast Path、通常の推論予算、最大出力トークンはCodex App Serverの実行経路では使用しません。Codex固有の推論・サービスティア・サンドボックス・承認設定はCodexコントロールセンターで管理します。")
+                    },
+                )
+            } else {
+                HorizontalDivider()
+                FormItem(
+                    modifier = Modifier.padding(8.dp),
+                    label = {
+                        Text(stringResource(R.string.assistant_page_temperature))
+                    },
+                    description = {
+                        Text(
+                            text = buildAnnotatedString {
+                                append(stringResource(R.string.assistant_page_temperature_warning))
                             }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        isError = temperatureValue == null || temperatureValue !in 0f..2f,
-                        supportingText = {
-                            Text("0 - 2")
-                        }
-                    )
-                }
-            }
-            HorizontalDivider()
-            FormItem(
-                modifier = Modifier.padding(8.dp),
-                label = {
-                    Text(stringResource(R.string.assistant_page_top_p))
-                },
-                description = {
-                    Text(
-                        text = buildAnnotatedString {
-                            append(stringResource(R.string.assistant_page_top_p_warning))
-                        }
-                    )
-                },
-                tail = {
-                    Switch(
-                        checked = assistant.topP != null,
-                        onCheckedChange = { enabled ->
-                            onUpdate(
-                                assistant.copy(
-                                    topP = if (enabled) 1.0f else null
-                                )
-                            )
-                        }
-                    )
-                }
-            ) {
-                assistant.topP?.let { topP ->
-                    var topPInput by remember(assistant.id) {
-                        mutableStateOf(topP.toString())
-                    }
-                    val topPValue = topPInput.toFloatOrNull()
-                    OutlinedTextField(
-                        value = topPInput,
-                        onValueChange = { value ->
-                            topPInput = value
-                            value.toFloatOrNull()?.takeIf { it in 0f..1f }?.let { nextTopP ->
-                                onUpdate(
-                                    assistant.copy(
-                                        topP = nextTopP
-                                    )
-                                )
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        isError = topPValue == null || topPValue !in 0f..1f,
-                        supportingText = {
-                            Text("0 - 1")
-                        }
-                    )
-                }
-            }
-            HorizontalDivider()
-            FormItem(
-                modifier = Modifier.padding(8.dp),
-                label = {
-                    Text(stringResource(R.string.assistant_page_context_message_limit))
-                },
-                description = {
-                    Text(
-                        text = stringResource(R.string.assistant_page_context_message_limit_desc),
-                    )
-                }
-            ) {
-                Slider(
-                    value = assistant.contextMessageLimit.toFloat(),
-                    onValueChange = { value ->
-                        onUpdate(
-                            assistant.copy(
-                                contextMessageLimit = snapContextMessageLimit(value)
-                            )
                         )
                     },
-                    valueRange = 0f..512f,
-                    steps = 0,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                    tail = {
+                        Switch(
+                            checked = assistant.temperature != null,
+                            onCheckedChange = { enabled ->
+                                onUpdate(
+                                    assistant.copy(
+                                        temperature = if (enabled) 1.0f else null
+                                    )
+                                )
+                            }
+                        )
+                    }
+                ) {
+                    if (assistant.temperature != null) {
+                        var temperatureInput by remember(assistant.id) {
+                            mutableStateOf(assistant.temperature.toString())
+                        }
+                        val temperatureValue = temperatureInput.toFloatOrNull()
+                        OutlinedTextField(
+                            value = temperatureInput,
+                            onValueChange = { value ->
+                                temperatureInput = value
+                                value.toFloatOrNull()?.takeIf { it in 0f..2f }?.let { temperature ->
+                                    onUpdate(
+                                        assistant.copy(
+                                            temperature = temperature
+                                        )
+                                    )
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            isError = temperatureValue == null || temperatureValue !in 0f..2f,
+                            supportingText = {
+                                Text("0 - 2")
+                            }
+                        )
+                    }
+                }
+                HorizontalDivider()
+                FormItem(
+                    modifier = Modifier.padding(8.dp),
+                    label = {
+                        Text(stringResource(R.string.assistant_page_top_p))
+                    },
+                    description = {
+                        Text(
+                            text = buildAnnotatedString {
+                                append(stringResource(R.string.assistant_page_top_p_warning))
+                            }
+                        )
+                    },
+                    tail = {
+                        Switch(
+                            checked = assistant.topP != null,
+                            onCheckedChange = { enabled ->
+                                onUpdate(
+                                    assistant.copy(
+                                        topP = if (enabled) 1.0f else null
+                                    )
+                                )
+                            }
+                        )
+                    }
+                ) {
+                    assistant.topP?.let { topP ->
+                        var topPInput by remember(assistant.id) {
+                            mutableStateOf(topP.toString())
+                        }
+                        val topPValue = topPInput.toFloatOrNull()
+                        OutlinedTextField(
+                            value = topPInput,
+                            onValueChange = { value ->
+                                topPInput = value
+                                value.toFloatOrNull()?.takeIf { it in 0f..1f }?.let { nextTopP ->
+                                    onUpdate(
+                                        assistant.copy(
+                                            topP = nextTopP
+                                        )
+                                    )
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            isError = topPValue == null || topPValue !in 0f..1f,
+                            supportingText = {
+                                Text("0 - 1")
+                            }
+                        )
+                    }
+                }
+                HorizontalDivider()
+                FormItem(
+                    modifier = Modifier.padding(8.dp),
+                    label = {
+                        Text(stringResource(R.string.assistant_page_context_message_limit))
+                    },
+                    description = {
+                        Text(
+                            text = stringResource(R.string.assistant_page_context_message_limit_desc),
+                        )
+                    }
+                ) {
+                    Slider(
+                        value = assistant.contextMessageLimit.toFloat(),
+                        onValueChange = { value ->
+                            onUpdate(
+                                assistant.copy(
+                                    contextMessageLimit = snapContextMessageLimit(value)
+                                )
+                            )
+                        },
+                        valueRange = 0f..512f,
+                        steps = 0,
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
-                Text(
-                    text = if (assistant.contextMessageLimit > 0) stringResource(
-                        R.string.assistant_page_context_message_limit_count,
-                        assistant.contextMessageLimit
-                    ) else stringResource(R.string.assistant_page_context_message_limit_unlimited),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.75f),
-                )
-
-                if (assistant.contextMessageLimit > 0) {
                     Text(
-                        text = stringResource(R.string.assistant_page_context_message_limit_warning),
+                        text = if (assistant.contextMessageLimit > 0) stringResource(
+                            R.string.assistant_page_context_message_limit_count,
+                            assistant.contextMessageLimit
+                        ) else stringResource(R.string.assistant_page_context_message_limit_unlimited),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
+                        color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.75f),
+                    )
+
+                    if (assistant.contextMessageLimit > 0) {
+                        Text(
+                            text = stringResource(R.string.assistant_page_context_message_limit_warning),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+                HorizontalDivider()
+                FormItem(
+                    modifier = Modifier.padding(8.dp),
+                    label = {
+                        Text(stringResource(R.string.assistant_page_stream_output))
+                    },
+                    description = {
+                        Text(stringResource(R.string.assistant_page_stream_output_desc))
+                    },
+                    tail = {
+                        Switch(
+                            checked = assistant.streamOutput,
+                            onCheckedChange = {
+                                onUpdate(
+                                    assistant.copy(
+                                        streamOutput = it
+                                    )
+                                )
+                            }
+                        )
+                    }
+                )
+                HorizontalDivider()
+                FormItem(
+                    modifier = Modifier.padding(8.dp),
+                    label = {
+                        Text(stringResource(R.string.assistant_page_fast_path_router))
+                    },
+                    description = {
+                        Text(stringResource(R.string.assistant_page_fast_path_router_desc))
+                    },
+                    tail = {
+                        Switch(
+                            checked = assistant.fastPathRouterEnabled,
+                            onCheckedChange = {
+                                onUpdate(assistant.copy(fastPathRouterEnabled = it))
+                            }
+                        )
+                    }
+                )
+                HorizontalDivider()
+                FormItem(
+                    modifier = Modifier.padding(8.dp),
+                    label = {
+                        Text(stringResource(R.string.assistant_page_thinking_budget))
+                    },
+                ) {
+                    ReasoningButton(
+                        reasoningLevel = assistant.reasoningLevel,
+                        onUpdateReasoningLevel = { level ->
+                            onUpdate(assistant.copy(reasoningLevel = level))
+                        }
                     )
                 }
-            }
-            HorizontalDivider()
-            FormItem(
-                modifier = Modifier.padding(8.dp),
-                label = {
-                    Text(stringResource(R.string.assistant_page_stream_output))
-                },
-                description = {
-                    Text(stringResource(R.string.assistant_page_stream_output_desc))
-                },
-                tail = {
-                    Switch(
-                        checked = assistant.streamOutput,
-                        onCheckedChange = {
+                HorizontalDivider()
+                FormItem(
+                    modifier = Modifier.padding(8.dp),
+                    label = {
+                        Text(stringResource(R.string.assistant_page_max_tokens))
+                    },
+                    description = {
+                        Text(stringResource(R.string.assistant_page_max_tokens_desc))
+                    }
+                ) {
+                    OutlinedTextField(
+                        value = assistant.maxTokens?.toString() ?: "",
+                        onValueChange = { text ->
+                            val tokens = if (text.isBlank()) {
+                                null
+                            } else {
+                                text.toIntOrNull()?.takeIf { it > 0 }
+                            }
                             onUpdate(
                                 assistant.copy(
-                                    streamOutput = it
+                                    maxTokens = tokens
                                 )
                             )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = {
+                            Text(stringResource(R.string.assistant_page_max_tokens_no_limit))
+                        },
+                        supportingText = {
+                            if (assistant.maxTokens != null) {
+                                Text(stringResource(R.string.assistant_page_max_tokens_limit, assistant.maxTokens))
+                            } else {
+                                Text(stringResource(R.string.assistant_page_max_tokens_no_token_limit))
+                            }
                         }
                     )
                 }
-            )
-            HorizontalDivider()
-            FormItem(
-                modifier = Modifier.padding(8.dp),
-                label = {
-                    Text(stringResource(R.string.assistant_page_fast_path_router))
-                },
-                description = {
-                    Text(stringResource(R.string.assistant_page_fast_path_router_desc))
-                },
-                tail = {
-                    Switch(
-                        checked = assistant.fastPathRouterEnabled,
-                        onCheckedChange = {
-                            onUpdate(assistant.copy(fastPathRouterEnabled = it))
-                        }
-                    )
-                }
-            )
-            HorizontalDivider()
-            FormItem(
-                modifier = Modifier.padding(8.dp),
-                label = {
-                    Text(stringResource(R.string.assistant_page_thinking_budget))
-                },
-            ) {
-                ReasoningButton(
-                    reasoningLevel = assistant.reasoningLevel,
-                    onUpdateReasoningLevel = { level ->
-                        onUpdate(assistant.copy(reasoningLevel = level))
-                    }
-                )
-            }
-            HorizontalDivider()
-            FormItem(
-                modifier = Modifier.padding(8.dp),
-                label = {
-                    Text(stringResource(R.string.assistant_page_max_tokens))
-                },
-                description = {
-                    Text(stringResource(R.string.assistant_page_max_tokens_desc))
-                }
-            ) {
-                OutlinedTextField(
-                    value = assistant.maxTokens?.toString() ?: "",
-                    onValueChange = { text ->
-                        val tokens = if (text.isBlank()) {
-                            null
-                        } else {
-                            text.toIntOrNull()?.takeIf { it > 0 }
-                        }
-                        onUpdate(
-                            assistant.copy(
-                                maxTokens = tokens
-                            )
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = {
-                        Text(stringResource(R.string.assistant_page_max_tokens_no_limit))
-                    },
-                    supportingText = {
-                        if (assistant.maxTokens != null) {
-                            Text(stringResource(R.string.assistant_page_max_tokens_limit, assistant.maxTokens))
-                        } else {
-                            Text(stringResource(R.string.assistant_page_max_tokens_no_token_limit))
-                        }
-                    }
-                )
             }
         }
 
@@ -582,7 +612,7 @@ internal fun AssistantBasicContent(
 }
 
 /**
- * 上下文限制的最小有效值
+ * 上下文限制の最小有效值
  *
  * 低于此值时截断点几乎每轮都在移动, 提示词缓存命中率跌破 90%,
  * 且保留的上下文通常达不到可缓存的最小长度, 限制本身失去意义

@@ -1,6 +1,10 @@
 package me.rerere.rikkahub.ui.components.codex
 
+import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerModel
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelPresentationResolver
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelTarget
+import me.rerere.rikkahub.data.codex.appserver.effectiveCodexHarnessModelTarget
 import me.rerere.rikkahub.data.codex.appserver.serviceTierIds
 import me.rerere.rikkahub.data.model.Assistant
 
@@ -59,11 +63,17 @@ internal fun effortForCodexModelSelection(
     return savedEffort?.takeIf(advertised::contains) ?: model.defaultReasoningEffort
 }
 
+/**
+ * Compatibility writer used by the old Codex-only model list while the shared RikkaHub picker is
+ * being adopted. Persist both fields so older builds can still read codexModel and the new harness
+ * router gets an unambiguous ChatGPT-account target.
+ */
 internal fun applyCodexModelSelection(
     assistant: Assistant,
     model: CodexAppServerModel,
 ): Assistant = assistant.copy(
     codexModel = model.model,
+    codexHarnessModelTarget = CodexHarnessModelTarget.ChatGptAccount(model.model),
     codexReasoningEffort = effortForCodexModelSelection(assistant.codexReasoningEffort, model),
     codexServiceTier = serviceTierForCodexModelSelection(assistant.codexServiceTier, model),
 )
@@ -71,11 +81,22 @@ internal fun applyCodexModelSelection(
 internal fun codexComposerLabel(
     assistant: Assistant,
     models: List<CodexAppServerModel>,
+    providers: List<ProviderSetting> = emptyList(),
 ): String {
     if (!assistant.codexAppServerEnabled) return ""
-    val selected = selectedCodexModel(assistant.codexModel, models)
-    val tierModel = serviceTierCatalogModel(assistant.codexModel, models)
-    val modelLabel = selected?.displayName ?: assistant.codexModel ?: "サーバー既定"
+    val target = assistant.effectiveCodexHarnessModelTarget()
+    if (target is CodexHarnessModelTarget.RikkaHubProvider) {
+        val modelLabel = if (providers.isEmpty()) {
+            "RikkaHubモデル"
+        } else {
+            CodexHarnessModelPresentationResolver.resolve(target, providers, models).compactLabel
+        }
+        return "Codex · $modelLabel"
+    }
+    target as CodexHarnessModelTarget.ChatGptAccount
+    val selected = selectedCodexModel(target.model, models)
+    val tierModel = serviceTierCatalogModel(target.model, models)
+    val modelLabel = selected?.displayName ?: target.model ?: "サーバー既定"
     val effort = assistant.codexReasoningEffort?.let { " · $it" }.orEmpty()
     val tier = assistant.codexServiceTier?.let { saved ->
         val label = if (saved == "default") "既定" else tierModel?.let { model ->

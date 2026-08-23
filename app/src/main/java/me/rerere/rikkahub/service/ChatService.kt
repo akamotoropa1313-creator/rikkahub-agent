@@ -121,7 +121,8 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalPolicy
 import me.rerere.rikkahub.data.codex.appserver.serviceTierIds
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnInput
 import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability
-import me.rerere.rikkahub.data.codex.appserver.codexInputCapability
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelRouteResolver
+import me.rerere.rikkahub.data.codex.appserver.codexHarnessInputCapability
 import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
@@ -819,11 +820,12 @@ class ChatService(
         }
         check(runtime.activeTurnId() == null) { "A Codex turn is already running" }
         val loadedCatalog = runtime.capabilities.value.models.takeIf { it.isNotEmpty() }
+        val harnessRoute = CodexHarnessModelRouteResolver.resolve(assistant, settingsStore.settingsFlow.value)
         if (parts.any { it is UIMessagePart.Image } &&
-            codexInputCapability(assistant.codexModel, loadedCatalog, "image") == CodexInputCapability.Unsupported
+            codexHarnessInputCapability(harnessRoute, loadedCatalog, "image") == CodexInputCapability.Unsupported
         ) throw IllegalArgumentException("The selected Codex model does not support images")
         if (parts.any { it is UIMessagePart.Audio } &&
-            codexInputCapability(assistant.codexModel, loadedCatalog, "audio") == CodexInputCapability.Unsupported
+            codexHarnessInputCapability(harnessRoute, loadedCatalog, "audio") == CodexInputCapability.Unsupported
         ) throw IllegalArgumentException("The selected Codex model does not support audio")
         val staged = codexMediaStager.stage(workspaceId, conversationId.toString(), parts)
         try {
@@ -945,11 +947,11 @@ class ChatService(
                     ),
                 )) {
                     is CodexAppServerConversationSessionOpenResult.Recovered -> installCodexRuntime(conversationId, owner, opened.session)
+                    is CodexAppServerConversationSessionOpenResult.Started -> installCodexRuntime(conversationId, owner, opened.session)
                     is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
                         owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason.toString()))
                         error("The existing Codex binding is stale")
                     }
-                    is CodexAppServerConversationSessionOpenResult.Started -> error("Recovery-only reconnect unexpectedly started a thread")
                 }
             }
         } catch (failure: Throwable) {

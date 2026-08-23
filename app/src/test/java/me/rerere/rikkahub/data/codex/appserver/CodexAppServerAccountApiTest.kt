@@ -47,25 +47,61 @@ class CodexAppServerAccountApiTest {
         }
     }
 
-    @Test fun `login cancel and logout use exact wire`() = runBlocking {
-        fixture().use { f ->
-            val login = async { f.api.startChatGptLogin() }; val start = f.takeRequest()
-            assertEquals("account/login/start", start.method)
-            assertEquals(buildJsonObject { put("type", "chatgpt") }, start.params)
-            f.respond(start, buildJsonObject { put("type", "chatgpt"); put("loginId", "opaque-id"); put("authUrl", "https://example.test/auth?secret=1") })
-            val started = login.await(); assertEquals("opaque-id", started.loginId)
-            assertFalse(started.toString().contains("secret=1"))
+    @Test fun `login cancel and logout use exact wire and logout invalidates catalog`() = runBlocking {
+        CodexModelCatalogKnowledge.clearForTest()
+        try {
+            fixture().use { f ->
+                val login = async { f.api.startChatGptLogin() }; val start = f.takeRequest()
+                assertEquals("account/login/start", start.method)
+                assertEquals(buildJsonObject { put("type", "chatgpt") }, start.params)
+                f.respond(start, buildJsonObject { put("type", "chatgpt"); put("loginId", "opaque-id"); put("authUrl", "https://example.test/auth?secret=1") })
+                val started = login.await(); assertEquals("opaque-id", started.loginId)
+                assertFalse(started.toString().contains("secret=1"))
 
-            val cancel = async { f.api.cancelLogin(started.loginId) }; val cancelRequest = f.takeRequest()
-            assertEquals("account/login/cancel", cancelRequest.method)
-            assertEquals(buildJsonObject { put("loginId", "opaque-id") }, cancelRequest.params)
-            f.respond(cancelRequest, buildJsonObject { put("status", "canceled") })
-            assertEquals(CodexAppServerCancelLoginResult.Canceled, cancel.await())
+                val cancel = async { f.api.cancelLogin(started.loginId) }; val cancelRequest = f.takeRequest()
+                assertEquals("account/login/cancel", cancelRequest.method)
+                assertEquals(buildJsonObject { put("loginId", "opaque-id") }, cancelRequest.params)
+                f.respond(cancelRequest, buildJsonObject { put("status", "canceled") })
+                assertEquals(CodexAppServerCancelLoginResult.Canceled, cancel.await())
 
-            val logout = async { f.api.logout() }; val logoutRequest = f.takeRequest()
-            assertEquals("account/logout", logoutRequest.method); assertEquals(JsonObject(emptyMap()), logoutRequest.params)
-            f.respond(logoutRequest, JsonObject(emptyMap())); logout.await()
+                CodexModelCatalogKnowledge.replace(listOf(model("stale-model")))
+                assertEquals(listOf("stale-model"), CodexModelCatalogKnowledge.modelsSnapshot().map { it.model })
+
+                val logout = async { f.api.logout() }; val logoutRequest = f.takeRequest()
+                assertEquals("account/logout", logoutRequest.method); assertEquals(JsonObject(emptyMap()), logoutRequest.params)
+                f.respond(logoutRequest, JsonObject(emptyMap())); logout.await()
+                assertTrue(CodexModelCatalogKnowledge.modelsSnapshot().isEmpty())
+                assertEquals(null, CodexModelCatalogKnowledge.defaultModel())
+            }
+        } finally {
+            CodexModelCatalogKnowledge.clearForTest()
         }
+    }
+
+    @Test fun `account event invalidation policy only clears on successful identity transitions`() {
+        val success = CodexAppServerAccountEvent.LoginCompleted(
+            loginId = "login-1", success = true, error = null, onboardingEntrypoint = null,
+            rawParams = buildJsonObject {},
+        )
+        val failed = CodexAppServerAccountEvent.LoginCompleted(
+            loginId = "login-1", success = false, error = "denied", onboardingEntrypoint = null,
+            rawParams = buildJsonObject {},
+        )
+        val updated = CodexAppServerAccountEvent.Updated(
+            authMode = CodexAppServerAuthMode.ChatGpt,
+            planType = CodexAppServerPlanType.Plus,
+            rawParams = buildJsonObject {},
+        )
+        val malformed = CodexAppServerAccountEvent.MalformedNotification(
+            method = "account/updated",
+            rawParams = buildJsonObject {},
+            cause = CodexAppServerAccountProtocolException("bad"),
+        )
+
+        assertTrue(success.invalidatesModelCatalog())
+        assertFalse(failed.invalidatesModelCatalog())
+        assertTrue(updated.invalidatesModelCatalog())
+        assertFalse(malformed.invalidatesModelCatalog())
     }
 
     @Test fun `null no-auth read and known ChatGPT plan decode independently`() = runBlocking {
@@ -165,6 +201,18 @@ class CodexAppServerAccountApiTest {
     }
     private fun testClientInfo() = CodexAppServerClientInfo(name = "test", title = "Test", version = "1")
     private fun account(type: String, fields: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) = buildJsonObject { put("account", buildJsonObject { put("type", type); fields() }); put("requiresOpenaiAuth", false) }
+    private fun model(wire: String) = CodexAppServerModel(
+        id = "id-$wire",
+        model = wire,
+        displayName = wire,
+        description = wire,
+        hidden = false,
+        supportedReasoningEfforts = emptyList(),
+        defaultReasoningEffort = "medium",
+        supportsPersonality = false,
+        isDefault = true,
+        raw = buildJsonObject {},
+    )
     private suspend fun takeRequest(t: FakeCodexAppServerTransport) = (codec.decode(t.takeClientLine()).getOrThrow() as JsonRpcMessage.Request).value
     private suspend inline fun <reified T: Throwable> expect(crossinline block: suspend () -> Unit): T = try { block(); fail("Expected ${T::class.java.simpleName}"); error("unreachable") } catch (e: Throwable) { if (e is T) e else if (e.cause is T) e.cause as T else throw e }
     private inner class Fixture(val transport: FakeCodexAppServerTransport, val connection: CodexAppServerConnection, val api: CodexAppServerAccountApi): AutoCloseable {

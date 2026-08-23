@@ -139,6 +139,69 @@ class CodexAppServerSessionRecoveryTest {
         result.session.close()
     }
 
+    @Test fun `reconnect replaces server-missing thread only before its first turn`() = runBlocking {
+        val recoveryTransport = FakeCodexAppServerTransport()
+        val replacementTransport = FakeCodexAppServerTransport()
+        val recoveryConnection = connection(recoveryTransport)
+        val replacementConnection = connection(replacementTransport)
+        var factoryCalls = 0
+        val creator = CodexAppServerConnectionCreator { _, _ ->
+            if (factoryCalls++ == 0) recoveryConnection else replacementConnection
+        }
+        val f = Fixture(creator = creator)
+        f.bind()
+        val opener = CodexAppServerConversationSessionOpener(f.repo, f.local, creator, f.recovery)
+
+        val reconnecting = async { opener.recoverBound("a") }
+        respondInitialize(recoveryTransport)
+        val resume = Json.parseToJsonElement(recoveryTransport.takeClientLine()).jsonObject
+        assertEquals("thread/resume", resume["method"]?.jsonPrimitive?.content)
+        recoveryTransport.injectServerLine(
+            """{"id":${resume["id"]},"error":{"code":-32600,"message":"thread not loaded: thread-1"}}""",
+        )
+
+        respondInitialize(replacementTransport)
+        val start = Json.parseToJsonElement(replacementTransport.takeClientLine()).jsonObject
+        assertEquals("thread/start", start["method"]?.jsonPrimitive?.content)
+        assertEquals(false, start["params"]?.jsonObject?.get("ephemeral")?.jsonPrimitive?.content?.toBoolean())
+        replacementTransport.injectServerLine(
+            """{"id":${start["id"]},"result":{"thread":{"id":"thread-2","ephemeral":false},"model":"m","modelProvider":"p","cwd":"src"}}""",
+        )
+
+        val result = reconnecting.await() as CodexAppServerConversationSessionOpenResult.Started
+        assertEquals("thread-2", result.session.threadId)
+        assertEquals("thread-2", f.repo.getBinding("a")?.threadId)
+        assertEquals(2, factoryCalls)
+        assertEquals(CodexAppServerConnectionState.Closed, recoveryConnection.state.value)
+        assertTrue(replacementConnection.state.value is CodexAppServerConnectionState.Ready)
+        result.session.close()
+    }
+
+    @Test fun `server-missing thread with an observed turn is never silently replaced`() = runBlocking {
+        val transport = FakeCodexAppServerTransport()
+        val connection = connection(transport)
+        var factoryCalls = 0
+        val creator = CodexAppServerConnectionCreator { _, _ -> factoryCalls++; connection }
+        val f = Fixture(creator = creator)
+        f.bind()
+        f.repo.recordTurnStarted("a", "thread-1", "turn-1")
+        val opener = CodexAppServerConversationSessionOpener(f.repo, f.local, creator, f.recovery)
+
+        val reconnecting = async { opener.recoverBound("a") }
+        respondInitialize(transport)
+        val resume = Json.parseToJsonElement(transport.takeClientLine()).jsonObject
+        transport.injectServerLine(
+            """{"id":${resume["id"]},"error":{"code":-32600,"message":"thread not loaded: thread-1"}}""",
+        )
+
+        val result = reconnecting.await() as CodexAppServerConversationSessionOpenResult.StaleBinding
+        assertEquals(CodexAppServerStaleBindingReason.ThreadNotLoaded, result.reason)
+        assertEquals("thread-1", f.repo.getBinding("a")?.threadId)
+        assertEquals("turn-1", f.repo.getBinding("a")?.lastObservedTurnId)
+        assertEquals(1, factoryCalls)
+        assertEquals(CodexAppServerConnectionState.Closed, connection.state.value)
+    }
+
     @Test fun `delayed completion after rebind is observable and cannot mutate replacement`() = runBlocking {
         val transport = FakeCodexAppServerTransport(); val connection = connection(transport)
         val f = Fixture(creator = CodexAppServerConnectionCreator { _, _ -> connection }); f.bind()

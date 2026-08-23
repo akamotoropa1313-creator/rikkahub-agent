@@ -21,6 +21,7 @@ import me.rerere.rikkahub.service.CodexCapabilitiesUiState
 import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.service.threadHistoryRefreshSearchTerm
 import me.rerere.rikkahub.service.threadHistorySubmittedSearchTerm
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
 import me.rerere.rikkahub.data.codex.appserver.CodexMcpAuthStatus
 import me.rerere.rikkahub.data.model.Assistant
@@ -70,8 +71,9 @@ fun CodexControlSheet(
     var title by remember { mutableStateOf("") }
     var instructions by remember { mutableStateOf("") }
     var historySearch by remember { mutableStateOf(capabilities.threadHistory.searchTerm) }
-    val selectedModel = selectedCodexModel(assistant.codexModel, capabilities.models)
-    val serviceTierModel = serviceTierCatalogModel(assistant.codexModel, capabilities.models)
+    val usesChatGptCatalog = assistant.codexHarnessModelTarget !is CodexHarnessModelTarget.RikkaHubProvider
+    val selectedModel = if (usesChatGptCatalog) selectedCodexModel(assistant.codexModel, capabilities.models) else null
+    val serviceTierModel = if (usesChatGptCatalog) serviceTierCatalogModel(assistant.codexModel, capabilities.models) else null
     LazyColumn(
         modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
@@ -305,127 +307,94 @@ fun CodexControlSheet(
         }
         item {
             Section("モデルと動作") {
-                Text("Codexモデル", style = MaterialTheme.typography.titleMedium)
-                Text("App Serverのモデル一覧を正として扱います。変更は次のCodexターンから反映されます。")
+                Text("モデル選択はアシスタント設定の「チャットモデル」から変更します。ここではApp Serverのモデルカタログと、選択したChatGPTモデル固有の動作設定だけを管理します。")
                 Button(
                     onClick = onRefreshModels,
                     enabled = capabilities.connected && !capabilities.modelsLoading && !operationBusy,
                 ) {
-                    Text(if (capabilities.models.isEmpty()) "モデルを読み込む" else "モデルを更新")
+                    Text(if (capabilities.models.isEmpty()) "モデル情報を読み込む" else "モデル情報を更新")
                 }
                 if (capabilities.modelsLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
                 capabilities.modelsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (savedCodexModelMissing(assistant.codexModel, capabilities.models)) {
-                    Text(
-                        "保存済みのCodexモデル「${assistant.codexModel}」は利用できなくなっています。別のモデルを明示的に選択してください。RikkaHubが自動で置き換えることはありません。",
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-                if (assistant.codexModel == null) {
-                    Text("現在の設定: サーバー既定。モデルを明示的に選ぶと、そのモデルを保存します。")
-                }
-            }
-        }
-        items(capabilities.models, key = { it.id }) { model ->
-            val advertisedEfforts = model.supportedReasoningEfforts.map { it.reasoningEffort }
-            val validEfforts = advertisedEfforts.isNotEmpty() && model.defaultReasoningEffort in advertisedEfforts
-            ListItem(
-                headlineContent = {
-                    Text(
-                        model.displayName + if (model.isDefault) " · 既定" else "",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                supportingContent = {
-                    Column {
-                        Text(model.description, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (!usesChatGptCatalog) {
+                    Text("現在はRikkaHubプロバイダーのモデルを使用しています。Codex固有の推論強度・サービスティア・パーソナリティ設定は適用しません。")
+                } else {
+                    if (savedCodexModelMissing(assistant.codexModel, capabilities.models)) {
                         Text(
-                            model.inputModalities?.joinToString(" · ", prefix = "入力: ")
-                                ?: "入力: 未報告",
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
+                            "保存済みのCodexモデル「${assistant.codexModel}」は利用できなくなっています。アシスタント設定のチャットモデルから別のモデルを選択してください。",
+                            color = MaterialTheme.colorScheme.error,
                         )
-                        if (validEfforts) {
-                            Text("推論強度: " + advertisedEfforts.joinToString(" · "), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        } else {
-                            Text("このモデル情報には不正な推論強度メタデータがあります。", color = MaterialTheme.colorScheme.error)
-                        }
-                        if (!model.supportsPersonality) Text("このモデルはパーソナリティ対応を報告していません")
                     }
-                },
-                trailingContent = {
-                    TextButton(
-                        enabled = validEfforts,
-                        onClick = { onUpdateAssistant { latest -> applyCodexModelSelection(latest, model) } },
-                    ) {
-                        Text(if (assistant.codexModel == model.model) "選択中" else "選択")
+                    if (assistant.codexModel == null) {
+                        Text("現在のChatGPTモデル設定: サーバー既定")
                     }
-                },
-            )
-        }
-        item {
-            Text("サービスティア", style = MaterialTheme.typography.titleMedium)
-            Text("「サーバー設定」ではティアの上書きを送信しません。既存スレッドではサーバー側のティアが残る場合があります。「既定」は次のターンで既定ティアを明示的に要求します。")
-            TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = null) } }) {
-                Text((if (assistant.codexServiceTier == null) "✓ " else "") + "サーバー設定")
-            }
-            TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = "default") } }) {
-                Text((if (assistant.codexServiceTier == "default") "✓ " else "") + "既定")
-            }
-            serviceTierModel?.let { tierModel ->
-                codexServiceTierOptions(tierModel).forEach { tier ->
-                    TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = tier.id) } }) {
-                        Text((if (assistant.codexServiceTier == tier.id) "✓ " else "") + tier.name + " · " + tier.description)
-                    }
-                }
-                tierModel.defaultServiceTier?.let { default ->
-                    val label = codexServiceTierOptions(tierModel).firstOrNull { it.id == default }?.name ?: default
-                    Text("カタログ既定: $label")
-                }
-            }
-            val savedTier = assistant.codexServiceTier
-            if (savedTier != null && savedTier != "default") {
-                when {
-                    serviceTierModel == null -> Text("現在のモデル一覧ではティア対応を確認できません")
-                    serviceTierModel.serviceTiers == null && serviceTierModel.additionalSpeedTiers == null ->
-                        Text("このApp Serverはティア対応を報告していません。保存済みのティア値はそのまま保持します")
-                    codexServiceTierOptions(serviceTierModel).none { it.id == savedTier } ->
-                        Text("選択したCodexモデルではこのティアを利用できません", color = MaterialTheme.colorScheme.error)
                 }
             }
         }
-        selectedModel?.let { selected ->
-            items(selected.supportedReasoningEfforts, key = { it.reasoningEffort }) { effort ->
-                TextButton(onClick = { onUpdateAssistant { it.copy(codexReasoningEffort = effort.reasoningEffort) } }) {
-                    Text(
-                        (if (assistant.codexReasoningEffort == effort.reasoningEffort) "✓ " else "") +
-                            effort.reasoningEffort + " · " + effort.description,
-                    )
-                }
-            }
+        if (usesChatGptCatalog) {
             item {
-                Text("推論要約")
-                Row(Modifier.horizontalScroll(rememberScrollState())) {
-                    CodexReasoningSummaryPreference.entries.forEach { value ->
-                        TextButton(onClick = { onUpdateAssistant { it.copy(codexReasoningSummary = value) } }) {
-                            Text((if (assistant.codexReasoningSummary == value) "✓ " else "") + value.name.lowercase())
+                Text("サービスティア", style = MaterialTheme.typography.titleMedium)
+                Text("「サーバー設定」ではティアの上書きを送信しません。既存スレッドではサーバー側のティアが残る場合があります。「既定」は次のターンで既定ティアを明示的に要求します。")
+                TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = null) } }) {
+                    Text((if (assistant.codexServiceTier == null) "✓ " else "") + "サーバー設定")
+                }
+                TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = "default") } }) {
+                    Text((if (assistant.codexServiceTier == "default") "✓ " else "") + "既定")
+                }
+                serviceTierModel?.let { tierModel ->
+                    codexServiceTierOptions(tierModel).forEach { tier ->
+                        TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = tier.id) } }) {
+                            Text((if (assistant.codexServiceTier == tier.id) "✓ " else "") + tier.name + " · " + tier.description)
                         }
                     }
-                }
-                Text("パーソナリティ")
-                Row(Modifier.horizontalScroll(rememberScrollState())) {
-                    CodexPersonalityPreference.entries.forEach { value ->
-                        TextButton(
-                            enabled = selected.supportsPersonality,
-                            onClick = { onUpdateAssistant { it.copy(codexPersonality = value) } },
-                        ) {
-                            Text((if (assistant.codexPersonality == value) "✓ " else "") + value.name.lowercase())
-                        }
+                    tierModel.defaultServiceTier?.let { default ->
+                        val label = codexServiceTierOptions(tierModel).firstOrNull { it.id == default }?.name ?: default
+                        Text("カタログ既定: $label")
                     }
                 }
-                if (!selected.supportsPersonality) {
-                    Text("このモデルはパーソナリティ対応を報告していません")
+                val savedTier = assistant.codexServiceTier
+                if (savedTier != null && savedTier != "default") {
+                    when {
+                        serviceTierModel == null -> Text("現在のモデル一覧ではティア対応を確認できません")
+                        serviceTierModel.serviceTiers == null && serviceTierModel.additionalSpeedTiers == null ->
+                            Text("このApp Serverはティア対応を報告していません。保存済みのティア値はそのまま保持します")
+                        codexServiceTierOptions(serviceTierModel).none { it.id == savedTier } ->
+                            Text("選択したCodexモデルではこのティアを利用できません", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+            selectedModel?.let { selected ->
+                items(selected.supportedReasoningEfforts, key = { it.reasoningEffort }) { effort ->
+                    TextButton(onClick = { onUpdateAssistant { it.copy(codexReasoningEffort = effort.reasoningEffort) } }) {
+                        Text(
+                            (if (assistant.codexReasoningEffort == effort.reasoningEffort) "✓ " else "") +
+                                effort.reasoningEffort + " · " + effort.description,
+                        )
+                    }
+                }
+                item {
+                    Text("推論要約")
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        CodexReasoningSummaryPreference.entries.forEach { value ->
+                            TextButton(onClick = { onUpdateAssistant { it.copy(codexReasoningSummary = value) } }) {
+                                Text((if (assistant.codexReasoningSummary == value) "✓ " else "") + value.name.lowercase())
+                            }
+                        }
+                    }
+                    Text("パーソナリティ")
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        CodexPersonalityPreference.entries.forEach { value ->
+                            TextButton(
+                                enabled = selected.supportsPersonality,
+                                onClick = { onUpdateAssistant { it.copy(codexPersonality = value) } },
+                            ) {
+                                Text((if (assistant.codexPersonality == value) "✓ " else "") + value.name.lowercase())
+                            }
+                        }
+                    }
+                    if (!selected.supportsPersonality) {
+                        Text("このモデルはパーソナリティ対応を報告していません")
+                    }
                 }
             }
         }

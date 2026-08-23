@@ -359,7 +359,7 @@ private fun ChatPageContent(
                         ) {
                             Column {
                                 Text(
-                                    text = codexComposerLabel(assistant, codexCapabilities.models),
+                                    text = codexComposerLabel(assistant, codexCapabilities.models, setting.providers),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )

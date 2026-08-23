@@ -110,6 +110,18 @@ class ChatVM(
     } }
     fun reconnectCodexSession() { viewModelScope.launch { runCatching { chatService.reconnectCodexSession(_conversationId) } } }
 
+    private suspend fun ensureCodexConversationPersistedBeforeSession() {
+        if (conversationRepo.existsConversationById(_conversationId)) return
+        val snapshot = conversation.value
+        runCatching {
+            conversationRepo.insertConversation(snapshot, updateSearchIndex = false)
+        }.getOrElse { failure ->
+            // A first Send may win the insert race. That is fine: the only invariant needed by
+            // CodexAppServerConversationSessionOpener is that the conversation now exists.
+            if (!conversationRepo.existsConversationById(_conversationId)) throw failure
+        }
+    }
+
     private suspend fun ensureCodexRuntimeReadyBeforeSession() {
         val persistedConversation = conversationRepo.getConversationById(_conversationId) ?: conversation.value
         val currentSettings = settingsStore.settingsFlow.first()
@@ -126,9 +138,13 @@ class ChatVM(
         if (_codexPrepareJob.value?.isActive == true) return
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             runCatching {
-                // Provision first. This makes the ON toggle itself start download/install instead
-                // of relying on the first message to reach the App Server connection factory.
+                // A normal blank RikkaHub chat is intentionally not persisted until first Send,
+                // while App Server persistent thread bindings require a durable conversation row.
+                // Initialize first so preset messages/assistant identity are not lost, then create
+                // that row only when Codex actually needs to open a persistent session.
+                chatService.initializeConversation(_conversationId)
                 ensureCodexRuntimeReadyBeforeSession()
+                ensureCodexConversationPersistedBeforeSession()
                 chatService.prepareCodexSession(_conversationId)
             }
             _hasCodexBinding.value = chatService.hasCodexBinding(_conversationId)

@@ -85,6 +85,12 @@ class CodexAppServerSessionBindingRepository(
         bindingDao.deleteByConversationId(conversationId)
     }
 
+    suspend fun clearBindingIfOwned(conversationId: String, expectedThreadId: String): Boolean {
+        require(conversationId.isNotBlank()) { "conversationId must not be blank" }
+        require(expectedThreadId.isNotBlank()) { "expectedThreadId must not be blank" }
+        return bindingDao.deleteIfOwned(conversationId, expectedThreadId) == 1
+    }
+
     suspend fun recordTurnStarted(conversationId: String, expectedThreadId: String, turnId: String) {
         require(conversationId.isNotBlank()) { "conversationId must not be blank" }
         require(expectedThreadId.isNotBlank()) { "expectedThreadId must not be blank" }
