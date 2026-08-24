@@ -64,7 +64,7 @@ internal fun codexReasoningEffortLabel(effort: String?): String = when (effort?.
     "xhigh" -> "超高"
     "max" -> "最大"
     "default" -> "既定"
-    else -> effort
+    else -> effort.orEmpty()
 }
 
 internal fun savedCodexModelMissing(

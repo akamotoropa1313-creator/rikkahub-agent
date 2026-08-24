@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -134,39 +133,38 @@ private fun CodexReasoningEffortSheet(
                         Text("モデル情報を読み込む")
                     }
                 }
-                return@Column
-            }
-
-            Text(
-                model.displayName,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-
-            EffortOptionRow(
-                title = "サーバー設定",
-                description = "turnごとの上書きを送信しない",
-                selected = selectedEffort == null,
-                onClick = { onSelectEffort(null) },
-            )
-
-            val options = model.supportedReasoningEfforts.distinctBy { it.reasoningEffort }
-            options.forEach { option ->
-                EffortOptionRow(
-                    title = effortOptionTitle(option, model.defaultReasoningEffort),
-                    description = option.description,
-                    selected = selectedEffort == option.reasoningEffort,
-                    onClick = { onSelectEffort(option.reasoningEffort) },
-                )
-            }
-
-            if (selectedEffort != null && options.none { it.reasoningEffort == selectedEffort }) {
+            } else {
                 Text(
-                    "保存済みの「$selectedEffort」は、このモデルが現在報告する候補にありません。別の強度を選んでください。",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
+                    model.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+
+                EffortOptionRow(
+                    title = "サーバー設定",
+                    description = "turnごとの上書きを送信しない",
+                    selected = selectedEffort == null,
+                    onClick = { onSelectEffort(null) },
+                )
+
+                val options = model.supportedReasoningEfforts.distinctBy { it.reasoningEffort }
+                options.forEach { option ->
+                    EffortOptionRow(
+                        title = effortOptionTitle(option, model.defaultReasoningEffort),
+                        description = option.description,
+                        selected = selectedEffort == option.reasoningEffort,
+                        onClick = { onSelectEffort(option.reasoningEffort) },
+                    )
+                }
+
+                if (selectedEffort != null && options.none { it.reasoningEffort == selectedEffort }) {
+                    Text(
+                        "保存済みの「$selectedEffort」は、このモデルが現在報告する候補にありません。別の強度を選んでください。",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
     }
