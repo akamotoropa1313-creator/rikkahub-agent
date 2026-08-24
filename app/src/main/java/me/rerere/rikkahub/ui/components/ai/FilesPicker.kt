@@ -84,6 +84,7 @@ import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
 import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.components.codex.codexSafetyIndicator
+import me.rerere.rikkahub.ui.components.codex.codexUiText
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.workspace.WorkspaceShellStatus
@@ -122,10 +123,10 @@ internal fun FilesPicker(
     var confirmCodexReset by remember { mutableStateOf(false) }
     if (confirmCodexReset) AlertDialog(
         onDismissRequest = { confirmCodexReset = false },
-        title = { Text("Reset Codex session?") },
-        text = { Text("Continuity with the current Codex thread will be lost. The next Send will create a new thread.") },
-        confirmButton = { TextButton(onClick = { confirmCodexReset = false; onResetCodexSession() }) { Text("Reset") } },
-        dismissButton = { TextButton(onClick = { confirmCodexReset = false }) { Text("Cancel") } },
+        title = { Text(codexUiText("Reset Codex session?")) },
+        text = { Text(codexUiText("Continuity with the current Codex thread will be lost. The next Send will create a new thread.")) },
+        confirmButton = { TextButton(onClick = { confirmCodexReset = false; onResetCodexSession() }) { Text(codexUiText("Reset")) } },
+        dismissButton = { TextButton(onClick = { confirmCodexReset = false }) { Text(codexUiText("Cancel")) } },
     )
 
     Column(
@@ -189,7 +190,7 @@ internal fun FilesPicker(
         }
         ListItem(
             headlineContent = { Text("Codex App Server") },
-            supportingContent = { Text(codexPrerequisite) },
+            supportingContent = { Text(codexUiText(codexPrerequisite)) },
             trailingContent = {
                 Switch(
                     checked = assistant.codexAppServerEnabled,
@@ -204,11 +205,11 @@ internal fun FilesPicker(
 
         if (assistant.codexAppServerEnabled) {
             ListItem(
-                headlineContent = { Text("Codex controls") },
+                headlineContent = { Text(codexUiText("Codex controls")) },
                 supportingContent = {
                     Column {
-                        Text("Connection, Account, Codex Skills, Codex MCP, and safety")
-                        codexSafetyIndicator(assistant)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        Text(codexUiText("Connection, Account, Codex Skills, Codex MCP, and safety"))
+                        codexSafetyIndicator(assistant)?.let { Text(codexUiText(it), color = MaterialTheme.colorScheme.error) }
                     }
                 },
                 modifier = Modifier.clip(MaterialTheme.shapes.large).clickable { onOpenCodexControls() },
@@ -217,7 +218,7 @@ internal fun FilesPicker(
         }
 
         if (hasCodexBinding) {
-            TextButton(onClick = { confirmCodexReset = true }, enabled = !codexOperationBusy) { Text("Reset Codex session") }
+            TextButton(onClick = { confirmCodexReset = true }, enabled = !codexOperationBusy) { Text(codexUiText("Reset Codex session")) }
         }
 
         if (settings.mcpServers.isNotEmpty()) {
