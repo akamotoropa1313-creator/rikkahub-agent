@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.ai
 
 import me.rerere.ai.ui.UIMessage
+import me.rerere.rikkahub.data.harness.withoutAgentHarnessPresentationParts
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.ConversationCompaction
 import me.rerere.rikkahub.data.model.MessageNode
@@ -44,7 +45,7 @@ object ContextCompactionView {
             messages = ContextCompactionPresentation.stripDisplayTools(
                 listOf(UIMessage.user(compaction.summary)) +
                     conversation.currentMessages.drop(tailStartIndex),
-            ),
+            ).withoutAgentHarnessPresentationParts(),
             compaction = compaction,
             rawTailStartIndex = tailStartIndex,
         )
@@ -90,7 +91,8 @@ object ContextCompactionView {
     }
 
     private fun rawView(conversation: Conversation) = CompactedMessageView(
-        messages = ContextCompactionPresentation.stripDisplayTools(conversation.currentMessages),
+        messages = ContextCompactionPresentation.stripDisplayTools(conversation.currentMessages)
+            .withoutAgentHarnessPresentationParts(),
         compaction = null,
         rawTailStartIndex = 0,
     )

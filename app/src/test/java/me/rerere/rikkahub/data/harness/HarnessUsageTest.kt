@@ -71,6 +71,34 @@ class HarnessUsageTest {
         assertSame(messages, updated)
     }
 
+    @Test
+    fun `Codex presentation steps are not replayed as provider tool calls`() {
+        val codex = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                UIMessagePart.Reasoning("thinking"),
+                UIMessagePart.Tool(
+                    toolCallId = "shell-1",
+                    toolName = "workspace_shell",
+                    input = "{\"command\":\"pwd\"}",
+                    output = listOf(UIMessagePart.Text("{\"stdout\":\"/workspace\"}")),
+                ),
+                UIMessagePart.Text("done"),
+            ),
+        ).withHarnessIdentity(AgentHarnessIds.CODEX, "run-1")
+        val toolOnly = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(UIMessagePart.Tool("shell-2", "workspace_shell", "{}")),
+        ).withHarnessIdentity(AgentHarnessIds.CODEX, "run-2")
+        val regular = UIMessage.assistant("regular")
+
+        val requestMessages = listOf(codex, toolOnly, regular).withoutAgentHarnessPresentationParts()
+
+        assertEquals(2, requestMessages.size)
+        assertEquals(listOf(UIMessagePart.Text("done")), requestMessages[0].parts)
+        assertSame(regular, requestMessages[1])
+    }
+
     private fun message(runId: String, text: String) = UIMessage(
         role = MessageRole.ASSISTANT,
         parts = listOf(UIMessagePart.Text(text)),

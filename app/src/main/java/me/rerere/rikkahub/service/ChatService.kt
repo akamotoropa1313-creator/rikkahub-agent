@@ -881,12 +881,11 @@ class ChatService(
                 installed = CodexChatRuntime(
                     session = protocolSession,
                     scope = appScope,
-                    onAgentText = { turnId, itemId, text ->
-                        persistCodexAgentText(
+                    onTurnParts = { turnId, messageParts ->
+                        persistCodexTurnParts(
                             conversationId,
                             turnId,
-                            itemId,
-                            text,
+                            messageParts,
                             protocolSession.tokenUsageTracker.state.value.latest,
                         )
                     },
@@ -950,6 +949,7 @@ class ChatService(
             approvalPolicy = CodexAppServerApprovalPolicy.fromPreference(assistant.codexApprovalPolicy),
         )
         val result = acceptCodexSkillAfterStart({ runtime.session.startTurn(input, params) }, onAccepted)
+        explicitSkill?.let { runtime.presentSkillInvocation(result.turn.id, it.name, it.path) }
         runtime.acceptStartResponse(result.turn.id, result.turn.status)
         try {
             runtime.awaitTurnTerminal(result.turn.id)
@@ -961,20 +961,20 @@ class ChatService(
         }
     }
 
-    private suspend fun persistCodexAgentText(
+    private suspend fun persistCodexTurnParts(
         conversationId: Uuid,
         turnId: String,
-        itemId: String,
-        text: String,
+        parts: List<UIMessagePart>,
         latestUsage: CodexTokenUsageSnapshot?,
     ) {
+        if (parts.isEmpty()) return
         mutexFor(conversationId).withLock {
             val conversation = getConversationFlow(conversationId).value
-            val key = "$conversationId:$turnId:$itemId"
+            val key = "$conversationId:$turnId"
             val messageId = codexMessageIds.getOrPut(key) { Uuid.random() }
             val existing = conversation.getMessageNodeByMessageId(messageId)
-            val message = (existing?.currentMessage?.copy(parts = listOf(UIMessagePart.Text(text)))
-                ?: UIMessage(id = messageId, role = MessageRole.ASSISTANT, parts = listOf(UIMessagePart.Text(text))))
+            val message = (existing?.currentMessage?.copy(parts = parts)
+                ?: UIMessage(id = messageId, role = MessageRole.ASSISTANT, parts = parts))
                 .withHarnessIdentity(AgentHarnessIds.CODEX, turnId)
             var updated = if (existing == null) {
                 conversation.copy(messageNodes = conversation.messageNodes + message.toMessageNode())
@@ -1100,12 +1100,11 @@ class ChatService(
     ): CodexChatRuntime {
         lateinit var installed: CodexChatRuntime
         installed = CodexChatRuntime(protocolSession, appScope,
-            onAgentText = { turnId, itemId, text ->
-                persistCodexAgentText(
+            onTurnParts = { turnId, messageParts ->
+                persistCodexTurnParts(
                     conversationId,
                     turnId,
-                    itemId,
-                    text,
+                    messageParts,
                     protocolSession.tokenUsageTracker.state.value.latest,
                 )
             },

@@ -95,17 +95,14 @@ import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.CodexConversationUiState
-import me.rerere.rikkahub.service.CodexConversationActivity
 import me.rerere.rikkahub.ui.components.codex.codexStaleBindingMessage
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnStatus
 import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
 import me.rerere.rikkahub.ui.components.codex.CodexCommandApprovalCard
 import me.rerere.rikkahub.ui.components.codex.CodexFileChangeApprovalCard
-import me.rerere.rikkahub.ui.components.codex.CodexCommandExecutionCard
-import me.rerere.rikkahub.ui.components.codex.CodexFileChangeCard
-import me.rerere.rikkahub.ui.components.codex.CodexTurnDiffCard
 import me.rerere.rikkahub.ui.components.codex.codexTurnErrorPresentation
 import me.rerere.rikkahub.ui.components.message.ChatMessage
 import me.rerere.rikkahub.ui.components.ui.ErrorCardsDisplay
@@ -417,9 +414,9 @@ private fun ChatListNormal(
                 }
             }
 
-            if (codexState !is CodexConversationUiState.Disabled && codexState !is CodexConversationUiState.Disconnected) {
-                item(key = "CodexLiveActivity") {
-                    CodexLiveActivity(codexState, onCodexCommandApproval, onCodexFileApproval)
+            if (codexState.needsInlineStatusCard()) {
+                item(key = "CodexInlineStatus") {
+                    CodexInlineStatus(codexState, onCodexCommandApproval, onCodexFileApproval)
                 }
             }
 
@@ -638,46 +635,29 @@ private fun buildHighlightedText(
     }
 }
 
-@Composable
-private fun CodexActivityContent(activity: CodexConversationActivity) {
-    if (activity.reasoning.isNotBlank()) Text(activity.reasoning, style = MaterialTheme.typography.bodySmall)
-    activity.commands.forEach { CodexCommandExecutionCard(it) }
-    activity.files.forEach { CodexFileChangeCard(it) }
-    activity.diff?.let { CodexTurnDiffCard(it) }
-    activity.terminalInteractions.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+private fun CodexConversationUiState.needsInlineStatusCard(): Boolean = when (this) {
+    CodexConversationUiState.Opening,
+    is CodexConversationUiState.WaitingForApproval,
+    is CodexConversationUiState.StaleBinding,
+    is CodexConversationUiState.WorkspaceMismatch,
+    is CodexConversationUiState.Failed,
+        -> true
+    is CodexConversationUiState.Terminal -> status != CodexAppServerTurnStatus.Completed
+    else -> false
 }
 
 @Composable
-private fun CodexLiveActivity(
+private fun CodexInlineStatus(
     state: CodexConversationUiState,
     onCommand: (JsonRpcId, CodexAppServerCommandApprovalDecision) -> Unit,
     onFile: (JsonRpcId, CodexAppServerFileChangeApprovalDecision) -> Unit,
 ) {
     if (state is CodexConversationUiState.WaitingForApproval) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            CodexActivityContent(state.activity)
             when (val event = state.event) {
                 is CodexAppServerApprovalEvent.CommandExecutionRequest -> CodexCommandApprovalCard(event.request, { onCommand(event.requestId, it) }, submitting = state.submitting)
                 is CodexAppServerApprovalEvent.FileChangeRequest -> CodexFileChangeApprovalCard(event.request, { onFile(event.requestId, it) }, fileChange = state.fileChange, submitting = state.submitting)
                 else -> Text("未対応のCodex承認イベントです", color = MaterialTheme.colorScheme.error)
-            }
-        }
-        return
-    }
-    val phaseActivity = when (state) {
-        is CodexConversationUiState.Running -> state.activity
-        is CodexConversationUiState.Terminal -> state.activity
-        else -> null
-    }
-    if (phaseActivity != null && phaseActivity != CodexConversationActivity()) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Codexの動作", style = MaterialTheme.typography.titleSmall)
-            CodexActivityContent(phaseActivity)
-            if (state is CodexConversationUiState.Terminal) {
-                codexTurnErrorPresentation(state.diagnostics)?.let { presentation ->
-                    Text(presentation.title, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleSmall)
-                    presentation.detail?.takeIf { it.isNotBlank() }?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                }
             }
         }
         return

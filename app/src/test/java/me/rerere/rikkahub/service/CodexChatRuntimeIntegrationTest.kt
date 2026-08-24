@@ -19,6 +19,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAccount
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerClientInfo
@@ -44,6 +45,36 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CodexChatRuntimeIntegrationTest {
+    @Test
+    fun `turn callback exposes interleaved existing chat message parts`() = runBlocking {
+        val snapshots = CopyOnWriteArrayList<List<UIMessagePart>>()
+        val harness = harness(this, onTurnParts = { _, parts -> snapshots += parts })
+        try {
+            harness.transport.emit(notification("turn/started", turnParams("inProgress")))
+            harness.transport.emit(notification("item/started", itemParams(buildJsonObject {
+                put("type", "agentMessage")
+                put("id", "agent-1")
+                put("text", "")
+            }, "startedAtMs", 10)))
+            harness.transport.emit(notification("item/agentMessage/delta", buildJsonObject {
+                put("threadId", "thread-1")
+                put("turnId", "turn-1")
+                put("itemId", "agent-1")
+                put("delta", "確認します。")
+            }))
+            harness.transport.emit(notification("item/started", itemParams(command("command-1"), "startedAtMs", 11)))
+
+            val parts = withTimeout(2_000) {
+                while (snapshots.lastOrNull()?.size != 2) yield()
+                snapshots.last()
+            }
+            assertEquals("確認します。", (parts[0] as UIMessagePart.Text).text)
+            assertEquals("workspace_shell", (parts[1] as UIMessagePart.Tool).toolName)
+        } finally {
+            harness.runtime.close()
+        }
+    }
+
     @Test
     fun `successful browser login refreshes the account snapshot automatically`() = runBlocking {
         val harness = harness(this)
@@ -254,7 +285,7 @@ class CodexChatRuntimeIntegrationTest {
 
     @Test
     fun `agent text callback failure releases terminal waiter with failure`() = runBlocking {
-        val harness = harness(this) { _, _, _ -> error("persist failed") }
+        val harness = harness(this, onAgentText = { _, _, _ -> error("persist failed") })
         try {
             harness.runtime.acceptStartResponse("turn-1", CodexAppServerTurnStatus.InProgress)
             val waiter = async { runCatching { harness.runtime.awaitTurnTerminal("turn-1") } }
@@ -269,6 +300,29 @@ class CodexChatRuntimeIntegrationTest {
             val result = withTimeout(2_000) { waiter.await() }
             assertTrue(result.isFailure)
             assertEquals("persist failed", result.exceptionOrNull()?.message)
+            assertTrue(awaitState(harness.runtime) { it is CodexConversationUiState.Failed } is CodexConversationUiState.Failed)
+        } finally {
+            harness.runtime.close()
+        }
+    }
+
+    @Test
+    fun `turn parts persistence failure releases terminal waiter with failure`() = runBlocking {
+        val harness = harness(this, onTurnParts = { _, _ -> error("timeline persist failed") })
+        try {
+            harness.runtime.acceptStartResponse("turn-1", CodexAppServerTurnStatus.InProgress)
+            val waiter = async { runCatching { harness.runtime.awaitTurnTerminal("turn-1") } }
+
+            harness.transport.emit(notification("item/agentMessage/delta", buildJsonObject {
+                put("threadId", "thread-1")
+                put("turnId", "turn-1")
+                put("itemId", "agent-1")
+                put("delta", "hello")
+            }))
+
+            val result = withTimeout(2_000) { waiter.await() }
+            assertTrue(result.isFailure)
+            assertEquals("timeline persist failed", result.exceptionOrNull()?.message)
             assertTrue(awaitState(harness.runtime) { it is CodexConversationUiState.Failed } is CodexConversationUiState.Failed)
         } finally {
             harness.runtime.close()
@@ -330,6 +384,7 @@ class CodexChatRuntimeIntegrationTest {
     private fun harness(
         scope: CoroutineScope,
         onAgentText: suspend (turnId: String, itemId: String, text: String) -> Unit = { _, _, _ -> },
+        onTurnParts: suspend (turnId: String, parts: List<UIMessagePart>) -> Unit = { _, _ -> },
     ): Harness {
         val binding = CodexAppServerSessionBindingEntity(
             conversationId = "conversation-1",
@@ -351,7 +406,16 @@ class CodexChatRuntimeIntegrationTest {
             CodexAppServerClientInfo(version = "test"),
         )
         val session = CodexAppServerConversationSession(binding, connection, repository)
-        return Harness(CodexChatRuntime(session, scope, onAgentText = onAgentText), transport, connection)
+        return Harness(
+            CodexChatRuntime(
+                session,
+                scope,
+                onAgentText = onAgentText,
+                onTurnParts = onTurnParts,
+            ),
+            transport,
+            connection,
+        )
     }
 
     private data class Harness(

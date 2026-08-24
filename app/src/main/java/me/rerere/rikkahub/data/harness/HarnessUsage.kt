@@ -3,6 +3,7 @@ package me.rerere.rikkahub.data.harness
 import me.rerere.ai.core.TokenUsage
 import me.rerere.ai.ui.HarnessMetadata
 import me.rerere.ai.ui.UIMessage
+import me.rerere.ai.ui.UIMessagePart
 
 /** Stable ids written into message JSON. Unknown ids remain valid and appear in Statistics. */
 object AgentHarnessIds {
@@ -31,6 +32,21 @@ fun UIMessage.withHarnessIdentity(harnessId: String, runId: String): UIMessage =
         ?.takeIf { it.id == harnessId && it.runId == runId }
         ?: HarnessMetadata(id = harnessId, runId = runId),
 )
+
+/**
+ * Codex reasoning and tool parts are persisted for RikkaHub's chat presentation, while the App
+ * Server itself owns their protocol history. Do not submit those display parts as fresh provider
+ * tool calls if the conversation is later continued with a regular model provider.
+ */
+fun List<UIMessage>.withoutAgentHarnessPresentationParts(): List<UIMessage> = mapNotNull { message ->
+    if (message.harness?.id != AgentHarnessIds.CODEX) return@mapNotNull message
+    val requestParts = message.parts.filterNot { part ->
+        part is UIMessagePart.Reasoning ||
+            part is UIMessagePart.Tool ||
+            part is UIMessagePart.ServerTool
+    }
+    message.copy(parts = requestParts).takeIf { requestParts.isNotEmpty() }
+}
 
 /**
  * Applies one run's latest usage to the last matching message and clears stale duplicates.
