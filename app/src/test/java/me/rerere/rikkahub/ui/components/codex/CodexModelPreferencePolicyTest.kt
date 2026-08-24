@@ -2,6 +2,7 @@ package me.rerere.rikkahub.ui.components.codex
 
 import kotlinx.serialization.json.JsonObject
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerModel
+import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexReasoningEffortOption
 import me.rerere.rikkahub.data.codex.appserver.CodexModelServiceTier
 import me.rerere.rikkahub.data.model.Assistant
@@ -10,6 +11,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import kotlin.uuid.Uuid
 
 class CodexModelPreferencePolicyTest {
     @Test
@@ -42,6 +44,38 @@ class CodexModelPreferencePolicyTest {
     }
 
     @Test
+    fun `effort picker resolves explicit model and server default without leaking into provider route`() {
+        val default = model(model = "default-wire", isDefault = true)
+        val explicit = model(model = "explicit-wire")
+        val models = listOf(explicit, default)
+
+        assertEquals(
+            "explicit-wire",
+            reasoningEffortCatalogModel(CodexHarnessModelTarget.ChatGptAccount("explicit-wire"), models)?.model,
+        )
+        assertEquals(
+            "default-wire",
+            reasoningEffortCatalogModel(CodexHarnessModelTarget.ChatGptAccount(null), models)?.model,
+        )
+        assertEquals(
+            null,
+            reasoningEffortCatalogModel(CodexHarnessModelTarget.RikkaHubProvider(Uuid.random()), models),
+        )
+    }
+
+    @Test
+    fun `effort labels localize known values and preserve future strings`() {
+        assertEquals("サーバー設定", codexReasoningEffortLabel(null))
+        assertEquals("中", codexReasoningEffortLabel("medium"))
+        assertEquals("超高", codexReasoningEffortLabel("xhigh"))
+        assertEquals("focused-v2", codexReasoningEffortLabel("focused-v2"))
+        assertEquals(
+            "中 (medium) · モデル既定",
+            effortOptionTitle(CodexReasoningEffortOption("medium", "description"), "medium"),
+        )
+    }
+
+    @Test
     fun `unsupported saved effort falls back to concrete catalog default`() {
         val target = model(efforts = listOf("max", "focused"), default = "focused")
         assertEquals("focused", effortForCodexModelSelection("xhigh", target))
@@ -71,6 +105,13 @@ class CodexModelPreferencePolicyTest {
             ),
         )
         assertEquals("", codexComposerLabel(Assistant(codexAppServerEnabled = false), emptyList()))
+        assertEquals(
+            "Codex · Future · 中",
+            codexComposerLabel(
+                Assistant(codexAppServerEnabled = true, codexModel = "wire", codexReasoningEffort = "medium"),
+                listOf(model(model = "wire", displayName = "Future")),
+            ),
+        )
     }
 
     @Test

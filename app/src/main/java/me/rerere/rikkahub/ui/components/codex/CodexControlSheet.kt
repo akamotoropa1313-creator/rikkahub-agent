@@ -20,6 +20,7 @@ import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.service.threadHistoryRefreshSearchTerm
 import me.rerere.rikkahub.service.threadHistorySubmittedSearchTerm
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelTarget
+import me.rerere.rikkahub.data.codex.appserver.effectiveCodexHarnessModelTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
 import me.rerere.rikkahub.data.codex.appserver.CodexMcpAuthStatus
 import me.rerere.rikkahub.data.model.Assistant
@@ -72,9 +73,10 @@ fun CodexControlSheet(
     var title by remember { mutableStateOf("") }
     var instructions by remember { mutableStateOf("") }
     var historySearch by remember { mutableStateOf(capabilities.threadHistory.searchTerm) }
-    val usesChatGptCatalog = assistant.codexHarnessModelTarget !is CodexHarnessModelTarget.RikkaHubProvider
-    val selectedModel = if (usesChatGptCatalog) selectedCodexModel(assistant.codexModel, capabilities.models) else null
-    val serviceTierModel = if (usesChatGptCatalog) serviceTierCatalogModel(assistant.codexModel, capabilities.models) else null
+    val chatGptTarget = assistant.effectiveCodexHarnessModelTarget() as? CodexHarnessModelTarget.ChatGptAccount
+    val usesChatGptCatalog = chatGptTarget != null
+    val selectedModel = chatGptTarget?.let { reasoningEffortCatalogModel(it, capabilities.models) }
+    val serviceTierModel = chatGptTarget?.let { serviceTierCatalogModel(it.model, capabilities.models) }
     LazyColumn(
         modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
@@ -339,7 +341,7 @@ fun CodexControlSheet(
         }
         item {
             Section("モデルと動作") {
-                Text("モデル選択はアシスタント設定の「チャットモデル」から変更します。ここではApp Serverのモデルカタログと、選択したChatGPTモデル固有の動作設定だけを管理します。")
+                Text("モデルと推論強度はチャット入力欄から素早く変更できます。ここではApp Serverのモデルカタログと、選択したChatGPTモデル固有の詳細設定を管理します。")
                 Button(
                     onClick = onRefreshModels,
                     enabled = capabilities.connected && !capabilities.modelsLoading && !operationBusy,
@@ -351,13 +353,13 @@ fun CodexControlSheet(
                 if (!usesChatGptCatalog) {
                     Text("現在はRikkaHubプロバイダーのモデルを使用しています。Codex固有の推論強度・サービスティア・パーソナリティ設定は適用しません。")
                 } else {
-                    if (savedCodexModelMissing(assistant.codexModel, capabilities.models)) {
+                    if (savedCodexModelMissing(chatGptTarget?.model, capabilities.models)) {
                         Text(
-                            "保存済みのCodexモデル「${assistant.codexModel}」は利用できなくなっています。アシスタント設定のチャットモデルから別のモデルを選択してください。",
+                            "保存済みのCodexモデル「${chatGptTarget?.model}」は利用できなくなっています。アシスタント設定のチャットモデルから別のモデルを選択してください。",
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
-                    if (assistant.codexModel == null) {
+                    if (chatGptTarget?.model == null) {
                         Text("現在のChatGPTモデル設定: サーバー既定")
                     }
                 }

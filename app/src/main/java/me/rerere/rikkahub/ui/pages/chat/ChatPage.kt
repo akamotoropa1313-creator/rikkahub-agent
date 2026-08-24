@@ -83,6 +83,7 @@ import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.ai.SearchMode
 import me.rerere.rikkahub.ui.components.codex.CodexControlSheet
 import me.rerere.rikkahub.ui.components.codex.CodexHarnessModelSelector
+import me.rerere.rikkahub.ui.components.codex.CodexReasoningEffortButton
 import me.rerere.rikkahub.ui.components.codex.codexComposerLabel
 import me.rerere.rikkahub.ui.components.codex.compactContextText
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
@@ -400,6 +401,15 @@ private fun ChatPageContent(
                                     providers = setting.providers,
                                     onUpdateAssistant = vm::updateCodexModelSelection,
                                     hasBoundSession = hasCodexBinding,
+                                    enabled = !codexOperationBusy && loadingJob == null,
+                                )
+                                CodexReasoningEffortButton(
+                                    assistant = assistant,
+                                    models = codexCapabilities.models,
+                                    onUpdateAssistant = vm::updateCodexModelSelection,
+                                    onRefreshModels = vm::refreshCodexModels,
+                                    connected = codexCapabilities.connected,
+                                    modelsLoading = codexCapabilities.modelsLoading,
                                     enabled = !codexOperationBusy && loadingJob == null,
                                 )
                             }
