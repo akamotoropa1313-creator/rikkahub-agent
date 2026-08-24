@@ -691,6 +691,67 @@ class ChatService(
         }
     }
 
+    suspend fun prepareCodexSession(conversationId: Uuid) {
+        val owner = getOrCreateSession(conversationId)
+        if (owner.codexRuntime != null) return
+        check(owner.tryBeginCodexOperation()) { "Another Codex operation is already running" }
+        try {
+            codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {
+                if (owner.codexRuntime != null) return@withLock
+                ensureHydrated(conversationId)
+                val conversation = owner.state.value
+                val assistant = settingsStore.settingsFlow.first().let {
+                    it.getAssistantById(conversation.assistantId) ?: it.getCurrentAssistant()
+                }
+                check(assistant.codexAppServerEnabled) { "Codex App Server is disabled" }
+                validateCodexPreflight(conversationId, conversation, assistant, emptyList())
+                val workspaceId = checkNotNull(assistant.workspaceId).toString()
+                val cwd = conversation.workspaceCwd.orEmpty()
+                val instructions = buildString {
+                    append(assistant.systemPrompt)
+                    if (assistant.allowConversationSystemPrompt && !conversation.customSystemPrompt.isNullOrBlank()) {
+                        append("\n\n--- Conversation instructions ---\n").append(conversation.customSystemPrompt)
+                    }
+                }.ifBlank { null }
+                val personality = assistant.codexPersonality?.let { CodexAppServerPersonality.valueOf(it.name) }
+                owner.publishCodexState(CodexConversationUiState.Opening)
+                val opened = checkNotNull(codexSessionOpener) { "Codex App Server is unavailable" }.open(
+                    conversationId.toString(),
+                    workspaceId,
+                    cwd,
+                    CodexAppServerThreadStartParams(
+                        model = assistant.codexModel,
+                        serviceTier = assistant.codexServiceTier,
+                        developerInstructions = instructions,
+                        personality = personality,
+                        sandbox = CodexAppServerSandboxMode.fromPreference(assistant.codexSandboxMode),
+                        approvalPolicy = CodexAppServerApprovalPolicy.fromPreference(assistant.codexApprovalPolicy),
+                    ),
+                )
+                when (opened) {
+                    is CodexAppServerConversationSessionOpenResult.Started -> installCodexRuntime(conversationId, owner, opened.session)
+                    is CodexAppServerConversationSessionOpenResult.Recovered -> installCodexRuntime(conversationId, owner, opened.session)
+                    is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
+                        owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason.toString()))
+                        error("The existing Codex binding is stale; reset is required")
+                    }
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            if (owner.codexState.value is CodexConversationUiState.Opening) {
+                owner.publishCodexState(CodexConversationUiState.Disconnected)
+            }
+            throw cancelled
+        } catch (failure: Throwable) {
+            if (owner.codexState.value is CodexConversationUiState.Opening) {
+                owner.publishCodexState(CodexConversationUiState.Failed(failure.message ?: "Codex setup failed"))
+            }
+            throw failure
+        } finally {
+            owner.endCodexOperation()
+        }
+    }
+
     private suspend fun sendCodexTurn(
         conversationId: Uuid,
         owner: ConversationSession,

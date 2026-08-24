@@ -34,7 +34,7 @@ class CodexAppServerApprovalStdioIntegrationTest {
             shellRunner = AppServerRecordingRunner(process),
         )
         manager.ensureWorkspace("workspace")
-        val connection = WorkspaceCodexAppServerConnectionFactory(manager, "0.1.0").create("workspace")
+        val connection = WorkspaceCodexAppServerConnectionFactory(manager, CodexRuntimeResolver { CodexRuntimeReady("codex", "test", "test", managed = false) }, "0.1.0").create("workspace")
         val rawRequests = Channel<CodexAppServerEvent.ServerRequest>(Channel.UNLIMITED)
         val approvals = Channel<CodexAppServerApprovalEvent>(Channel.UNLIMITED)
         val turnEvents = Channel<CodexAppServerTurnEvent>(Channel.UNLIMITED)

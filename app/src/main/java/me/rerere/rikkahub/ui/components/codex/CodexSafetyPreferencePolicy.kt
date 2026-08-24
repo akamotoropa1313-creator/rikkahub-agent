@@ -25,12 +25,12 @@ internal fun codexSafetyConfirmation(
  */
 internal fun codexSafetyIndicator(assistant: Assistant): String? {
     val explicit = listOfNotNull(
-        "Full access".takeIf { assistant.codexSandboxMode == "danger-full-access" },
-        "No approvals".takeIf { assistant.codexApprovalPolicy == "never" },
+        "フルアクセス".takeIf { assistant.codexSandboxMode == "danger-full-access" },
+        "承認確認なし".takeIf { assistant.codexApprovalPolicy == "never" },
     )
     if (explicit.isNotEmpty()) return explicit.joinToString(" · ")
     if (assistant.codexSandboxMode == null || assistant.codexApprovalPolicy == null) {
-        return "Server safety setting · Reset clears sticky overrides"
+        return "サーバーの安全設定 · リセットすると固定された上書き設定を解除します"
     }
     return null
 }

@@ -246,6 +246,24 @@ class CodexChatRuntimeIntegrationTest {
         }
     }
 
+    @Test
+    fun `successful account completion does not leave contradictory temporary status`() {
+        val state = CodexCapabilitiesUiState(pendingLoginId = "login-1", accountStatus = "Waiting for ChatGPT sign-in")
+        val completed = applyAccountLoginCompletion(
+            state,
+            me.rerere.rikkahub.data.codex.appserver.CodexAppServerAccountEvent.LoginCompleted(
+                loginId = "login-1",
+                success = true,
+                error = null,
+                onboardingEntrypoint = null,
+                rawParams = kotlinx.serialization.json.buildJsonObject {},
+            ),
+        )
+        assertEquals(null, completed.pendingLoginId)
+        assertEquals(null, completed.accountStatus)
+        assertEquals(null, completed.accountError)
+    }
+
     private fun assertActivity(activity: CodexConversationActivity) {
         assertEquals("first\nsecond", activity.reasoning)
         assertEquals(listOf("command-1", "command-2"), activity.commands.map { it.id })

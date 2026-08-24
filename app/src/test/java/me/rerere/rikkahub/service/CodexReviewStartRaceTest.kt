@@ -113,7 +113,7 @@ class CodexReviewStartRaceTest {
                 expect<CodexAppServerResponseException> { call.await() }
             }
             assertEquals(-32601L, failure.error.code)
-            assertEquals("Native code review is not supported by this App Server", harness.runtime.review.value.error)
+            assertEquals("このApp Serverはネイティブコードレビューに対応していません", harness.runtime.review.value.error)
             assertTrue(harness.runtime.capabilities.value.connected)
             assertTrue(harness.runtime.state.value is CodexConversationUiState.Ready)
         } finally {

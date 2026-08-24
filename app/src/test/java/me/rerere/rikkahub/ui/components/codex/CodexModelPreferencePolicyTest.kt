@@ -62,7 +62,7 @@ class CodexModelPreferencePolicyTest {
 
     @Test
     fun `compact label keeps server default and future effort strings`() {
-        assertEquals("Codex · server default", codexComposerLabel(Assistant(codexAppServerEnabled = true), emptyList()))
+        assertEquals("Codex · サーバー既定", codexComposerLabel(Assistant(codexAppServerEnabled = true), emptyList()))
         assertEquals(
             "Codex · Future · focused-v2",
             codexComposerLabel(
@@ -104,7 +104,7 @@ class CodexModelPreferencePolicyTest {
     fun `composer distinguishes omitted default catalog and unknown tier`() {
         val target = model(model = "wire", displayName = "Future", tiers = listOf(CodexModelServiceTier("priority", "Fast", "Faster")))
         assertEquals("Codex · Future · Fast", codexComposerLabel(Assistant(codexAppServerEnabled = true, codexModel = "wire", codexServiceTier = "priority"), listOf(target)))
-        assertEquals("Codex · Future · Default", codexComposerLabel(Assistant(codexAppServerEnabled = true, codexModel = "wire", codexServiceTier = "default"), listOf(target)))
+        assertEquals("Codex · Future · 既定", codexComposerLabel(Assistant(codexAppServerEnabled = true, codexModel = "wire", codexServiceTier = "default"), listOf(target)))
         assertEquals("Codex · Future · unknown", codexComposerLabel(Assistant(codexAppServerEnabled = true, codexModel = "wire", codexServiceTier = "unknown"), listOf(target)))
     }
 
@@ -117,7 +117,7 @@ class CodexModelPreferencePolicyTest {
             tiers = listOf(CodexModelServiceTier("priority", "Fast", "Faster")),
         )
         assertEquals(
-            "Codex · server default · Fast",
+            "Codex · サーバー既定 · Fast",
             codexComposerLabel(Assistant(codexAppServerEnabled = true, codexServiceTier = "priority"), listOf(default)),
         )
     }

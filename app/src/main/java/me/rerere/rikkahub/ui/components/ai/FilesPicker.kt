@@ -75,6 +75,10 @@ import me.rerere.rikkahub.data.datastore.getContextCompactionTargetTokens
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
+import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeManager
+import me.rerere.rikkahub.data.codex.appserver.CodexRuntimePhase
+import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeProgress
+import kotlinx.coroutines.flow.MutableStateFlow
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
@@ -98,10 +102,14 @@ internal fun FilesPicker(
     mcpManager: McpManager,
     onCompressContext: (additionalPrompt: String, targetTokens: Int, keepRecentMessages: Int) -> Job,
     onUpdateAssistant: (Assistant) -> Unit,
+    onCodexAppServerEnabledChange: (Boolean) -> Unit,
     onUpdateConversation: (Conversation) -> Unit,
     hasCodexBinding: Boolean,
     onResetCodexSession: () -> Unit,
     codexOperationBusy: Boolean,
+    codexPrepareJobActive: Boolean,
+    onCancelCodexSetup: () -> Unit,
+    onRetryCodexSetup: () -> Unit,
     onOpenCodexControls: () -> Unit,
     showInjectionSheet: Boolean,
     onShowInjectionSheetChange: (Boolean) -> Unit,
@@ -118,14 +126,15 @@ internal fun FilesPicker(
     val provider = settings.getCurrentChatModel()?.findProvider(providers = settings.providers)
     val navController = LocalNavController.current
     val workspaceRepository: WorkspaceRepository = koinInject()
+    val runtimeManager: CodexRuntimeManager = koinInject()
     val workspaces by workspaceRepository.listFlow().collectAsState(initial = emptyList())
     var confirmCodexReset by remember { mutableStateOf(false) }
     if (confirmCodexReset) AlertDialog(
         onDismissRequest = { confirmCodexReset = false },
-        title = { Text("Reset Codex session?") },
-        text = { Text("Continuity with the current Codex thread will be lost. The next Send will create a new thread.") },
-        confirmButton = { TextButton(onClick = { confirmCodexReset = false; onResetCodexSession() }) { Text("Reset") } },
-        dismissButton = { TextButton(onClick = { confirmCodexReset = false }) { Text("Cancel") } },
+        title = { Text("Codexセッションをリセットしますか？") },
+        text = { Text("現在のCodexスレッドとの継続性が失われます。次回の送信時に新しいスレッドを作成します。") },
+        confirmButton = { TextButton(onClick = { confirmCodexReset = false; onResetCodexSession() }) { Text("リセット") } },
+        dismissButton = { TextButton(onClick = { confirmCodexReset = false }) { Text("キャンセル") } },
     )
 
     Column(
@@ -181,33 +190,68 @@ internal fun FilesPicker(
         }
 
         val selectedWorkspace = assistant.workspaceId?.let { id -> workspaces.firstOrNull { it.id == id.toString() } }
+        val fallbackRuntimeFlow = remember { MutableStateFlow(CodexRuntimeProgress()) }
+        val runtimeFlow = remember(selectedWorkspace?.root, runtimeManager) {
+            selectedWorkspace?.root?.let(runtimeManager::state) ?: fallbackRuntimeFlow
+        }
+        val runtimeProgress by runtimeFlow.collectAsState()
         val codexPrerequisite = when {
-            assistant.workspaceId == null -> "Select a workspace before enabling Codex App Server"
-            selectedWorkspace == null -> "The selected workspace is unavailable"
-            selectedWorkspace.shellStatus != WorkspaceShellStatus.READY.name -> "The workspace shell must be READY"
-            else -> "Uses an App Server-managed thread; the normal provider model is not used"
+            assistant.workspaceId == null -> "Workspaceを選択するとCodexコーディングエージェントを有効にできます"
+            selectedWorkspace == null -> "選択したWorkspaceを利用できません"
+            selectedWorkspace.shellStatus != WorkspaceShellStatus.READY.name -> "WorkspaceのLinux環境をREADYにしてください"
+            else -> "Workspace内でCodex App Serverを使用します。「設定 > プロバイダー > Codex」とは別の機能です。"
         }
         ListItem(
-            headlineContent = { Text("Codex App Server") },
+            headlineContent = { Text("Codex コーディングエージェント（App Server）") },
             supportingContent = { Text(codexPrerequisite) },
             trailingContent = {
                 Switch(
                     checked = assistant.codexAppServerEnabled,
                     enabled = assistant.codexAppServerEnabled || (selectedWorkspace?.shellStatus == WorkspaceShellStatus.READY.name),
-                    onCheckedChange = { enabled ->
-                        onUpdateAssistant(assistant.copy(codexAppServerEnabled = enabled))
-                    },
+                    onCheckedChange = onCodexAppServerEnabledChange,
                 )
             },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         )
 
         if (assistant.codexAppServerEnabled) {
+            val activeSetup = runtimeProgress.phase in setOf(
+                CodexRuntimePhase.CHECKING_WORKSPACE,
+                CodexRuntimePhase.CHECKING_PLATFORM,
+                CodexRuntimePhase.CHECKING_RUNTIME,
+                CodexRuntimePhase.DOWNLOADING,
+                CodexRuntimePhase.VERIFYING,
+                CodexRuntimePhase.INSTALLING,
+                CodexRuntimePhase.VALIDATING,
+            ) || codexPrepareJobActive
             ListItem(
-                headlineContent = { Text("Codex controls") },
+                headlineContent = { Text("Codex環境") },
+                supportingContent = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(runtimeProgress.detail ?: if (runtimeProgress.phase == CodexRuntimePhase.READY) "準備完了" else "接続準備中")
+                        if (runtimeProgress.phase == CodexRuntimePhase.DOWNLOADING && runtimeProgress.bytesRead > 0) {
+                            val total = runtimeProgress.totalBytes
+                            Text(if (total != null) "${runtimeProgress.bytesRead / 1_048_576} / ${total / 1_048_576} MiB" else "${runtimeProgress.bytesRead / 1_048_576} MiB")
+                        }
+                        runtimeProgress.version?.let { Text("検証済みランタイム: Codex $it${runtimeProgress.architecture?.let { arch -> " · $arch" }.orEmpty()}") }
+                        runtimeProgress.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    }
+                },
+                trailingContent = {
+                    when {
+                        activeSetup -> TextButton(onClick = onCancelCodexSetup) { Text("キャンセル") }
+                        runtimeProgress.phase == CodexRuntimePhase.FAILED -> TextButton(onClick = onRetryCodexSetup) { Text("再試行") }
+                        else -> Unit
+                    }
+                },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            )
+            ListItem(
+                headlineContent = { Text("Codex App Serverの設定") },
                 supportingContent = {
                     Column {
-                        Text("Connection, Account, Codex Skills, Codex MCP, and safety")
+                        Text("接続、App Serverアカウント、モデル、スキル、MCP、安全性を設定します")
+                        Text("通常のCodexプロバイダーのログイン状態とは独立しています", style = MaterialTheme.typography.bodySmall)
                         codexSafetyIndicator(assistant)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     }
                 },
@@ -217,7 +261,7 @@ internal fun FilesPicker(
         }
 
         if (hasCodexBinding) {
-            TextButton(onClick = { confirmCodexReset = true }, enabled = !codexOperationBusy) { Text("Reset Codex session") }
+            TextButton(onClick = { confirmCodexReset = true }, enabled = !codexOperationBusy) { Text("Codexセッションをリセット") }
         }
 
         if (settings.mcpServers.isNotEmpty()) {

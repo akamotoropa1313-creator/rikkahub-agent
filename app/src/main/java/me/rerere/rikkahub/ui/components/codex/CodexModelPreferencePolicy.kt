@@ -9,7 +9,7 @@ internal data class CodexServiceTierOption(val id: String, val name: String, val
 internal fun codexServiceTierOptions(model: CodexAppServerModel): List<CodexServiceTierOption> =
     model.serviceTiers?.takeIf { it.isNotEmpty() }?.map { CodexServiceTierOption(it.id, it.name, it.description) }
         ?: model.additionalSpeedTiers.orEmpty().map {
-            CodexServiceTierOption(it, if (it == "fast") "Fast" else it, "Legacy service tier")
+            CodexServiceTierOption(it, if (it == "fast") "高速" else it, "旧形式のサービスティア")
         }
 
 /**
@@ -75,10 +75,10 @@ internal fun codexComposerLabel(
     if (!assistant.codexAppServerEnabled) return ""
     val selected = selectedCodexModel(assistant.codexModel, models)
     val tierModel = serviceTierCatalogModel(assistant.codexModel, models)
-    val modelLabel = selected?.displayName ?: assistant.codexModel ?: "server default"
+    val modelLabel = selected?.displayName ?: assistant.codexModel ?: "サーバー既定"
     val effort = assistant.codexReasoningEffort?.let { " · $it" }.orEmpty()
     val tier = assistant.codexServiceTier?.let { saved ->
-        val label = if (saved == "default") "Default" else tierModel?.let { model ->
+        val label = if (saved == "default") "既定" else tierModel?.let { model ->
             codexServiceTierOptions(model).firstOrNull { it.id == saved }?.name
         } ?: saved
         " · $label"

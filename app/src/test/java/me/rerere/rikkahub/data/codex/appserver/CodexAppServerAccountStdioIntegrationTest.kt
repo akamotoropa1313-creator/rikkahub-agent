@@ -70,7 +70,7 @@ class CodexAppServerAccountStdioIntegrationTest {
         }
     }
 
-    private fun controlled():Fixture { val process=AppServerTestProcess();val manager=WorkspaceManager(createTempDirectory("account-stdio").toFile(),shellRunner=AppServerRecordingRunner(process));manager.ensureWorkspace("workspace");return Fixture(process,WorkspaceCodexAppServerConnectionFactory(manager,"0.1.0").create("workspace")) }
+    private suspend fun controlled():Fixture { val process=AppServerTestProcess();val manager=WorkspaceManager(createTempDirectory("account-stdio").toFile(),shellRunner=AppServerRecordingRunner(process));manager.ensureWorkspace("workspace");return Fixture(process,WorkspaceCodexAppServerConnectionFactory(manager, CodexRuntimeResolver { CodexRuntimeReady("codex", "test", "test", managed = false) }, "0.1.0").create("workspace")) }
     private fun assertWire(wire:JsonObject,method:String,params:JsonObject){assertEquals(method,wire["method"]!!.jsonPrimitive.content);assertEquals(params,wire["params"]);assertFalse("jsonrpc" in wire)}
     private inner class Fixture(val process:AppServerTestProcess,val connection:CodexAppServerConnection):AutoCloseable{
         suspend fun initialize(){val call=CoroutineScope(currentCoroutineContext()).async(Dispatchers.Default){connection.initialize()};val wire=awaitRequest(0);assertEquals("initialize",wire["method"]!!.jsonPrimitive.content);respond(wire,buildJsonObject{put("userAgent","codex/test");put("codexHome","/tmp");put("platformFamily","unix");put("platformOs","linux")});call.await();withTimeout(2_000){while(process.stdin.flushes<2)yield()};assertEquals("initialized",line(1)["method"]!!.jsonPrimitive.content)}

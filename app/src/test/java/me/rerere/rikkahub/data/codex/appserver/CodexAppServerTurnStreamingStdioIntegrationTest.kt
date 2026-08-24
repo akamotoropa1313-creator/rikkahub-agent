@@ -32,7 +32,7 @@ class CodexAppServerTurnStreamingStdioIntegrationTest {
             val process = AppServerTestProcess()
             val manager = WorkspaceManager(createTempDirectory("turn-interrupt").toFile(), shellRunner = AppServerRecordingRunner(process))
             manager.ensureWorkspace("workspace")
-            val connection = WorkspaceCodexAppServerConnectionFactory(manager, "0.1.0").create("workspace")
+            val connection = WorkspaceCodexAppServerConnectionFactory(manager, CodexRuntimeResolver { CodexRuntimeReady("codex", "test", "test", managed = false) }, "0.1.0").create("workspace")
             try {
                 val initializing = async(Dispatchers.Default) { connection.initialize() }
                 awaitFlushes(process, 1)
@@ -87,7 +87,7 @@ class CodexAppServerTurnStreamingStdioIntegrationTest {
     fun `controlled stdio preserves early and ordered streaming through the full stack`() {
         runBlocking {
             val process = AppServerTestProcess(); val manager = WorkspaceManager(createTempDirectory("turn-stream").toFile(), shellRunner = AppServerRecordingRunner(process))
-            manager.ensureWorkspace("workspace"); val connection = WorkspaceCodexAppServerConnectionFactory(manager, "0.1.0").create("workspace")
+            manager.ensureWorkspace("workspace"); val connection = WorkspaceCodexAppServerConnectionFactory(manager, CodexRuntimeResolver { CodexRuntimeReady("codex", "test", "test", managed = false) }, "0.1.0").create("workspace")
             val initializing = async(Dispatchers.Default) { connection.initialize() }; awaitFlushes(process, 1); val initialize = line(process, 0)
             process.writeStdout(response(initialize, buildJsonObject { put("userAgent", "codex/test"); put("codexHome", "/tmp"); put("platformFamily", "unix"); put("platformOs", "linux") }))
             initializing.await(); awaitFlushes(process, 2)

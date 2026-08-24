@@ -105,6 +105,7 @@ import me.rerere.rikkahub.ui.components.codex.CodexFileChangeApprovalCard
 import me.rerere.rikkahub.ui.components.codex.CodexCommandExecutionCard
 import me.rerere.rikkahub.ui.components.codex.CodexFileChangeCard
 import me.rerere.rikkahub.ui.components.codex.CodexTurnDiffCard
+import me.rerere.rikkahub.ui.components.codex.codexTurnErrorPresentation
 import me.rerere.rikkahub.ui.components.message.ChatMessage
 import me.rerere.rikkahub.ui.components.ui.ErrorCardsDisplay
 import me.rerere.rikkahub.ui.components.ui.ListSelectableItem
@@ -648,7 +649,7 @@ private fun CodexLiveActivity(
             when (val event = state.event) {
                 is CodexAppServerApprovalEvent.CommandExecutionRequest -> CodexCommandApprovalCard(event.request, { onCommand(event.requestId, it) }, submitting = state.submitting)
                 is CodexAppServerApprovalEvent.FileChangeRequest -> CodexFileChangeApprovalCard(event.request, { onFile(event.requestId, it) }, fileChange = state.fileChange, submitting = state.submitting)
-                else -> Text("Unsupported Codex approval event", color = MaterialTheme.colorScheme.error)
+                else -> Text("未対応のCodex承認イベントです", color = MaterialTheme.colorScheme.error)
             }
         }
         return
@@ -660,22 +661,30 @@ private fun CodexLiveActivity(
     }
     if (phaseActivity != null && phaseActivity != CodexConversationActivity()) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Codex activity", style = MaterialTheme.typography.titleSmall)
+            Text("Codexの動作", style = MaterialTheme.typography.titleSmall)
             CodexActivityContent(phaseActivity)
+            if (state is CodexConversationUiState.Terminal) {
+                codexTurnErrorPresentation(state.diagnostics)?.let { presentation ->
+                    Text(presentation.title, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleSmall)
+                    presentation.detail?.takeIf { it.isNotBlank() }?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            }
         }
         return
     }
     val text = when (state) {
-        CodexConversationUiState.Disabled -> "Codex disabled"
-        CodexConversationUiState.Disconnected -> "Codex disconnected"
-        CodexConversationUiState.Opening -> "Opening Codex App Server…"
-        is CodexConversationUiState.Ready -> "Codex ready · ${state.threadId}"
-        is CodexConversationUiState.Running -> "Codex running · ${state.turnId}"
-        is CodexConversationUiState.Terminal -> "Codex ${state.status.wireValue}"
-        is CodexConversationUiState.WaitingForApproval -> "Codex is waiting for your approval"
-        is CodexConversationUiState.StaleBinding -> "Codex binding is stale: ${state.reason}"
-        is CodexConversationUiState.WorkspaceMismatch -> "Codex workspace mismatch"
-        is CodexConversationUiState.Failed -> "Codex failed: ${state.message}"
+        CodexConversationUiState.Disabled -> "Codexは無効です"
+        CodexConversationUiState.Disconnected -> "Codexは切断されています"
+        CodexConversationUiState.Opening -> "Codex App Serverに接続しています…"
+        is CodexConversationUiState.Ready -> "Codex準備完了 · ${state.threadId}"
+        is CodexConversationUiState.Running -> "Codex実行中 · ${state.turnId}"
+        is CodexConversationUiState.Terminal -> codexTurnErrorPresentation(state.diagnostics)?.let { presentation ->
+            presentation.detail?.takeIf { it.isNotBlank() }?.let { "${presentation.title}: $it" } ?: presentation.title
+        } ?: "Codex ${state.status.wireValue}"
+        is CodexConversationUiState.WaitingForApproval -> "Codexが承認を待っています"
+        is CodexConversationUiState.StaleBinding -> "Codexのスレッド紐付けが古くなっています: ${state.reason}"
+        is CodexConversationUiState.WorkspaceMismatch -> "CodexのWorkspaceが一致しません"
+        is CodexConversationUiState.Failed -> "Codexで失敗しました: ${state.message}"
     }
     Surface(
         modifier = Modifier.fillMaxWidth(),
