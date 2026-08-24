@@ -30,6 +30,7 @@ class CodexChatRuntime(
     private val scope: CoroutineScope,
     private val onAgentText: suspend (turnId: String, itemId: String, text: String) -> Unit,
     val harnessTarget: CodexHarnessModelTarget? = null,
+    private val onTokenUsage: suspend (CodexTokenUsageSnapshot) -> Unit = {},
     private val onTurnTerminal: suspend (turnId: String) -> Unit = {},
     private val onFailure: (CodexChatRuntime, Throwable) -> Unit = { _, _ -> },
     private val onInterruptFailure: (Throwable) -> Unit = {},
@@ -76,7 +77,10 @@ class CodexChatRuntime(
     val tokenUsage: StateFlow<CodexTokenUsageTelemetry> = session.tokenUsageTracker.state
 
     private val usageCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-        tokenUsage.collect { telemetry -> _state.value = _state.value.withTelemetry(telemetry) }
+        tokenUsage.collect { telemetry ->
+            _state.value = _state.value.withTelemetry(telemetry)
+            telemetry.latest?.let { onTokenUsage(it) }
+        }
     }
 
     private val accountLoginCorrelation = CodexAccountLoginCorrelation()

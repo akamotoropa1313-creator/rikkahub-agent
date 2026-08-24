@@ -135,7 +135,12 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
+import me.rerere.rikkahub.data.codex.appserver.CodexTokenUsageSnapshot
 import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
+import me.rerere.rikkahub.data.codex.appserver.toAgentHarnessUsage
+import me.rerere.rikkahub.data.harness.AgentHarnessIds
+import me.rerere.rikkahub.data.harness.withHarnessIdentity
+import me.rerere.rikkahub.data.harness.withHarnessUsage
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
 import me.rerere.rikkahub.utils.applyPlaceholders
@@ -876,8 +881,17 @@ class ChatService(
                 installed = CodexChatRuntime(
                     session = protocolSession,
                     scope = appScope,
-                    onAgentText = { turnId, itemId, text -> persistCodexAgentText(conversationId, turnId, itemId, text) },
+                    onAgentText = { turnId, itemId, text ->
+                        persistCodexAgentText(
+                            conversationId,
+                            turnId,
+                            itemId,
+                            text,
+                            protocolSession.tokenUsageTracker.state.value.latest,
+                        )
+                    },
                     harnessTarget = assistant.effectiveCodexHarnessModelTarget(),
+                    onTokenUsage = { persistCodexUsageSafely(conversationId, it) },
                     onTurnTerminal = { persistStreamingStateNow(conversationId, updateSearchIndex = true) },
                     onInterruptFailure = { cause -> addError(cause, conversationId, title = "Codex interrupt failed") },
                     onFailure = { failed, cause ->
@@ -947,18 +961,60 @@ class ChatService(
         }
     }
 
-    private suspend fun persistCodexAgentText(conversationId: Uuid, turnId: String, itemId: String, text: String) {
+    private suspend fun persistCodexAgentText(
+        conversationId: Uuid,
+        turnId: String,
+        itemId: String,
+        text: String,
+        latestUsage: CodexTokenUsageSnapshot?,
+    ) {
         mutexFor(conversationId).withLock {
             val conversation = getConversationFlow(conversationId).value
             val key = "$conversationId:$turnId:$itemId"
             val messageId = codexMessageIds.getOrPut(key) { Uuid.random() }
-            val message = UIMessage(id = messageId, role = MessageRole.ASSISTANT, parts = listOf(UIMessagePart.Text(text)))
             val existing = conversation.getMessageNodeByMessageId(messageId)
-            val updated = if (existing == null) conversation.copy(messageNodes = conversation.messageNodes + message.toMessageNode())
-                else conversation.updateCurrentMessages(conversation.currentMessages.map { if (it.id == messageId) message else it })
+            val message = (existing?.currentMessage?.copy(parts = listOf(UIMessagePart.Text(text)))
+                ?: UIMessage(id = messageId, role = MessageRole.ASSISTANT, parts = listOf(UIMessagePart.Text(text))))
+                .withHarnessIdentity(AgentHarnessIds.CODEX, turnId)
+            var updated = if (existing == null) {
+                conversation.copy(messageNodes = conversation.messageNodes + message.toMessageNode())
+            } else {
+                conversation.updateCurrentMessages(conversation.currentMessages.map { if (it.id == messageId) message else it })
+            }
+            latestUsage
+                ?.takeIf { it.turnId == turnId }
+                ?.let { snapshot ->
+                    updated = updated.updateCurrentMessages(
+                        updated.currentMessages.withHarnessUsage(snapshot.toAgentHarnessUsage())
+                    )
+                }
             updateConversation(conversationId, updated)
             markStreamingPersistence(conversationId)
             persistStreamingStateIfDue(conversationId)
+        }
+    }
+
+    private suspend fun persistCodexUsageSafely(conversationId: Uuid, snapshot: CodexTokenUsageSnapshot) {
+        try {
+            persistCodexUsage(conversationId, snapshot)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            // Usage persistence must never tear down an otherwise healthy Codex runtime.
+            Log.w(TAG, "Unable to persist Codex usage for ${snapshot.turnId}", failure)
+        }
+    }
+
+    private suspend fun persistCodexUsage(conversationId: Uuid, snapshot: CodexTokenUsageSnapshot) {
+        mutexFor(conversationId).withLock {
+            val conversation = getConversationFlow(conversationId).value
+            val updatedMessages = conversation.currentMessages.withHarnessUsage(snapshot.toAgentHarnessUsage())
+            if (updatedMessages == conversation.currentMessages) return
+            updateConversation(conversationId, conversation.updateCurrentMessages(updatedMessages))
+            markStreamingPersistence(conversationId)
+            // Usage notifications are sparse and may race just after turn/completed. Flush each
+            // one so the terminal snapshot cannot leave the final counters only in memory.
+            persistStreamingStateNow(conversationId, updateSearchIndex = false)
         }
     }
 
@@ -1044,8 +1100,17 @@ class ChatService(
     ): CodexChatRuntime {
         lateinit var installed: CodexChatRuntime
         installed = CodexChatRuntime(protocolSession, appScope,
-            onAgentText = { turnId, itemId, text -> persistCodexAgentText(conversationId, turnId, itemId, text) },
+            onAgentText = { turnId, itemId, text ->
+                persistCodexAgentText(
+                    conversationId,
+                    turnId,
+                    itemId,
+                    text,
+                    protocolSession.tokenUsageTracker.state.value.latest,
+                )
+            },
             harnessTarget = harnessTarget,
+            onTokenUsage = { persistCodexUsageSafely(conversationId, it) },
             onTurnTerminal = { persistStreamingStateNow(conversationId, updateSearchIndex = true) },
             onInterruptFailure = { addError(it, conversationId, title = "Codex interrupt failed") },
             onFailure = { failed, cause -> appScope.launch { owner.publishCodexState(CodexConversationUiState.Failed(cause.message ?: cause.toString())); if (owner.detachCodexRuntime(failed)) failed.close() } },

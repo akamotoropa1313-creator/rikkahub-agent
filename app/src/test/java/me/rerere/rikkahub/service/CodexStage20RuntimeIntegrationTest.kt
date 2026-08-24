@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.withTimeout
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerClientInfo
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConnection
@@ -19,6 +20,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepos
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTransport
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTransportEvent
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnStatus
+import me.rerere.rikkahub.data.codex.appserver.CodexTokenUsageSnapshot
 import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
 import me.rerere.rikkahub.data.db.dao.CodexAppServerSessionBindingDao
 import me.rerere.rikkahub.data.db.entity.CodexAppServerSessionBindingEntity
@@ -32,7 +34,8 @@ import org.junit.Test
 class CodexStage20RuntimeIntegrationTest {
     @Test
     fun `usage remains live while waiting for approval and malformed telemetry does not fail turn`() = runBlocking {
-        val harness = harness(this)
+        val usageCallbacks = CopyOnWriteArrayList<CodexTokenUsageSnapshot>()
+        val harness = harness(this, usageCallbacks = usageCallbacks)
         try {
             harness.transport.emit(turnStarted())
             awaitState(harness.runtime) { it is CodexConversationUiState.Running }
@@ -54,6 +57,10 @@ class CodexStage20RuntimeIntegrationTest {
                 it is CodexConversationUiState.WaitingForApproval && it.telemetry.latest?.tokenUsage?.total?.totalTokens == 20L
             } as CodexConversationUiState.WaitingForApproval
             assertEquals(7L, updatedWaiting.telemetry.latest?.tokenUsage?.last?.totalTokens)
+            withTimeout(2_000) {
+                while (usageCallbacks.lastOrNull()?.tokenUsage?.total?.totalTokens != 20L) yield()
+            }
+            assertEquals("turn-1", usageCallbacks.last().turnId)
 
             harness.transport.emit(malformedUsage())
             val warned = awaitState(harness.runtime) {
@@ -102,7 +109,11 @@ class CodexStage20RuntimeIntegrationTest {
         predicate: (CodexConversationUiState) -> Boolean,
     ): CodexConversationUiState = withTimeout(2_000) { runtime.state.first(predicate) }
 
-    private fun harness(scope: CoroutineScope, callbacks: AtomicInteger = AtomicInteger()): Harness {
+    private fun harness(
+        scope: CoroutineScope,
+        callbacks: AtomicInteger = AtomicInteger(),
+        usageCallbacks: MutableList<CodexTokenUsageSnapshot> = CopyOnWriteArrayList(),
+    ): Harness {
         val binding = CodexAppServerSessionBindingEntity(
             conversationId = "conversation-1",
             workspaceId = "workspace-1",
@@ -128,6 +139,7 @@ class CodexStage20RuntimeIntegrationTest {
             session,
             scope,
             onAgentText = { _, _, _ -> },
+            onTokenUsage = { usageCallbacks += it },
             onTurnTerminal = { callbacks.incrementAndGet() },
         )
         return Harness(runtime, transport)

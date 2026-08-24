@@ -1040,9 +1040,14 @@ mDNSアドレス: .localホスト名を使用し、IPを知らなくても同じ
   <string name="stats_page_heatmap_less">少ない</string>
   <string name="stats_page_heatmap_more">もっと見る</string>
   <string name="stats_page_heatmap_title">チャットヒートマップ</string>
+  <string name="stats_page_harness_runs">%1$s 回実行</string>
+  <string name="stats_page_harness_usage">ハーネス使用量</string>
+  <string name="stats_page_harness_usage_description">実行元ごとに保存済みのトークン使用量を表示</string>
   <string name="stats_page_input_tokens">入力トークン</string>
   <string name="stats_page_launch_count">アプリ起動回数</string>
   <string name="stats_page_output_tokens">出力トークン</string>
+  <string name="stats_page_reasoning_tokens">推論出力</string>
+  <string name="stats_page_cache_write_tokens">キャッシュ書き込み入力</string>
   <string name="stats_page_title">統計</string>
   <string name="stats_page_total_conversations">総会話数</string>
   <string name="stats_page_total_messages">メッセージ総数</string>

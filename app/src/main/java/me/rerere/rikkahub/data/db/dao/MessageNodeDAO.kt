@@ -45,6 +45,9 @@ interface MessageNodeDAO {
     suspend fun getTokenStatsRaw(query: SupportSQLiteQuery): MessageTokenStats
 
     @RawQuery
+    suspend fun getHarnessTokenStatsRaw(query: SupportSQLiteQuery): List<HarnessTokenStats>
+
+    @RawQuery
     suspend fun getMessageCountPerDayRaw(query: SupportSQLiteQuery): List<MessageDayCount>
 }
 
@@ -57,6 +60,17 @@ data class MessageTokenStats(
 
 data class MessageDayCount(val day: String, val count: Int)
 
+/** One row per open-string harness id stored in UIMessage.harness. */
+data class HarnessTokenStats(
+    val harnessId: String,
+    val runCount: Int = 0,
+    val promptTokens: Long = 0L,
+    val completionTokens: Long = 0L,
+    val cachedTokens: Long = 0L,
+    val reasoningTokens: Long = 0L,
+    val cacheWriteTokens: Long = 0L,
+)
+
 // SQLite json_each() 展开 messages JSON 数组，json_extract() 提取 Token 字段并聚合
 private val TOKEN_STATS_SQL = SimpleSQLiteQuery(
     "SELECT COUNT(*) AS totalMessages, " +
@@ -67,6 +81,25 @@ private val TOKEN_STATS_SQL = SimpleSQLiteQuery(
 )
 
 suspend fun MessageNodeDAO.getTokenStats(): MessageTokenStats = getTokenStatsRaw(TOKEN_STATS_SQL)
+
+private val HARNESS_TOKEN_STATS_SQL = SimpleSQLiteQuery(
+    "SELECT json_extract(j.value, '$.harness.id') AS harnessId, " +
+        "COUNT(*) AS runCount, " +
+        "COALESCE(SUM(CAST(json_extract(j.value, '$.usage.promptTokens') AS INTEGER)), 0) AS promptTokens, " +
+        "COALESCE(SUM(CAST(json_extract(j.value, '$.usage.completionTokens') AS INTEGER)), 0) AS completionTokens, " +
+        "COALESCE(SUM(CAST(json_extract(j.value, '$.usage.cachedTokens') AS INTEGER)), 0) AS cachedTokens, " +
+        "COALESCE(SUM(CAST(json_extract(j.value, '$.harness.reasoningOutputTokens') AS INTEGER)), 0) AS reasoningTokens, " +
+        "COALESCE(SUM(CAST(json_extract(j.value, '$.harness.cacheWriteInputTokens') AS INTEGER)), 0) AS cacheWriteTokens " +
+        "FROM message_node mn, json_each(mn.messages) j " +
+        "WHERE json_extract(j.value, '$.harness.id') IS NOT NULL " +
+        "AND json_extract(j.value, '$.harness.id') != '' " +
+        "AND json_extract(j.value, '$.usage') IS NOT NULL " +
+        "GROUP BY harnessId " +
+        "ORDER BY promptTokens + completionTokens DESC, harnessId ASC"
+)
+
+suspend fun MessageNodeDAO.getHarnessTokenStats(): List<HarnessTokenStats> =
+    getHarnessTokenStatsRaw(HARNESS_TOKEN_STATS_SQL)
 
 // 按用户消息的 createdAt 字段（LocalDateTime ISO 字符串前10位即日期）统计每日消息数
 suspend fun MessageNodeDAO.getMessageCountPerDay(startDate: String): List<MessageDayCount> =
@@ -81,4 +114,3 @@ suspend fun MessageNodeDAO.getMessageCountPerDay(startDate: String): List<Messag
             arrayOf(startDate)
         )
     )
-

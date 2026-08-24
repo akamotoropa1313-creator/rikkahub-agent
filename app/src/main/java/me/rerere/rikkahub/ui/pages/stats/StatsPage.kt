@@ -4,6 +4,7 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ChartColumn
 import me.rerere.hugeicons.stroke.Cpu
 import me.rerere.hugeicons.stroke.Message01
+import me.rerere.hugeicons.stroke.Robot01
 import me.rerere.hugeicons.stroke.Rocket01
 import me.rerere.hugeicons.stroke.Zap
 import androidx.compose.foundation.background
@@ -26,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -96,6 +98,14 @@ fun StatsPage(vm: StatsVM = koinViewModel()) {
                         stats = stats,
                         modifier = Modifier.padding(horizontal = 8.dp),
                     )
+                }
+                if (stats.harnessUsage.isNotEmpty()) {
+                    item {
+                        HarnessUsageCard(
+                            usage = stats.harnessUsage,
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                        )
+                    }
                 }
             }
         }
@@ -340,6 +350,133 @@ private fun StatsGrid(stats: AppStats, modifier: Modifier = Modifier) {
             value = formatCount(stats.launchCount.toLong()),
         )
     }
+}
+
+@Composable
+private fun HarnessUsageCard(
+    usage: List<HarnessUsageStats>,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CustomColors.cardColorsOnSurfaceContainer,
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = HugeIcons.Robot01,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp),
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = stringResource(R.string.stats_page_harness_usage),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = stringResource(R.string.stats_page_harness_usage_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            usage.forEachIndexed { index, item ->
+                if (index > 0) HorizontalDivider()
+                HarnessUsageBlock(item)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HarnessUsageBlock(usage: HarnessUsageStats) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = harnessDisplayName(usage.harnessId),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = stringResource(
+                    R.string.stats_page_harness_runs,
+                    formatCount(usage.runCount.toLong()),
+                ),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        val metrics = buildList {
+            add(stringResource(R.string.stats_page_input_tokens) to formatTokens(usage.promptTokens))
+            add(stringResource(R.string.stats_page_output_tokens) to formatTokens(usage.completionTokens))
+            add(stringResource(R.string.stats_page_cached_tokens) to formatTokens(usage.cachedTokens))
+            add(stringResource(R.string.stats_page_reasoning_tokens) to formatTokens(usage.reasoningTokens))
+            if (usage.cacheWriteTokens > 0L) {
+                add(stringResource(R.string.stats_page_cache_write_tokens) to formatTokens(usage.cacheWriteTokens))
+            }
+        }
+        metrics.chunked(2).forEach { rowMetrics ->
+            if (rowMetrics.size == 1) {
+                HarnessMetric(
+                    modifier = Modifier.fillMaxWidth(),
+                    label = rowMetrics.single().first,
+                    value = rowMetrics.single().second,
+                )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    rowMetrics.forEach { (label, value) ->
+                        HarnessMetric(
+                            modifier = Modifier.weight(1f),
+                            label = label,
+                            value = value,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HarnessMetric(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(text = value, style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun harnessDisplayName(id: String): String = when (id) {
+    "codex" -> "Codex"
+    else -> id
 }
 
 @Composable
