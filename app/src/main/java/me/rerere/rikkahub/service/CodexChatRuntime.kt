@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -79,12 +80,13 @@ class CodexChatRuntime(
     }
 
     private val accountLoginCorrelation = CodexAccountLoginCorrelation()
+    private var accountSnapshotRefreshJob: Job? = null
     private val accountCollector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.accountApi.events.collect { event ->
             when (event) {
                 is CodexAppServerAccountEvent.LoginCompleted ->
                     accountLoginCorrelation.onCompletion(event) { completion ->
-                        _capabilities.value = applyAccountLoginCompletion(_capabilities.value, completion)
+                        completeAccountLogin(completion)
                     }
                 is CodexAppServerAccountEvent.MalformedNotification ->
                     _capabilities.value = _capabilities.value.copy(accountError = event.cause.message ?: "アカウントイベントの形式が不正です")
@@ -108,6 +110,40 @@ class CodexChatRuntime(
         check(activeTurnId == null) { "A Codex turn is already running" }
         check(capabilityBusy.compareAndSet(false, true)) { "Another Codex operation is already running" }
         try { block() } finally { capabilityBusy.set(false) }
+    }
+
+    /** A successful browser handoff is not visible in account/read until the cached snapshot is refreshed. */
+    private fun completeAccountLogin(event: CodexAppServerAccountEvent.LoginCompleted) {
+        _capabilities.value = applyAccountLoginCompletion(_capabilities.value, event)
+        if (!event.success || closed.get()) return
+
+        accountSnapshotRefreshJob?.cancel()
+        accountSnapshotRefreshJob = scope.launch {
+            _capabilities.value = _capabilities.value.copy(accountLoading = true, accountError = null)
+            try {
+                val account = session.accountApi.readAccount()
+                if (!closed.get()) {
+                    _capabilities.value = _capabilities.value.copy(
+                        account = account,
+                        accountStatus = null,
+                        accountError = null,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (!closed.get()) {
+                    _capabilities.value = _capabilities.value.copy(
+                        accountStatus = null,
+                        accountError = "サインインは完了しましたが、アカウント情報を自動更新できませんでした。「更新」を押してください。 (${failure.safeMessage()})",
+                    )
+                }
+            } finally {
+                if (!closed.get()) {
+                    _capabilities.value = _capabilities.value.copy(accountLoading = false)
+                }
+            }
+        }
     }
 
     /** Starts a stable native inline review under the same operation/turn admission gate. */
@@ -291,6 +327,8 @@ class CodexChatRuntime(
     }
 
     suspend fun refreshAccount(refreshToken: Boolean = false) = capabilityOperation {
+        accountSnapshotRefreshJob?.cancelAndJoin()
+        accountSnapshotRefreshJob = null
         _capabilities.value = _capabilities.value.copy(accountLoading = true, accountError = null)
         try {
             val account = session.accountApi.readAccount(refreshToken)
@@ -310,6 +348,8 @@ class CodexChatRuntime(
     }
 
     suspend fun beginAccountLogin(launcher: CodexAppServerAuthUrlLauncher) = capabilityOperation {
+        accountSnapshotRefreshJob?.cancelAndJoin()
+        accountSnapshotRefreshJob = null
         accountLoginCorrelation.beginAttempt {
             _capabilities.value = _capabilities.value.copy(accountSubmitting = true, accountError = null)
         }
@@ -318,7 +358,7 @@ class CodexChatRuntime(
             accountLoginCorrelation.resolveStart(
                 pending.loginId,
                 onCompletion = { completion ->
-                    _capabilities.value = applyAccountLoginCompletion(_capabilities.value, completion)
+                    completeAccountLogin(completion)
                 },
                 onPending = { loginId ->
                     _capabilities.value = _capabilities.value.copy(pendingLoginId = loginId)
@@ -331,7 +371,7 @@ class CodexChatRuntime(
             accountLoginCorrelation.resolveStart(
                 cancelled.loginId,
                 onCompletion = { completion ->
-                    _capabilities.value = applyAccountLoginCompletion(_capabilities.value, completion)
+                    completeAccountLogin(completion)
                 },
                 onPending = { loginId ->
                     _capabilities.value = _capabilities.value.copy(pendingLoginId = loginId, accountError = null)
@@ -342,7 +382,7 @@ class CodexChatRuntime(
             accountLoginCorrelation.resolveStart(
                 failure.loginId,
                 onCompletion = { completion ->
-                    _capabilities.value = applyAccountLoginCompletion(_capabilities.value, completion)
+                    completeAccountLogin(completion)
                 },
                 onPending = { loginId ->
                     _capabilities.value = _capabilities.value.copy(pendingLoginId = loginId, accountError = failure.safeMessage())
@@ -390,6 +430,8 @@ class CodexChatRuntime(
         }
     }
     suspend fun logoutAccount() = capabilityOperation {
+        accountSnapshotRefreshJob?.cancelAndJoin()
+        accountSnapshotRefreshJob = null
         session.accountApi.logout()
         _capabilities.value = _capabilities.value.copy(
             account = session.accountApi.readAccount(),
@@ -781,6 +823,7 @@ class CodexChatRuntime(
         failureCollector.cancel()
         approvalCollector.cancel()
         accountCollector.cancel()
+        accountSnapshotRefreshJob?.cancel()
         mcpCollector.cancel()
         usageCollector.cancel()
         synchronized(approvalLock) { pendingApprovals.clear() }
@@ -922,7 +965,7 @@ sealed interface CodexConversationUiState {
             else -> null
         }
     }
-    data class StaleBinding(val reason: String) : CodexConversationUiState
+    data class StaleBinding(val reason: CodexAppServerStaleBindingReason) : CodexConversationUiState
     data class WorkspaceMismatch(val boundWorkspaceId: String, val requestedWorkspaceId: String) : CodexConversationUiState
     data class Failed(val message: String) : CodexConversationUiState
 }

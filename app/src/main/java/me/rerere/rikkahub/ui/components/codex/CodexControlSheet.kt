@@ -31,6 +31,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexConfigRequirementsSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerItemSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerUserInput
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerStaleBindingReason
 import me.rerere.rikkahub.service.CodexReviewUiState
 import me.rerere.rikkahub.service.CodexReviewAction
 
@@ -61,8 +62,10 @@ fun CodexControlSheet(
     onMcpSignIn: (String) -> Unit,
     operationBusy: Boolean,
     onReconnect: () -> Unit,
+    onResetSession: () -> Unit,
 ) {
     var pendingSafety by remember { mutableStateOf<Pair<String?, String?>?>(null) }
+    var confirmSessionReset by remember { mutableStateOf(false) }
     var reviewKind by remember { mutableStateOf("作業ツリー") }
     var branch by remember { mutableStateOf("") }
     var sha by remember { mutableStateOf("") }
@@ -82,7 +85,16 @@ fun CodexControlSheet(
             Section("接続") {
                 Text(connectionLabel(connection, hasBinding))
                 if (codexReconnectEligible(connection, hasBinding, capabilities.connected, operationBusy)) {
-                    Button(onClick = onReconnect) { Text("Codexに再接続") }
+                    Button(
+                        onClick = onReconnect,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) { Text("Codexに再接続") }
+                }
+                if (codexResetEligible(connection, hasBinding, operationBusy)) {
+                    OutlinedButton(
+                        onClick = { confirmSessionReset = true },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) { Text("Codexセッションをリセット") }
                 }
             }
         }
@@ -449,19 +461,36 @@ fun CodexControlSheet(
             items(
                 items = group.skills.distinctBy { it.path },
             ) { skill ->
-                ListItem(
-                    headlineContent = { Text(skill.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    supportingContent = { Text(skill.shortDescription ?: skill.description, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                    trailingContent = {
-                        Row {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(skill.name, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            skill.shortDescription ?: skill.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
                             TextButton(
                                 onClick = { onSetSkillEnabled(skill, !skill.enabled) },
                                 enabled = capabilities.skillUpdatingPath == null && !operationBusy,
                             ) { Text(if (skill.enabled) "無効化" else "有効化") }
                             TextButton(onClick = { onUseSkill(skill) }, enabled = skill.enabled && !operationBusy) { Text("使用") }
                         }
-                    },
-                )
+                    }
+                }
             }
             items(items = group.errors) { error ->
                 Text(error.message, color = MaterialTheme.colorScheme.error)
@@ -511,6 +540,22 @@ fun CodexControlSheet(
             }) },
             confirmButton = { TextButton(onClick = { onUpdateAssistant { it.copy(codexSandboxMode = pending.first, codexApprovalPolicy = pending.second) }; pendingSafety = null }) { Text("確認") } },
             dismissButton = { TextButton(onClick = { pendingSafety = null }) { Text("キャンセル") } },
+        )
+    }
+    if (confirmSessionReset) {
+        AlertDialog(
+            onDismissRequest = { confirmSessionReset = false },
+            title = { Text("Codexセッションをリセットしますか？") },
+            text = { Text("RikkaHubの会話履歴は残りますが、現在のCodexスレッドとの継続性は失われます。次回の送信時に新しいスレッドを作成します。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmSessionReset = false
+                    onResetSession()
+                }) { Text("リセット") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmSessionReset = false }) { Text("キャンセル") }
+            },
         )
     }
 }
@@ -580,8 +625,19 @@ private fun connectionLabel(state: CodexConversationUiState, bound: Boolean) = w
     is CodexConversationUiState.Running, is CodexConversationUiState.WaitingForApproval -> "実行中"
     is CodexConversationUiState.Terminal -> "接続済み"
     is CodexConversationUiState.Failed -> "失敗: ${state.message}"
-    is CodexConversationUiState.StaleBinding -> "失敗: ${state.reason}"
+    is CodexConversationUiState.StaleBinding -> "要リセット: ${codexStaleBindingMessage(state.reason)}"
     is CodexConversationUiState.WorkspaceMismatch -> "失敗: Workspaceが一致しません"
+}
+
+internal fun codexStaleBindingMessage(reason: CodexAppServerStaleBindingReason): String = when (reason) {
+    CodexAppServerStaleBindingReason.MissingConversation ->
+        "元のRikkaHub会話が見つかりません。セッションをリセットしてください。"
+    CodexAppServerStaleBindingReason.MissingWorkspace ->
+        "紐付け先のWorkspaceが見つかりません。Workspaceを選び直してからリセットしてください。"
+    CodexAppServerStaleBindingReason.ThreadNotLoaded ->
+        "Codex側に保存済みスレッドがありません。セッションをリセットしてください。"
+    is CodexAppServerStaleBindingReason.HarnessRouteChanged ->
+        "選択したモデルの実行先が以前のスレッドと異なります。セッションをリセットしてください。"
 }
 
 @Composable
@@ -616,5 +672,14 @@ internal fun codexReconnectEligible(
     operationBusy: Boolean,
 ): Boolean = hasBinding && !runtimeConnected && !operationBusy && when (state) {
     CodexConversationUiState.Disconnected, is CodexConversationUiState.Failed -> true
+    else -> false
+}
+
+internal fun codexResetEligible(
+    state: CodexConversationUiState,
+    hasBinding: Boolean,
+    operationBusy: Boolean,
+): Boolean = hasBinding && !operationBusy && when (state) {
+    is CodexConversationUiState.StaleBinding, is CodexConversationUiState.WorkspaceMismatch -> true
     else -> false
 }

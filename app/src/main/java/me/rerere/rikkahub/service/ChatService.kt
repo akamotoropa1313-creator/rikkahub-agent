@@ -806,7 +806,7 @@ class ChatService(
                     is CodexAppServerConversationSessionOpenResult.Recovered ->
                         installCodexRuntime(conversationId, owner, opened.session, assistant.effectiveCodexHarnessModelTarget())
                     is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
-                        owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason.toString()))
+                        owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason))
                         error("The existing Codex binding is stale; reset is required")
                     }
                 }
@@ -868,7 +868,7 @@ class ChatService(
                 is CodexAppServerConversationSessionOpenResult.Started -> opened.session
                 is CodexAppServerConversationSessionOpenResult.Recovered -> opened.session
                 is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
-                    owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason.toString()))
+                    owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason))
                     throw IllegalStateException("The existing Codex binding is stale; reset is required")
                 }
             }.let { protocolSession ->
@@ -1025,7 +1025,7 @@ class ChatService(
                     is CodexAppServerConversationSessionOpenResult.Started ->
                         installCodexRuntime(conversationId, owner, opened.session, assistant.effectiveCodexHarnessModelTarget())
                     is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
-                        owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason.toString()))
+                        owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason))
                         error("The existing Codex binding is stale")
                     }
                 }
@@ -1293,13 +1293,12 @@ class ChatService(
         // skips the Pending → handleToolApproval path entirely.
         val priorGenerationJob = session.getJob()
 
-        // Commit the broader-scope grant on a NonCancellable scope BEFORE the cancellable
-        // mutation block. Previous design ran grantAlways() inside the cancellable
-        // appScope.launch — a rapid second tap would cancel the first job and silently
-        // drop the persisted Always-Allow grant; the user thinks they granted it, the next
-        // prompt reappears. NonCancellable + before-launch-completion guarantees the write.
-        if (approved && toolName != null && scope != ApprovalScope.Once) {
-            appScope.launch(NonCancellable) {
+        // Keep the broader-scope grant independent from the conversation resume job. A rapid
+        // second tap may replace that resume job, but must not discard the user's persisted
+        // choice. Do not pass NonCancellable to launch: that severs structured concurrency from
+        // appScope. Instead, use an appScope child on IO and make the resume wait for the write.
+        val approvalGrantJob = if (approved && toolName != null && scope != ApprovalScope.Once) {
+            appScope.launch(Dispatchers.IO) {
                 runCatching {
                     // Smart-cast on the surrounding `if` excluded Once already, so only
                     // ChatScope and Always remain — the when is exhaustive without else.
@@ -1311,11 +1310,12 @@ class ChatService(
                     }
                 }.onFailure { Log.w(TAG, "approval grant write failed", it) }
             }
-        }
+        } else null
 
         val releaseForegroundWork = foregroundWorkTracker.acquire()
         val job = appScope.launch {
             try {
+                approvalGrantJob?.join()
                 awaitForegroundWorkReady()
                 convMutex.withLock {
                     // Hydrate from disk if the in-memory session is empty (post-restart

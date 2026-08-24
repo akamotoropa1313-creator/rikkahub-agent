@@ -12,10 +12,15 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAccount
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerClientInfo
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConnection
@@ -39,6 +44,53 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CodexChatRuntimeIntegrationTest {
+    @Test
+    fun `successful browser login refreshes the account snapshot automatically`() = runBlocking {
+        val harness = harness(this)
+        try {
+            val initializing = async { harness.connection.initialize() }
+            val initialize = awaitClientMessage(harness.transport, 0)
+            harness.transport.emit(
+                """{"id":${initialize["id"]},"result":{"userAgent":"test","codexHome":"/home","platformFamily":"unix","platformOs":"linux"}}""",
+            )
+            initializing.await()
+            assertEquals("initialized", awaitClientMessage(harness.transport, 1)["method"]?.jsonPrimitive?.content)
+
+            val beginning = async {
+                harness.runtime.beginAccountLogin(CodexAppServerAuthUrlLauncher { })
+            }
+            val login = awaitClientMessage(harness.transport, 2)
+            assertEquals("account/login/start", login["method"]?.jsonPrimitive?.content)
+            harness.transport.emit(
+                """{"id":${login["id"]},"result":{"type":"chatgpt","loginId":"login-1","authUrl":"https://auth.openai.com/start"}}""",
+            )
+            beginning.await()
+            assertEquals("login-1", harness.runtime.capabilities.value.pendingLoginId)
+
+            harness.transport.emit(notification("account/login/completed", buildJsonObject {
+                put("loginId", "login-1")
+                put("success", true)
+            }))
+            val accountRead = awaitClientMessage(harness.transport, 3)
+            assertEquals("account/read", accountRead["method"]?.jsonPrimitive?.content)
+            harness.transport.emit(
+                """{"id":${accountRead["id"]},"result":{"account":{"type":"chatgpt","email":"user@example.com","planType":"plus"},"requiresOpenaiAuth":false}}""",
+            )
+
+            val refreshed = withTimeout(2_000) {
+                harness.runtime.capabilities.first {
+                    it.account?.account is CodexAppServerAccount.ChatGpt && !it.accountLoading
+                }
+            }
+            assertNull(refreshed.pendingLoginId)
+            assertEquals("user@example.com", (refreshed.account?.account as CodexAppServerAccount.ChatGpt).email)
+            assertFalse(refreshed.accountLoading)
+            assertNull(refreshed.accountError)
+        } finally {
+            harness.runtime.close()
+        }
+    }
+
     @Test
     fun `activity survives approval resolution late start response and terminal`() = runBlocking {
         val harness = harness(this)
@@ -299,12 +351,13 @@ class CodexChatRuntimeIntegrationTest {
             CodexAppServerClientInfo(version = "test"),
         )
         val session = CodexAppServerConversationSession(binding, connection, repository)
-        return Harness(CodexChatRuntime(session, scope, onAgentText = onAgentText), transport)
+        return Harness(CodexChatRuntime(session, scope, onAgentText = onAgentText), transport, connection)
     }
 
     private data class Harness(
         val runtime: CodexChatRuntime,
         val transport: FakeTransport,
+        val connection: CodexAppServerConnection,
     )
 
     private class FakeTransport : CodexAppServerTransport {
@@ -371,6 +424,12 @@ class CodexChatRuntimeIntegrationTest {
 
     private fun notification(method: String, params: JsonObject) =
         "{\"method\":${JsonPrimitive(method)},\"params\":$params}"
+
+    private suspend fun awaitClientMessage(transport: FakeTransport, index: Int): JsonObject =
+        withTimeout(2_000) {
+            while (transport.sentLines.size <= index) yield()
+            Json.parseToJsonElement(transport.sentLines[index]).jsonObject
+        }
 
     private fun serverRequest(id: JsonRpcId, method: String, params: JsonObject): String {
         val encodedId = when (id) {

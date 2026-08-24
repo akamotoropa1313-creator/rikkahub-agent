@@ -631,6 +631,7 @@ private fun ChatPageContent(
                     onMcpSignIn = vm::beginCodexMcpOAuth,
                     operationBusy = codexOperationBusy,
                     onReconnect = vm::reconnectCodexSession,
+                    onResetSession = vm::resetCodexSession,
                 )
             }
         }

@@ -18,6 +18,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -33,6 +34,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderSetting
@@ -72,18 +75,30 @@ fun CodexHarnessModelSelector(
     var visible by remember { mutableStateOf(false) }
     var pendingSelection by remember { mutableStateOf<PendingCodexModelSelection?>(null) }
 
-    val selectedLabel = CodexHarnessModelPresentationResolver.resolve(
+    val presentation = CodexHarnessModelPresentationResolver.resolve(
         target = target,
         providers = providers,
         chatGptModels = accountModels,
-    ).compactLabel
+    )
+    val selectedLabel = presentation.compactLabel
+    val iconName = when (target) {
+        is CodexHarnessModelTarget.ChatGptAccount -> target.model ?: "ChatGPT"
+        is CodexHarnessModelTarget.RikkaHubProvider ->
+            presentation.model?.modelId ?: presentation.providerName
+    }
 
-    TextButton(
+    IconButton(
         onClick = { visible = true },
-        modifier = modifier,
+        modifier = modifier.semantics {
+            stateDescription = "選択中のモデル: $selectedLabel"
+        },
         enabled = enabled,
     ) {
-        Text(selectedLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        AutoAIIcon(
+            name = iconName,
+            modifier = Modifier.size(36.dp),
+            color = Color.Transparent,
+        )
     }
 
     fun applySelection(selection: PendingCodexModelSelection) {
@@ -227,6 +242,7 @@ private fun CodexHarnessModelSheet(
                         AccountModelRow(
                             title = "サーバー既定",
                             description = "Codex App Serverが選ぶ既定モデルを使用",
+                            iconName = "ChatGPT",
                             selected = target == CodexHarnessModelTarget.ChatGptAccount(null),
                             onClick = onSelectAccountDefault,
                         )
@@ -245,6 +261,7 @@ private fun CodexHarnessModelSheet(
                         AccountModelRow(
                             title = model.displayName + if (model.isDefault) " · 既定" else "",
                             description = model.description,
+                            iconName = model.model,
                             selected = target is CodexHarnessModelTarget.ChatGptAccount && target.model == model.model,
                             onClick = { onSelectAccountModel(model) },
                         )
@@ -301,6 +318,7 @@ private fun ProviderHeader(name: String) {
 private fun AccountModelRow(
     title: String,
     description: String,
+    iconName: String,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
@@ -317,7 +335,7 @@ private fun AccountModelRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            AutoAIIcon(name = title, modifier = Modifier.size(40.dp), color = Color.Transparent)
+            AutoAIIcon(name = iconName, modifier = Modifier.size(40.dp), color = Color.Transparent)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (description.isNotBlank()) {

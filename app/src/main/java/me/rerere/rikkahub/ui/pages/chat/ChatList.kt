@@ -96,6 +96,7 @@ import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.service.CodexConversationActivity
+import me.rerere.rikkahub.ui.components.codex.codexStaleBindingMessage
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
@@ -691,7 +692,7 @@ private fun CodexLiveActivity(
             presentation.detail?.takeIf { it.isNotBlank() }?.let { "${presentation.title}: $it" } ?: presentation.title
         } ?: "Codex ${state.status.wireValue}"
         is CodexConversationUiState.WaitingForApproval -> "Codexが承認を待っています"
-        is CodexConversationUiState.StaleBinding -> "Codexのスレッド紐付けが古くなっています: ${state.reason}"
+        is CodexConversationUiState.StaleBinding -> "Codexのスレッド紐付けをリセットしてください: ${codexStaleBindingMessage(state.reason)}"
         is CodexConversationUiState.WorkspaceMismatch -> "CodexのWorkspaceが一致しません"
         is CodexConversationUiState.Failed -> "Codexで失敗しました: ${state.message}"
     }
