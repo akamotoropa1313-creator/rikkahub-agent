@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.service
 
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -46,6 +47,42 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CodexChatRuntimeIntegrationTest {
+    @Test
+    fun `slow timeline persistence does not block later protocol activity`() = runBlocking {
+        val persistenceStarted = CompletableDeferred<Unit>()
+        val releasePersistence = CompletableDeferred<Unit>()
+        val harness = harness(this, onTurnParts = { _, _ ->
+            if (persistenceStarted.complete(Unit)) releasePersistence.await()
+        })
+        try {
+            harness.transport.emit(notification("turn/started", turnParams("inProgress")))
+            harness.transport.emit(notification("item/started", itemParams(buildJsonObject {
+                put("type", "agentMessage")
+                put("id", "agent-1")
+                put("text", "")
+            }, "startedAtMs", 10)))
+            harness.transport.emit(notification("item/agentMessage/delta", buildJsonObject {
+                put("threadId", "thread-1")
+                put("turnId", "turn-1")
+                put("itemId", "agent-1")
+                put("delta", "先に表示")
+            }))
+            withTimeout(2_000) { persistenceStarted.await() }
+
+            harness.transport.emit(notification(
+                "item/reasoning/summaryTextDelta",
+                reasoningParams("reason-1", "受信は継続"),
+            ))
+            val running = awaitState(harness.runtime) {
+                it is CodexConversationUiState.Running && it.activity.reasoning == "受信は継続"
+            } as CodexConversationUiState.Running
+            assertEquals(CodexTurnStage.Thinking, running.progress.stage)
+        } finally {
+            releasePersistence.complete(Unit)
+            harness.runtime.close()
+        }
+    }
+
     @Test
     fun `turn callback exposes interleaved existing chat message parts`() = runBlocking {
         val snapshots = CopyOnWriteArrayList<List<UIMessagePart>>()

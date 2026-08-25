@@ -41,7 +41,7 @@ fun CodexCommandExecutionCard(item: CodexAppServerItemSnapshot.CommandExecution,
         Column(Modifier.padding(12.dp)) {
             Text(item.command, fontFamily = FontFamily.Monospace)
             Text(item.cwd, style = MaterialTheme.typography.bodySmall)
-            Text("${item.status}${item.exitCode?.let { " · 終了コード $it" } ?: ""}${item.durationMs?.let { " · ${it}ms" } ?: ""}")
+            Text("${item.status}${item.exitCode?.let { " · 終了コード $it" } ?: ""}${item.durationMs?.let { " · ${formatDuration(it)}" } ?: ""}")
             item.aggregatedOutput?.let { CollapsibleText(it, "出力", isDiff = false) }
         }
     }

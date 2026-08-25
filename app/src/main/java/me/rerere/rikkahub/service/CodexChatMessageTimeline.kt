@@ -44,10 +44,10 @@ internal class CodexChatMessageTimeline(
         var item: CodexAppServerItemSnapshot? = null,
         var startedAtMs: Long? = null,
         var completedAtMs: Long? = null,
-        var agentText: String = "",
-        val reasoningSummary: LinkedHashMap<Long, String> = linkedMapOf(),
-        val reasoningContent: LinkedHashMap<Long, String> = linkedMapOf(),
-        var commandOutput: String = "",
+        val agentText: StringBuilder = StringBuilder(),
+        val reasoningSummary: LinkedHashMap<Long, StringBuilder> = linkedMapOf(),
+        val reasoningContent: LinkedHashMap<Long, StringBuilder> = linkedMapOf(),
+        val commandOutput: StringBuilder = StringBuilder(),
         val terminalInteractions: MutableList<String> = mutableListOf(),
         var approvalState: ToolApprovalState = ToolApprovalState.Auto,
         var commandApprovalRequest: CodexAppServerCommandApprovalRequest? = null,
@@ -82,29 +82,29 @@ internal class CodexChatMessageTimeline(
 
     @Synchronized
     fun appendAgentText(turnId: String, itemId: String, delta: String) {
-        entry(turnId, itemId, "agentMessage").agentText += delta
+        entry(turnId, itemId, "agentMessage").agentText.append(delta)
     }
 
     @Synchronized
     fun addReasoningSummaryPart(turnId: String, itemId: String, index: Long) {
-        entry(turnId, itemId, "reasoning").reasoningSummary.putIfAbsent(index, "")
+        entry(turnId, itemId, "reasoning").reasoningSummary.putIfAbsent(index, StringBuilder())
     }
 
     @Synchronized
     fun appendReasoningSummary(turnId: String, itemId: String, index: Long, delta: String) {
         val chunks = entry(turnId, itemId, "reasoning").reasoningSummary
-        chunks[index] = chunks[index].orEmpty() + delta
+        chunks.getOrPut(index) { StringBuilder() }.append(delta)
     }
 
     @Synchronized
     fun appendReasoningContent(turnId: String, itemId: String, index: Long, delta: String) {
         val chunks = entry(turnId, itemId, "reasoning").reasoningContent
-        chunks[index] = chunks[index].orEmpty() + delta
+        chunks.getOrPut(index) { StringBuilder() }.append(delta)
     }
 
     @Synchronized
     fun appendCommandOutput(turnId: String, itemId: String, delta: String) {
-        entry(turnId, itemId, "commandExecution").commandOutput += delta
+        entry(turnId, itemId, "commandExecution").commandOutput.append(delta)
     }
 
     @Synchronized
@@ -188,21 +188,25 @@ internal class CodexChatMessageTimeline(
         inferredType = snapshot.type
         when (snapshot) {
             is CodexAppServerItemSnapshot.AgentMessage -> {
-                if (completed || agentText.isBlank()) agentText = snapshot.text
+                if (completed || agentText.isBlank()) agentText.replaceWith(snapshot.text)
             }
             is CodexAppServerItemSnapshot.Reasoning -> {
                 if (completed || reasoningSummary.isEmpty()) {
                     reasoningSummary.clear()
-                    snapshot.summary.forEachIndexed { index, text -> reasoningSummary[index.toLong()] = text }
+                    snapshot.summary.forEachIndexed { index, text ->
+                        reasoningSummary[index.toLong()] = StringBuilder(text)
+                    }
                 }
                 if (completed || reasoningContent.isEmpty()) {
                     reasoningContent.clear()
-                    snapshot.content.forEachIndexed { index, text -> reasoningContent[index.toLong()] = text }
+                    snapshot.content.forEachIndexed { index, text ->
+                        reasoningContent[index.toLong()] = StringBuilder(text)
+                    }
                 }
             }
             is CodexAppServerItemSnapshot.CommandExecution -> {
                 if (completed || commandOutput.isBlank()) {
-                    snapshot.aggregatedOutput?.let { commandOutput = it }
+                    snapshot.aggregatedOutput?.let { commandOutput.replaceWith(it) }
                 }
                 if (completed && approvalState is ToolApprovalState.Pending) {
                     approvalState = if (snapshot.status is CodexAppServerCommandExecutionStatus.Declined) {
@@ -228,7 +232,8 @@ internal class CodexChatMessageTimeline(
         is CodexAppServerItemSnapshot.EnteredReviewMode,
             -> emptyList()
         is CodexAppServerItemSnapshot.AgentMessage ->
-            if (suppressAgentMessages || agentText.isBlank()) emptyList() else listOf(UIMessagePart.Text(agentText))
+            if (suppressAgentMessages || agentText.isBlank()) emptyList()
+            else listOf(UIMessagePart.Text(agentText.toString()))
         is CodexAppServerItemSnapshot.ExitedReviewMode ->
             snapshot.review.takeIf { it.isNotBlank() }?.let { listOf(UIMessagePart.Text(it)) }.orEmpty()
         is CodexAppServerItemSnapshot.Reasoning -> reasoningPart()?.let(::listOf).orEmpty()
@@ -238,7 +243,8 @@ internal class CodexChatMessageTimeline(
         }
         is CodexAppServerItemSnapshot.Other -> listOf(otherPart(snapshot))
         null -> when (inferredType) {
-            "agentMessage" -> if (suppressAgentMessages || agentText.isBlank()) emptyList() else listOf(UIMessagePart.Text(agentText))
+            "agentMessage" -> if (suppressAgentMessages || agentText.isBlank()) emptyList()
+                else listOf(UIMessagePart.Text(agentText.toString()))
             "reasoning" -> reasoningPart()?.let(::listOf).orEmpty()
             "commandExecution" -> commandApprovalRequest?.let { listOf(commandApprovalPart(it)) }.orEmpty()
             else -> emptyList()
@@ -246,8 +252,12 @@ internal class CodexChatMessageTimeline(
     }
 
     private fun Entry.reasoningPart(): UIMessagePart.Reasoning? {
-        val summary = reasoningSummary.toSortedMap().values.filter { it.isNotBlank() }.joinToString("\n")
-        val content = reasoningContent.toSortedMap().values.filter { it.isNotBlank() }.joinToString("\n")
+        val summary = reasoningSummary.toSortedMap().values
+            .filter { it.isNotBlank() }
+            .joinToString("\n") { it.toString() }
+        val content = reasoningContent.toSortedMap().values
+            .filter { it.isNotBlank() }
+            .joinToString("\n") { it.toString() }
         val reasoning = summary.ifBlank { content }
         if (reasoning.isBlank()) return null
         val started = safeInstant(startedAtMs ?: nowMs())
@@ -263,7 +273,7 @@ internal class CodexChatMessageTimeline(
     private fun Entry.commandPart(item: CodexAppServerItemSnapshot.CommandExecution): UIMessagePart.Tool {
         val read = item.commandActions.singleOrNull() as? CodexAppServerCommandAction.Read
         val terminal = item.status !is CodexAppServerCommandExecutionStatus.InProgress
-        val output = commandOutput.ifBlank { item.aggregatedOutput.orEmpty() }
+        val output = commandOutput.toString().ifBlank { item.aggregatedOutput.orEmpty() }
         val input = if (read != null) {
             buildJsonObject { put("path", read.path) }
         } else {
@@ -402,3 +412,8 @@ private fun addedFileText(diff: String): String = diff.lineSequence()
 
 private fun safeInstant(epochMilliseconds: Long): Instant =
     runCatching { Instant.fromEpochMilliseconds(epochMilliseconds) }.getOrElse { Clock.System.now() }
+
+private fun StringBuilder.replaceWith(value: String) {
+    setLength(0)
+    append(value)
+}

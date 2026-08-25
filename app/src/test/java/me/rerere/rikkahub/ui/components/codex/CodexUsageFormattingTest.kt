@@ -16,5 +16,6 @@ class CodexUsageFormattingTest {
     }
     @Test fun `duration formats milliseconds seconds and minutes`() {
         assertEquals("842 ミリ秒", formatDuration(842)); assertEquals("1.4 秒", formatDuration(1_400)); assertEquals("1分 12秒", formatDuration(72_000))
+        assertEquals("0秒", formatElapsedDuration(842)); assertEquals("1秒", formatElapsedDuration(1_400)); assertEquals("1分12秒", formatElapsedDuration(72_000))
     }
 }

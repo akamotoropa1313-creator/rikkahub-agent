@@ -15,4 +15,6 @@ data class HarnessMetadata(
     val runId: String? = null,
     val reasoningOutputTokens: Long = 0L,
     val cacheWriteInputTokens: Long? = null,
+    /** Wall-clock duration of the harness run, independent of token visibility settings. */
+    val executionDurationMs: Long? = null,
 )

@@ -93,6 +93,7 @@ class CodexStage20RuntimeIntegrationTest {
             assertEquals(CodexAppServerTurnStatus.Completed, enriched.status)
             assertEquals(100L, enriched.diagnostics?.startedAt)
             assertEquals(102L, enriched.diagnostics?.completedAt)
+            assertEquals(2_345L, enriched.durationMs)
             assertEquals(1, callbacks.get())
 
             harness.runtime.acceptStartResponse("turn-1", CodexAppServerTurnStatus.InProgress)
@@ -140,7 +141,7 @@ class CodexStage20RuntimeIntegrationTest {
             scope,
             onAgentText = { _, _, _ -> },
             onTokenUsage = { usageCallbacks += it },
-            onTurnTerminal = { callbacks.incrementAndGet() },
+            onTurnTerminal = { _, _ -> callbacks.incrementAndGet() },
         )
         return Harness(runtime, transport)
     }

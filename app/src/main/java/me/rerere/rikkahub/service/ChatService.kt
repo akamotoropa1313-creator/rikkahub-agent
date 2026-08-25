@@ -918,7 +918,12 @@ class ChatService(
                     },
                     harnessTarget = assistant.effectiveCodexHarnessModelTarget(),
                     onTokenUsage = { persistCodexUsageSafely(conversationId, it) },
-                    onTurnTerminal = { persistStreamingStateNow(conversationId, updateSearchIndex = true) },
+                    onTurnTerminal = { turnId, durationMs ->
+                        persistCodexTurnTerminal(conversationId, turnId, durationMs)
+                    },
+                    onTurnDurationUpdated = { turnId, durationMs ->
+                        persistCodexTurnTerminal(conversationId, turnId, durationMs)
+                    },
                     shouldAutoApprove = { event ->
                         shouldAutoApproveCodexRequest(conversationId, workspaceId, event)
                     },
@@ -1022,6 +1027,35 @@ class ChatService(
             markStreamingPersistence(conversationId)
             persistStreamingStateIfDue(conversationId)
         }
+    }
+
+    /** Stores a provider-neutral harness duration and durably flushes the final turn snapshot. */
+    private suspend fun persistCodexTurnTerminal(
+        conversationId: Uuid,
+        turnId: String,
+        durationMs: Long,
+    ) {
+        mutexFor(conversationId).withLock {
+            val conversation = getConversationFlow(conversationId).value
+            val updatedMessages = conversation.currentMessages.map { message ->
+                val harness = message.harness
+                if (harness?.id == AgentHarnessIds.CODEX && harness.runId == turnId) {
+                    message.copy(
+                        harness = harness.copy(executionDurationMs = durationMs.coerceAtLeast(0L)),
+                    )
+                } else {
+                    message
+                }
+            }
+            if (updatedMessages != conversation.currentMessages) {
+                updateConversation(
+                    conversationId,
+                    conversation.updateCurrentMessages(updatedMessages),
+                )
+                markStreamingPersistence(conversationId)
+            }
+        }
+        persistStreamingStateNow(conversationId, updateSearchIndex = true)
     }
 
     private suspend fun persistCodexUsageSafely(conversationId: Uuid, snapshot: CodexTokenUsageSnapshot) {
@@ -1189,7 +1223,12 @@ class ChatService(
             },
             harnessTarget = harnessTarget,
             onTokenUsage = { persistCodexUsageSafely(conversationId, it) },
-            onTurnTerminal = { persistStreamingStateNow(conversationId, updateSearchIndex = true) },
+            onTurnTerminal = { turnId, durationMs ->
+                persistCodexTurnTerminal(conversationId, turnId, durationMs)
+            },
+            onTurnDurationUpdated = { turnId, durationMs ->
+                persistCodexTurnTerminal(conversationId, turnId, durationMs)
+            },
             shouldAutoApprove = { event ->
                 shouldAutoApproveCodexRequest(conversationId, workspaceId, event)
             },

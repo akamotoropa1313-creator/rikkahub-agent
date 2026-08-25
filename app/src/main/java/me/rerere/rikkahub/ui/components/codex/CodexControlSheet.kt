@@ -132,7 +132,7 @@ fun CodexControlSheet(
                         thread.turns.forEach { historyTurn ->
                             HorizontalDivider()
                             Text("ターン ${historyTurn.turn.id}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${historyTurn.turn.status.wireValue}${historyTurn.turn.durationMs?.let { " · ${it}ms" }.orEmpty()}")
+                            Text("${historyTurn.turn.status.wireValue}${historyTurn.turn.durationMs?.let { " · ${formatDuration(it)}" }.orEmpty()}")
                             historyTurn.turn.error?.let { Text(it.message, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
                             historyTurn.items.forEach { item -> Text(historyItemText(item), maxLines = 5, overflow = TextOverflow.Ellipsis) }
                         }
