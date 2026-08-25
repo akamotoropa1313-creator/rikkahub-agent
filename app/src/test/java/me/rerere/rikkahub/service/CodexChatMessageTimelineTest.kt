@@ -7,8 +7,10 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import me.rerere.ai.ui.DiffMetadata
+import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.metadataAs
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalRequest
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandExecutionSource
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandExecutionStatus
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileUpdateChange
@@ -74,9 +76,43 @@ class CodexChatMessageTimelineTest {
         val tools = timeline.parts("turn").map { it as UIMessagePart.Tool }
         assertEquals(listOf("use_skill", "workspace_write_file", "workspace_edit_file"), tools.map { it.toolName })
         assertEquals("fun main() {}", tools[1].inputAsJson().jsonObject["text"]?.jsonPrimitive?.content)
-        assertEquals("file-1:0", tools[1].toolCallId)
-        assertEquals("file-1:1", tools[2].toolCallId)
+        assertEquals("codex:turn:file-1:0", tools[1].toolCallId)
+        assertEquals("codex:turn:file-1:1", tools[2].toolCallId)
         assertNotNull(tools[2].output.single().metadataAs<DiffMetadata>()?.diff)
+    }
+
+    @Test
+    fun `App Server approval is rendered by the existing pending tool row`() {
+        val timeline = CodexChatMessageTimeline(nowMs = { 99L })
+        val request = CodexAppServerCommandApprovalRequest(
+            threadId = "thread",
+            turnId = "turn",
+            itemId = "shell-1",
+            startedAtMs = 10L,
+            approvalId = null,
+            environmentId = "local",
+            reason = "verify output",
+            command = "echo ok",
+            cwd = "/workspace",
+            commandActions = emptyList(),
+            networkApprovalContext = null,
+            proposedExecpolicyAmendment = null,
+            proposedNetworkPolicyAmendments = null,
+            rawParams = buildJsonObject {},
+        )
+
+        // Approval can race ahead of item/started; it must still be visible in the native row.
+        timeline.commandApprovalRequested("turn", request)
+        val pending = timeline.parts("turn").single() as UIMessagePart.Tool
+        assertEquals("codex:turn:shell-1", pending.toolCallId)
+        assertEquals("workspace_shell", pending.toolName)
+        assertTrue(pending.approvalState is ToolApprovalState.Pending)
+
+        timeline.itemStarted("turn", command("shell-1", "inProgress", null, null), 10L)
+        assertTrue((timeline.parts("turn").single() as UIMessagePart.Tool).approvalState is ToolApprovalState.Pending)
+
+        timeline.approvalResolved("turn", "shell-1", ToolApprovalState.Approved)
+        assertTrue((timeline.parts("turn").single() as UIMessagePart.Tool).approvalState is ToolApprovalState.Approved)
     }
 
     @Test

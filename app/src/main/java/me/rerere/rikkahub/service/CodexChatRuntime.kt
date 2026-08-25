@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent
@@ -34,6 +35,7 @@ class CodexChatRuntime(
     val harnessTarget: CodexHarnessModelTarget? = null,
     private val onTokenUsage: suspend (CodexTokenUsageSnapshot) -> Unit = {},
     private val onTurnTerminal: suspend (turnId: String) -> Unit = {},
+    private val shouldAutoApprove: suspend (CodexAppServerApprovalEvent) -> Boolean = { false },
     private val onFailure: (CodexChatRuntime, Throwable) -> Unit = { _, _ -> },
     private val onInterruptFailure: (Throwable) -> Unit = {},
 ) : Closeable {
@@ -586,6 +588,17 @@ class CodexChatRuntime(
         publishTurnParts(turnId)
     }
 
+    private fun updateWaitingFilePreview(
+        turnId: String,
+        item: CodexAppServerItemSnapshot.FileChange,
+    ) {
+        val waiting = _state.value as? CodexConversationUiState.WaitingForApproval ?: return
+        val request = (waiting.event as? CodexAppServerApprovalEvent.FileChangeRequest)?.request ?: return
+        if (request.turnId == turnId && request.itemId == item.id) {
+            _state.value = waiting.copy(fileChange = item)
+        }
+    }
+
     private val collector: Job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.turnApi.events.collect { event ->
             if (failed.get()) return@collect
@@ -646,7 +659,10 @@ class CodexChatRuntime(
                         }
                     when (val item = event.item) {
                         is CodexAppServerItemSnapshot.CommandExecution -> commands[event.turnId to item.id] = item
-                        is CodexAppServerItemSnapshot.FileChange -> files[event.turnId to item.id] = item
+                        is CodexAppServerItemSnapshot.FileChange -> {
+                            files[event.turnId to item.id] = item
+                            updateWaitingFilePreview(event.turnId, item)
+                        }
                         else -> Unit
                     }
                     publishActivity(event.turnId)
@@ -657,7 +673,10 @@ class CodexChatRuntime(
                     messageTimeline.itemCompleted(event.turnId, item, event.completedAtMs)
                     when (item) {
                         is CodexAppServerItemSnapshot.CommandExecution -> commands[event.turnId to item.id] = item
-                        is CodexAppServerItemSnapshot.FileChange -> files[event.turnId to item.id] = item
+                        is CodexAppServerItemSnapshot.FileChange -> {
+                            files[event.turnId to item.id] = item
+                            updateWaitingFilePreview(event.turnId, item)
+                        }
                         else -> Unit
                     }
                     if (item is CodexAppServerItemSnapshot.ExitedReviewMode && reviewResultsPersisted.add(event.turnId)) {
@@ -725,27 +744,36 @@ class CodexChatRuntime(
                 is CodexAppServerApprovalEvent.CommandExecutionRequest -> {
                     val request = event.request
                     if (!registerApproval(event, PendingApproval(ApprovalKind.Command, request.threadId, request.turnId, request.itemId))) return@collect
+                    if (shouldAutoApproveSafely(event) && autoRespondApproval(event)) return@collect
+                    messageTimeline.commandApprovalRequested(request.turnId, request)
                     _state.value = CodexConversationUiState.WaitingForApproval(
                         event,
                         activity = activity(request.turnId),
                         telemetry = tokenUsage.value,
                     )
+                    publishTurnParts(request.turnId)
                 }
                 is CodexAppServerApprovalEvent.FileChangeRequest -> {
                     val request = event.request
                     if (!registerApproval(event, PendingApproval(ApprovalKind.FileChange, request.threadId, request.turnId, request.itemId))) return@collect
+                    if (shouldAutoApproveSafely(event) && autoRespondApproval(event)) return@collect
+                    messageTimeline.fileApprovalRequested(request.turnId, request.itemId)
                     _state.value = CodexConversationUiState.WaitingForApproval(
                         event,
                         fileChange = files[request.turnId to request.itemId],
                         activity = activity(request.turnId),
                         telemetry = tokenUsage.value,
                     )
+                    publishTurnParts(request.turnId)
                 }
                 is CodexAppServerApprovalEvent.Resolved -> {
                     if (event.threadId != session.threadId) return@collect
-                    synchronized(approvalLock) {
-                        pendingApprovals.remove(event.requestId)
-                        approvalResponses.add(event.requestId)
+                    val resolved = synchronized(approvalLock) {
+                        pendingApprovals.remove(event.requestId).also { approvalResponses.add(event.requestId) }
+                    }
+                    resolved?.let {
+                        messageTimeline.approvalResolved(it.turnId, it.itemId)
+                        publishTurnParts(it.turnId)
                     }
                     val waiting = _state.value as? CodexConversationUiState.WaitingForApproval
                     if (waiting?.requestId == event.requestId) {
@@ -756,6 +784,43 @@ class CodexChatRuntime(
                 is CodexAppServerApprovalEvent.MalformedRequest -> _state.value = CodexConversationUiState.Failed(event.cause.message ?: "Malformed approval")
                 is CodexAppServerApprovalEvent.MalformedNotification -> _state.value = CodexConversationUiState.Failed(event.cause.message ?: "Malformed approval")
             }
+        }
+    }
+
+    /** Auto-answers requests suppressed by RikkaHub's existing Workspace/global policy. */
+    private suspend fun shouldAutoApproveSafely(event: CodexAppServerApprovalEvent): Boolean = try {
+        shouldAutoApprove(event)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        false
+    }
+
+    private suspend fun autoRespondApproval(event: CodexAppServerApprovalEvent): Boolean {
+        if (event !is CodexAppServerApprovalEvent.CommandExecutionRequest &&
+            event !is CodexAppServerApprovalEvent.FileChangeRequest
+        ) return false
+        val requestId = event.requestIdOrNull() ?: return false
+        synchronized(approvalLock) {
+            if (!approvalResponses.add(requestId)) return false
+        }
+        return try {
+            when (event) {
+                is CodexAppServerApprovalEvent.CommandExecutionRequest ->
+                    session.approvalApi.respondCommandApproval(requestId, CodexAppServerCommandApprovalDecision.Accept)
+                is CodexAppServerApprovalEvent.FileChangeRequest ->
+                    session.approvalApi.respondFileChangeApproval(requestId, CodexAppServerFileChangeApprovalDecision.Accept)
+                else -> error("unreachable approval event")
+            }
+            synchronized(approvalLock) { pendingApprovals.remove(requestId) }
+            true
+        } catch (cancelled: CancellationException) {
+            synchronized(approvalLock) { approvalResponses.remove(requestId) }
+            throw cancelled
+        } catch (_: Throwable) {
+            // Keep the original request live and fall back to the normal in-chat approval UI.
+            synchronized(approvalLock) { approvalResponses.remove(requestId) }
+            false
         }
     }
 
@@ -799,10 +864,17 @@ class CodexChatRuntime(
         else if (_state.value == waiting.copy(submitting = true)) _state.value = waiting
     }
 
-    suspend fun respondCommandApproval(id: JsonRpcId, decision: CodexAppServerCommandApprovalDecision): Boolean {
+    suspend fun respondCommandApproval(
+        id: JsonRpcId,
+        decision: CodexAppServerCommandApprovalDecision,
+        denialReason: String = "",
+    ): Boolean {
         val waiting = claimApproval(id, ApprovalKind.Command) ?: return false
         return try {
             session.approvalApi.respondCommandApproval(id, decision)
+            val request = (waiting.event as CodexAppServerApprovalEvent.CommandExecutionRequest).request
+            messageTimeline.approvalResolved(request.turnId, request.itemId, decision.toToolApprovalState(denialReason))
+            publishTurnParts(request.turnId)
             true
         } catch (cancelled: CancellationException) {
             releaseApprovalClaim(id, waiting)
@@ -813,10 +885,17 @@ class CodexChatRuntime(
         }
     }
 
-    suspend fun respondFileApproval(id: JsonRpcId, decision: CodexAppServerFileChangeApprovalDecision): Boolean {
+    suspend fun respondFileApproval(
+        id: JsonRpcId,
+        decision: CodexAppServerFileChangeApprovalDecision,
+        denialReason: String = "",
+    ): Boolean {
         val waiting = claimApproval(id, ApprovalKind.FileChange) ?: return false
         return try {
             session.approvalApi.respondFileChangeApproval(id, decision)
+            val request = (waiting.event as CodexAppServerApprovalEvent.FileChangeRequest).request
+            messageTimeline.approvalResolved(request.turnId, request.itemId, decision.toToolApprovalState(denialReason))
+            publishTurnParts(request.turnId)
             true
         } catch (cancelled: CancellationException) {
             releaseApprovalClaim(id, waiting)
@@ -1041,6 +1120,22 @@ private fun CodexAppServerApprovalEvent.turnIdOrNull(): String? = when (this) {
     is CodexAppServerApprovalEvent.FileChangeRequest -> request.turnId
     else -> null
 }
+
+private fun CodexAppServerCommandApprovalDecision.toToolApprovalState(reason: String): ToolApprovalState =
+    when (this) {
+        CodexAppServerCommandApprovalDecision.Decline,
+        CodexAppServerCommandApprovalDecision.Cancel,
+            -> ToolApprovalState.Denied(reason)
+        else -> ToolApprovalState.Approved
+    }
+
+private fun CodexAppServerFileChangeApprovalDecision.toToolApprovalState(reason: String): ToolApprovalState =
+    when (this) {
+        CodexAppServerFileChangeApprovalDecision.Decline,
+        CodexAppServerFileChangeApprovalDecision.Cancel,
+            -> ToolApprovalState.Denied(reason)
+        else -> ToolApprovalState.Approved
+    }
 
 private fun CodexAppServerTurnEvent.threadIdOrNull(): String? = when (this) {
     is CodexAppServerTurnEvent.TurnStarted -> threadId

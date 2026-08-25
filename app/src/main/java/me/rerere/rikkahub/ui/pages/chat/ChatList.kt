@@ -93,16 +93,12 @@ import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
+import me.rerere.rikkahub.data.harness.AgentHarnessIds
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.ui.components.codex.codexStaleBindingMessage
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent
-import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
-import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnStatus
-import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
-import me.rerere.rikkahub.ui.components.codex.CodexCommandApprovalCard
-import me.rerere.rikkahub.ui.components.codex.CodexFileChangeApprovalCard
 import me.rerere.rikkahub.ui.components.codex.codexTurnErrorPresentation
 import me.rerere.rikkahub.ui.components.message.ChatMessage
 import me.rerere.rikkahub.ui.components.ui.ErrorCardsDisplay
@@ -147,8 +143,7 @@ fun ChatList(
     onRerunTool: (suspend (toolCallId: String) -> me.rerere.rikkahub.service.ChatService.RerunToolResult)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
-    onCodexCommandApproval: (JsonRpcId, CodexAppServerCommandApprovalDecision) -> Unit = { _, _ -> },
-    onCodexFileApproval: (JsonRpcId, CodexAppServerFileChangeApprovalDecision) -> Unit = { _, _ -> },
+    onCodexToolApproval: ((toolCallId: String, approved: Boolean, reason: String, scope: me.rerere.rikkahub.service.ChatService.ApprovalScope, toolName: String) -> Unit)? = null,
 ) {
     AnimatedContent(
         targetState = previewMode,
@@ -193,8 +188,7 @@ fun ChatList(
                 onRerunTool = onRerunTool,
                 onToggleFavorite = onToggleFavorite,
                 onConversationSystemPromptChange = onConversationSystemPromptChange,
-                onCodexCommandApproval = onCodexCommandApproval,
-                onCodexFileApproval = onCodexFileApproval,
+                onCodexToolApproval = onCodexToolApproval,
             )
         }
     }
@@ -227,8 +221,7 @@ private fun ChatListNormal(
     onRerunTool: (suspend (toolCallId: String) -> me.rerere.rikkahub.service.ChatService.RerunToolResult)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
-    onCodexCommandApproval: (JsonRpcId, CodexAppServerCommandApprovalDecision) -> Unit,
-    onCodexFileApproval: (JsonRpcId, CodexAppServerFileChangeApprovalDecision) -> Unit,
+    onCodexToolApproval: ((toolCallId: String, approved: Boolean, reason: String, scope: me.rerere.rikkahub.service.ChatService.ApprovalScope, toolName: String) -> Unit)?,
 ) {
     val scope = rememberCoroutineScope()
     val loadingState by rememberUpdatedState(loading)
@@ -345,6 +338,7 @@ private fun ChatListNormal(
                 key = { it.id },
             ) { group ->
                 val node = group.terminalNode
+                val isCodexHarnessMessage = group.displayMessage.harness?.id == AgentHarnessIds.CODEX
                 Column {
                     ListSelectableItem(
                         key = group.id,
@@ -396,9 +390,9 @@ private fun ChatListNormal(
                             },
                             onTranslate = onTranslate,
                             onClearTranslation = onClearTranslation,
-                            onToolApproval = onToolApproval,
-                            onToolAnswer = onToolAnswer,
-                            onRerunTool = onRerunTool,
+                            onToolApproval = if (isCodexHarnessMessage) onCodexToolApproval else onToolApproval,
+                            onToolAnswer = if (isCodexHarnessMessage) null else onToolAnswer,
+                            onRerunTool = if (isCodexHarnessMessage) null else onRerunTool,
                             lastMessage = node.id == lastMessageNodeId,
                         )
                     }
@@ -416,7 +410,7 @@ private fun ChatListNormal(
 
             if (codexState.needsInlineStatusCard()) {
                 item(key = "CodexInlineStatus") {
-                    CodexInlineStatus(codexState, onCodexCommandApproval, onCodexFileApproval)
+                    CodexInlineStatus(codexState)
                 }
             }
 
@@ -637,28 +631,29 @@ private fun buildHighlightedText(
 
 private fun CodexConversationUiState.needsInlineStatusCard(): Boolean = when (this) {
     CodexConversationUiState.Opening,
-    is CodexConversationUiState.WaitingForApproval,
     is CodexConversationUiState.StaleBinding,
     is CodexConversationUiState.WorkspaceMismatch,
     is CodexConversationUiState.Failed,
         -> true
+    is CodexConversationUiState.WaitingForApproval ->
+        event is CodexAppServerApprovalEvent.FileChangeRequest && fileChange?.changes.isNullOrEmpty()
     is CodexConversationUiState.Terminal -> status != CodexAppServerTurnStatus.Completed
     else -> false
 }
 
 @Composable
-private fun CodexInlineStatus(
-    state: CodexConversationUiState,
-    onCommand: (JsonRpcId, CodexAppServerCommandApprovalDecision) -> Unit,
-    onFile: (JsonRpcId, CodexAppServerFileChangeApprovalDecision) -> Unit,
-) {
+private fun CodexInlineStatus(state: CodexConversationUiState) {
     if (state is CodexConversationUiState.WaitingForApproval) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            when (val event = state.event) {
-                is CodexAppServerApprovalEvent.CommandExecutionRequest -> CodexCommandApprovalCard(event.request, { onCommand(event.requestId, it) }, submitting = state.submitting)
-                is CodexAppServerApprovalEvent.FileChangeRequest -> CodexFileChangeApprovalCard(event.request, { onFile(event.requestId, it) }, fileChange = state.fileChange, submitting = state.submitting)
-                else -> Text("未対応のCodex承認イベントです", color = MaterialTheme.colorScheme.error)
-            }
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Text(
+                "Codexがファイル変更のプレビューを準備しています…",
+                modifier = Modifier.padding(12.dp),
+                style = MaterialTheme.typography.labelMedium,
+            )
         }
         return
     }

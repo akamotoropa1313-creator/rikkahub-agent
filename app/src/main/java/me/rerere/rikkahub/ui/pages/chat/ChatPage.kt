@@ -530,8 +530,7 @@ private fun ChatPageContent(
                 errors = errors,
                 onDismissError = onDismissError,
                 onClearAllErrors = onClearAllErrors,
-                onCodexCommandApproval = vm::respondCodexCommandApproval,
-                onCodexFileApproval = vm::respondCodexFileApproval,
+                onCodexToolApproval = vm::respondCodexToolApproval,
                 onRegenerate = {
                     vm.regenerateAtMessage(it)
                 },

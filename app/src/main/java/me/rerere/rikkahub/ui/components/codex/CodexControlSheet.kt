@@ -323,6 +323,7 @@ fun CodexControlSheet(
                     Text(it, color = MaterialTheme.colorScheme.error)
                 }
                 Text("承認", style = MaterialTheme.typography.titleMedium)
+                Text("確認画面の表示には、既存のWorkspace「ツール承認」設定と全体の自動承認設定が優先して適用されます。ここではCodex側がどの操作で承認を要求するかを指定します。")
                 listOf(null to "サーバー設定", "untrusted" to "未信頼", "on-request" to "要求時", "never" to "確認しない").forEach { (value, label) ->
                     TextButton(onClick = {
                         val confirmation = codexSafetyConfirmation(assistant, approval = value)

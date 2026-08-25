@@ -8,9 +8,11 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import me.rerere.ai.ui.DiffMetadata
 import me.rerere.ai.ui.ReasoningType
+import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.toMetadata
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandAction
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalRequest
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandExecutionStatus
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileUpdateChange
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerItemSnapshot
@@ -36,6 +38,7 @@ internal class CodexChatMessageTimeline(
     private val nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
     private data class Entry(
+        val turnId: String,
         val id: String,
         var inferredType: String,
         var item: CodexAppServerItemSnapshot? = null,
@@ -46,6 +49,8 @@ internal class CodexChatMessageTimeline(
         val reasoningContent: LinkedHashMap<Long, String> = linkedMapOf(),
         var commandOutput: String = "",
         val terminalInteractions: MutableList<String> = mutableListOf(),
+        var approvalState: ToolApprovalState = ToolApprovalState.Auto,
+        var commandApprovalRequest: CodexAppServerCommandApprovalRequest? = null,
     )
 
     private val entries = linkedMapOf<String, LinkedHashMap<String, Entry>>()
@@ -120,6 +125,30 @@ internal class CodexChatMessageTimeline(
     }
 
     @Synchronized
+    fun commandApprovalRequested(turnId: String, request: CodexAppServerCommandApprovalRequest) {
+        entry(turnId, request.itemId, "commandExecution").apply {
+            commandApprovalRequest = request
+            approvalState = ToolApprovalState.Pending
+        }
+    }
+
+    @Synchronized
+    fun fileApprovalRequested(turnId: String, itemId: String) {
+        entry(turnId, itemId, "fileChange").approvalState = ToolApprovalState.Pending
+    }
+
+    @Synchronized
+    fun approvalResolved(
+        turnId: String,
+        itemId: String,
+        state: ToolApprovalState = ToolApprovalState.Auto,
+    ) {
+        entries[turnId]?.get(itemId)?.let { entry ->
+            if (entry.approvalState is ToolApprovalState.Pending) entry.approvalState = state
+        }
+    }
+
+    @Synchronized
     fun completeTurn(turnId: String, completedAtMs: Long = nowMs()) {
         entries[turnId]?.values?.forEach { if (it.completedAtMs == null) it.completedAtMs = completedAtMs }
     }
@@ -148,7 +177,7 @@ internal class CodexChatMessageTimeline(
     private fun entry(turnId: String, itemId: String, type: String): Entry {
         val turn = entries.getOrPut(turnId) { linkedMapOf() }
         return turn.getOrPut(itemId) {
-            Entry(id = itemId, inferredType = type, startedAtMs = nowMs())
+            Entry(turnId = turnId, id = itemId, inferredType = type, startedAtMs = nowMs())
         }.also {
             if (it.item == null) it.inferredType = type
         }
@@ -175,6 +204,20 @@ internal class CodexChatMessageTimeline(
                 if (completed || commandOutput.isBlank()) {
                     snapshot.aggregatedOutput?.let { commandOutput = it }
                 }
+                if (completed && approvalState is ToolApprovalState.Pending) {
+                    approvalState = if (snapshot.status is CodexAppServerCommandExecutionStatus.Declined) {
+                        ToolApprovalState.Denied()
+                    } else {
+                        ToolApprovalState.Approved
+                    }
+                }
+            }
+            is CodexAppServerItemSnapshot.FileChange -> if (completed && approvalState is ToolApprovalState.Pending) {
+                approvalState = if (snapshot.status is CodexAppServerPatchApplyStatus.Declined) {
+                    ToolApprovalState.Denied()
+                } else {
+                    ToolApprovalState.Approved
+                }
             }
             else -> Unit
         }
@@ -197,6 +240,7 @@ internal class CodexChatMessageTimeline(
         null -> when (inferredType) {
             "agentMessage" -> if (suppressAgentMessages || agentText.isBlank()) emptyList() else listOf(UIMessagePart.Text(agentText))
             "reasoning" -> reasoningPart()?.let(::listOf).orEmpty()
+            "commandExecution" -> commandApprovalRequest?.let { listOf(commandApprovalPart(it)) }.orEmpty()
             else -> emptyList()
         }
     }
@@ -220,7 +264,6 @@ internal class CodexChatMessageTimeline(
         val read = item.commandActions.singleOrNull() as? CodexAppServerCommandAction.Read
         val terminal = item.status !is CodexAppServerCommandExecutionStatus.InProgress
         val output = commandOutput.ifBlank { item.aggregatedOutput.orEmpty() }
-        val toolName = if (read != null) "workspace_read_file" else "workspace_shell"
         val input = if (read != null) {
             buildJsonObject { put("path", read.path) }
         } else {
@@ -248,10 +291,32 @@ internal class CodexChatMessageTimeline(
             ),
         )
         return UIMessagePart.Tool(
-            toolCallId = item.id,
-            toolName = toolName,
+            toolCallId = codexToolCallIdFromEntry(item.id),
+            toolName = codexCommandToolName(item.commandActions),
             input = input.toString(),
             output = result,
+            approvalState = approvalState,
+        )
+    }
+
+    private fun Entry.commandApprovalPart(request: CodexAppServerCommandApprovalRequest): UIMessagePart.Tool {
+        val read = request.commandActions?.singleOrNull() as? CodexAppServerCommandAction.Read
+        val input = if (read != null) {
+            buildJsonObject { put("path", read.path) }
+        } else {
+            buildJsonObject {
+                request.command?.let { put("command", it) }
+                request.cwd?.takeIf { it.isNotBlank() }?.let { put("cwd", it) }
+                request.reason?.takeIf { it.isNotBlank() }?.let { put("reason", it) }
+                request.environmentId?.takeIf { it.isNotBlank() }?.let { put("environment", it) }
+                request.networkApprovalContext?.let { put("networkHost", it.host) }
+            }
+        }
+        return UIMessagePart.Tool(
+            toolCallId = codexToolCallIdFromEntry(request.itemId),
+            toolName = codexCommandToolName(request.commandActions),
+            input = input.toString(),
+            approvalState = approvalState,
         )
     }
 
@@ -261,7 +326,9 @@ internal class CodexChatMessageTimeline(
         index: Int,
     ): UIMessagePart.Tool {
         val terminal = item.status !is CodexAppServerPatchApplyStatus.InProgress
-        val output = if (!terminal && completedAtMs == null) emptyList() else listOf(
+        // While approval is pending, expose the patch as preview data to RikkaHub's existing
+        // edit-file renderer even though App Server has not applied the change yet.
+        val output = if (!terminal && completedAtMs == null && approvalState !is ToolApprovalState.Pending) emptyList() else listOf(
             UIMessagePart.Text("{}", metadata = DiffMetadata(change.diff).toMetadata()),
         )
         val isAdd = change.kind is CodexAppServerPatchChangeKind.Add
@@ -274,10 +341,11 @@ internal class CodexChatMessageTimeline(
             }
         }
         return UIMessagePart.Tool(
-            toolCallId = if (item.changes.size == 1) item.id else "${item.id}:$index",
+            toolCallId = codexToolCallIdFromEntry(item.id, index.takeIf { item.changes.size > 1 }),
             toolName = if (isAdd) "workspace_write_file" else "workspace_edit_file",
             input = input.toString(),
             output = output,
+            approvalState = if (index == 0) approvalState else ToolApprovalState.Auto,
         )
     }
 
@@ -294,7 +362,7 @@ internal class CodexChatMessageTimeline(
         }
         val input = item.raw["arguments"] ?: item.raw["input"] ?: item.raw
         return UIMessagePart.Tool(
-            toolCallId = item.id,
+            toolCallId = codexToolCallIdFromEntry(item.id),
             toolName = toolName,
             input = input.toString(),
             output = if (terminal) listOf(UIMessagePart.Text(item.raw.toString())) else emptyList(),
@@ -317,6 +385,10 @@ internal class CodexChatMessageTimeline(
         input = buildJsonObject { put("path", "Codex changes") }.toString(),
         output = listOf(UIMessagePart.Text("{}", metadata = DiffMetadata(diff).toMetadata())),
     )
+
+    private fun Entry.codexToolCallIdFromEntry(itemId: String, index: Int? = null): String {
+        return codexToolCallId(turnId, itemId, index)
+    }
 }
 
 private fun JsonObject.stringOrNull(key: String): String? =

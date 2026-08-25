@@ -19,6 +19,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAccount
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher
@@ -70,6 +71,34 @@ class CodexChatRuntimeIntegrationTest {
             }
             assertEquals("確認します。", (parts[0] as UIMessagePart.Text).text)
             assertEquals("workspace_shell", (parts[1] as UIMessagePart.Tool).toolName)
+        } finally {
+            harness.runtime.close()
+        }
+    }
+
+    @Test
+    fun `approval request updates the existing chat tool row instead of a separate card`() = runBlocking {
+        val snapshots = CopyOnWriteArrayList<List<UIMessagePart>>()
+        val harness = harness(this, onTurnParts = { _, parts -> snapshots += parts })
+        try {
+            harness.transport.emit(notification("turn/started", turnParams("inProgress")))
+            harness.transport.emit(notification("item/started", itemParams(command("command-1"), "startedAtMs", 11)))
+            harness.transport.emit(serverRequest(
+                JsonRpcId.StringId("approval-command"),
+                "item/commandExecution/requestApproval",
+                commandApprovalParams("command-1"),
+            ))
+
+            val pending = withTimeout(2_000) {
+                while (true) {
+                    val tool = snapshots.lastOrNull()?.filterIsInstance<UIMessagePart.Tool>()?.singleOrNull()
+                    if (tool?.approvalState is ToolApprovalState.Pending) return@withTimeout tool
+                    yield()
+                }
+                error("unreachable")
+            }
+            assertEquals("codex:turn-1:command-1", pending.toolCallId)
+            assertEquals("workspace_shell", pending.toolName)
         } finally {
             harness.runtime.close()
         }

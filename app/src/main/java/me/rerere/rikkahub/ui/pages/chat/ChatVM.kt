@@ -38,10 +38,7 @@ import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
-import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
-import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeResolver
-import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
 import me.rerere.rikkahub.data.codex.appserver.codexHarnessModelChangeRequiresSessionReset
 import me.rerere.rikkahub.data.codex.appserver.effectiveCodexHarnessModelTarget
 import me.rerere.rikkahub.data.model.Assistant
@@ -244,11 +241,23 @@ class ChatVM(
     fun cancelCodexAccountLogin() { viewModelScope.launch { runCatching { chatService.cancelCodexAccountLogin(_conversationId) } } }
     fun logoutCodexAccount() { viewModelScope.launch { runCatching { chatService.logoutCodexAccount(_conversationId) } } }
     fun beginCodexMcpOAuth(name: String) { viewModelScope.launch { runCatching { chatService.beginCodexMcpOAuth(_conversationId, name, codexAuthLauncher) } } }
-    fun respondCodexCommandApproval(id: JsonRpcId, decision: CodexAppServerCommandApprovalDecision) {
-        viewModelScope.launch { chatService.respondCodexCommandApproval(_conversationId, id, decision) }
-    }
-    fun respondCodexFileApproval(id: JsonRpcId, decision: CodexAppServerFileChangeApprovalDecision) {
-        viewModelScope.launch { chatService.respondCodexFileApproval(_conversationId, id, decision) }
+    fun respondCodexToolApproval(
+        toolCallId: String,
+        approved: Boolean,
+        reason: String,
+        scope: ChatService.ApprovalScope,
+        toolName: String,
+    ) {
+        viewModelScope.launch {
+            chatService.respondCodexToolApproval(
+                _conversationId,
+                toolCallId,
+                approved,
+                reason,
+                scope,
+                toolName,
+            )
+        }
     }
 
     val conversationJobs = chatService

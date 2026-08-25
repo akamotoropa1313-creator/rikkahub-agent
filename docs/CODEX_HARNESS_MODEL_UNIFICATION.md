@@ -28,11 +28,13 @@ not duplicated into assistant records.
 Model selection and execution mode are orthogonal:
 
 - `STANDARD`: current RikkaHub provider execution path.
-- `CODEX`: Codex App Server owns the agent loop, tools, shell/file actions, approvals, skills, MCP,
-  thread/turn lifecycle, and streaming events.
+- `CODEX`: Codex App Server owns the agent loop, tools, shell/file actions, approval requests,
+  skills, MCP, thread/turn lifecycle, and streaming events. RikkaHub's existing Workspace/global
+  approval settings remain authoritative for whether those requests require user interaction.
 
 Do not expose "Codex Provider" and "Codex App Server" as two competing model concepts.
-Codex-specific controls should contain only harness-specific settings (account, approvals, sandbox,
+Codex-specific controls should contain only harness-specific settings (account, App Server approval
+request policy, sandbox,
 reasoning behavior, service tier, diagnostics, runtime state, MCP/skills/review). Model selection
 belongs in the normal model picker.
 
@@ -133,7 +135,8 @@ RikkaHub assistant settings must not be forwarded blindly to Codex.
 | local tools | Codex harness owns shell/file/agent tools; do not duplicate equivalent tool definitions |
 | MCP | keep Codex MCP lifecycle when executing through Codex; avoid registering the same MCP tool twice |
 | web search | expose only the execution-path implementation that is actually active |
-| sandbox/approval | Codex-native settings are authoritative in CODEX mode |
+| sandbox | Codex-native setting is authoritative in CODEX mode |
+| approval | App Server policy controls when Codex requests approval; existing Workspace/global settings control whether RikkaHub shows or auto-accepts it |
 | service tier/personality/reasoning summary | Codex-native, capability-gated by `model/list` metadata |
 
 When a setting has no Codex equivalent, the UI should explain that it applies only to normal
