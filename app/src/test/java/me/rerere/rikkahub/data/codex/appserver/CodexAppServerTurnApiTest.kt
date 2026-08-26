@@ -285,7 +285,7 @@ class CodexAppServerTurnApiTest {
     }
 
     @Test
-    fun `sandbox and approval overrides use current App Server wire spelling`() = runBlocking {
+    fun `turn keeps tagged sandbox camel case while approval follows the pinned runtime`() = runBlocking {
         fixture().use { f ->
             val call = async {
                 f.api.startTurn(
@@ -299,7 +299,7 @@ class CodexAppServerTurnApiTest {
             }
             val request = decodeRequest(f.transport.takeClientLine())
             val params = request.params!!.jsonObject
-            assertEquals("onRequest", params["approvalPolicy"]!!.jsonPrimitive.content)
+            assertEquals("on-request", params["approvalPolicy"]!!.jsonPrimitive.content)
             assertEquals("workspaceWrite", params["sandboxPolicy"]!!.jsonObject["type"]!!.jsonPrimitive.content)
             f.respond(request, turnResult("id", "completed"))
             call.await()

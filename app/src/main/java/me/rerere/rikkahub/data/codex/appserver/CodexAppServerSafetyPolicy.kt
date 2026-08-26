@@ -4,22 +4,38 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/** Stable App Server approval values. UI persistence stays compatible with the CLI spelling. */
-enum class CodexAppServerApprovalPolicy(val preferenceValue: String, val wireValue: String) {
-    UNTRUSTED("untrusted", "unlessTrusted"),
-    ON_REQUEST("on-request", "onRequest"),
+/**
+ * Approval values for the pinned Codex 0.146 App Server runtime.
+ *
+ * That runtime uses the CLI/kebab spelling in both thread and turn requests. Keep this protocol
+ * value separate from any newer App Server documentation when the pinned runtime is upgraded.
+ */
+enum class CodexAppServerApprovalPolicy(val preferenceValue: String, val runtimeWireValue: String) {
+    UNTRUSTED("untrusted", "untrusted"),
+    ON_REQUEST("on-request", "on-request"),
     NEVER("never", "never");
 
     companion object { fun fromPreference(value: String?) = entries.firstOrNull { it.preferenceValue == value } }
 }
 
-/** Stable public sandbox presets with separate persisted and App Server protocol spellings. */
-enum class CodexAppServerSandboxMode(val preferenceValue: String, val wireValue: String) {
-    READ_ONLY("read-only", "readOnly"),
-    WORKSPACE_WRITE("workspace-write", "workspaceWrite"),
-    DANGER_FULL_ACCESS("danger-full-access", "dangerFullAccess");
+/**
+ * Sandbox presets have two different wire shapes in the pinned runtime.
+ *
+ * `thread/start` and `thread/resume` accept kebab-case mode strings, while the tagged
+ * `turn/start.sandboxPolicy.type` object uses camelCase. Naming both prevents one endpoint's
+ * spelling from leaking into the other.
+ */
+enum class CodexAppServerSandboxMode(
+    val preferenceValue: String,
+    val threadWireValue: String,
+    val turnPolicyType: String,
+) {
+    READ_ONLY("read-only", "read-only", "readOnly"),
+    WORKSPACE_WRITE("workspace-write", "workspace-write", "workspaceWrite"),
+    DANGER_FULL_ACCESS("danger-full-access", "danger-full-access", "dangerFullAccess");
 
-    fun matchesServerValue(value: String) = value == wireValue || value == preferenceValue
+    fun matchesServerValue(value: String) =
+        value == preferenceValue || value == threadWireValue || value == turnPolicyType
 
     companion object { fun fromPreference(value: String?) = entries.firstOrNull { it.preferenceValue == value } }
 }
@@ -49,7 +65,7 @@ sealed interface CodexAppServerSandboxPolicy {
     data object ReadOnly : CodexAppServerSandboxPolicy {
         override fun toJson() = JsonObject(
             mapOf(
-                "type" to JsonPrimitive("readOnly"),
+                "type" to JsonPrimitive(CodexAppServerSandboxMode.READ_ONLY.turnPolicyType),
                 "networkAccess" to JsonPrimitive(false),
             ),
         )
@@ -58,7 +74,7 @@ sealed interface CodexAppServerSandboxPolicy {
     data object WorkspaceWrite : CodexAppServerSandboxPolicy {
         override fun toJson() = JsonObject(
             mapOf(
-                "type" to JsonPrimitive("workspaceWrite"),
+                "type" to JsonPrimitive(CodexAppServerSandboxMode.WORKSPACE_WRITE.turnPolicyType),
                 "writableRoots" to JsonArray(emptyList()),
                 "networkAccess" to JsonPrimitive(false),
                 "excludeTmpdirEnvVar" to JsonPrimitive(false),
@@ -68,7 +84,9 @@ sealed interface CodexAppServerSandboxPolicy {
     }
 
     data object DangerFullAccess : CodexAppServerSandboxPolicy {
-        override fun toJson() = JsonObject(mapOf("type" to JsonPrimitive("dangerFullAccess")))
+        override fun toJson() = JsonObject(
+            mapOf("type" to JsonPrimitive(CodexAppServerSandboxMode.DANGER_FULL_ACCESS.turnPolicyType)),
+        )
     }
 }
 

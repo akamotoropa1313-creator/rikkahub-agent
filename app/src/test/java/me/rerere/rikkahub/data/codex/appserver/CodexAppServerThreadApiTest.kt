@@ -164,7 +164,7 @@ class CodexAppServerThreadApiTest {
     }
 
     @Test
-    fun `start serializes stable camel case subset and omits absent values`() {
+    fun `start serializes the pinned runtime thread enum spelling and omits absent values`() {
         runBlocking {
             fixture().use { f ->
                 val params = CodexAppServerThreadStartParams(
@@ -181,8 +181,8 @@ class CodexAppServerThreadApiTest {
                 val objectValue = request.params!!.jsonObject
                 assertEquals(setOf("model", "modelProvider", "cwd", "config", "serviceName", "baseInstructions", "developerInstructions", "personality", "ephemeral", "serviceTier", "sandbox", "approvalPolicy"), objectValue.keys)
                 assertEquals("future-tier", objectValue["serviceTier"]?.jsonPrimitive?.content)
-                assertEquals("workspaceWrite", objectValue["sandbox"]?.jsonPrimitive?.content)
-                assertEquals("onRequest", objectValue["approvalPolicy"]?.jsonPrimitive?.content)
+                assertEquals("workspace-write", objectValue["sandbox"]?.jsonPrimitive?.content)
+                assertEquals("on-request", objectValue["approvalPolicy"]?.jsonPrimitive?.content)
                 assertEquals(false, objectValue["ephemeral"]?.jsonPrimitive?.content?.toBoolean())
                 f.respond(request, result("id")); call.await()
             }
@@ -220,8 +220,8 @@ class CodexAppServerThreadApiTest {
                 val call = async { f.api.resumeThread("id", CodexAppServerThreadResumeParams(model = "gpt", modelProvider = "p", cwd = "/x", config = mapOf("x" to JsonPrimitive(1)), baseInstructions = "b", developerInstructions = "d", personality = CodexAppServerPersonality.FRIENDLY, sandbox = CodexAppServerSandboxMode.WORKSPACE_WRITE, approvalPolicy = CodexAppServerApprovalPolicy.ON_REQUEST)) }
                 val request = f.takeRequest()
                 assertEquals(setOf("threadId", "model", "modelProvider", "cwd", "config", "baseInstructions", "developerInstructions", "personality", "sandbox", "approvalPolicy"), request.params!!.jsonObject.keys)
-                assertEquals("workspaceWrite", request.params!!.jsonObject["sandbox"]!!.jsonPrimitive.content)
-                assertEquals("onRequest", request.params!!.jsonObject["approvalPolicy"]!!.jsonPrimitive.content)
+                assertEquals("workspace-write", request.params!!.jsonObject["sandbox"]!!.jsonPrimitive.content)
+                assertEquals("on-request", request.params!!.jsonObject["approvalPolicy"]!!.jsonPrimitive.content)
                 f.respond(request, result("id")); call.await()
             }
         }

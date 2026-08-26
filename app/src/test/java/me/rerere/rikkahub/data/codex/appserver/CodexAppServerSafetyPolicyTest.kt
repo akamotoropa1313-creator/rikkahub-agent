@@ -10,20 +10,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CodexAppServerSafetyPolicyTest {
-    @Test fun stablePreferencesValidateWithoutUnsafeFallbacks() {
+    @Test fun pinnedRuntimeDialectAndPreferencesValidateWithoutUnsafeFallbacks() {
+        assertEquals("0.146.0", CodexRuntimeManager.VALIDATED_VERSION)
         assertEquals(CodexAppServerSandboxMode.READ_ONLY, CodexAppServerSandboxMode.fromPreference("read-only"))
         assertEquals(CodexAppServerSandboxMode.WORKSPACE_WRITE, CodexAppServerSandboxMode.fromPreference("workspace-write"))
         assertEquals(CodexAppServerSandboxMode.DANGER_FULL_ACCESS, CodexAppServerSandboxMode.fromPreference("danger-full-access"))
-        assertEquals("readOnly", CodexAppServerSandboxMode.READ_ONLY.wireValue)
-        assertEquals("workspaceWrite", CodexAppServerSandboxMode.WORKSPACE_WRITE.wireValue)
-        assertEquals("dangerFullAccess", CodexAppServerSandboxMode.DANGER_FULL_ACCESS.wireValue)
+        assertEquals("read-only", CodexAppServerSandboxMode.READ_ONLY.threadWireValue)
+        assertEquals("workspace-write", CodexAppServerSandboxMode.WORKSPACE_WRITE.threadWireValue)
+        assertEquals("danger-full-access", CodexAppServerSandboxMode.DANGER_FULL_ACCESS.threadWireValue)
+        assertEquals("readOnly", CodexAppServerSandboxMode.READ_ONLY.turnPolicyType)
+        assertEquals("workspaceWrite", CodexAppServerSandboxMode.WORKSPACE_WRITE.turnPolicyType)
+        assertEquals("dangerFullAccess", CodexAppServerSandboxMode.DANGER_FULL_ACCESS.turnPolicyType)
         assertNull(CodexAppServerSandboxMode.fromPreference(null))
         assertNull(CodexAppServerSandboxMode.fromPreference("future"))
         assertEquals(CodexAppServerApprovalPolicy.UNTRUSTED, CodexAppServerApprovalPolicy.fromPreference("untrusted"))
         assertEquals(CodexAppServerApprovalPolicy.ON_REQUEST, CodexAppServerApprovalPolicy.fromPreference("on-request"))
         assertEquals(CodexAppServerApprovalPolicy.NEVER, CodexAppServerApprovalPolicy.fromPreference("never"))
-        assertEquals("unlessTrusted", CodexAppServerApprovalPolicy.UNTRUSTED.wireValue)
-        assertEquals("onRequest", CodexAppServerApprovalPolicy.ON_REQUEST.wireValue)
+        assertEquals("untrusted", CodexAppServerApprovalPolicy.UNTRUSTED.runtimeWireValue)
+        assertEquals("on-request", CodexAppServerApprovalPolicy.ON_REQUEST.runtimeWireValue)
         assertTrue(CodexDiagnosticSandboxMode("workspaceWrite").known)
         assertTrue(CodexDiagnosticSandboxMode("workspace-write").known)
         assertFalse(CodexDiagnosticSandboxMode("future").known)

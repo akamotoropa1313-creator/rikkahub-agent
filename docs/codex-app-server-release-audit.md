@@ -4,7 +4,9 @@ Audit date: 2026-08-16
 
 ## Baseline
 
-RikkaHub's Codex integration is audited against the official `openai/codex` App Server contract with `rust-v0.147.0` as the stable release baseline and current `main` as the forward-compatibility reference.
+RikkaHub's managed executable is pinned to `rust-v0.146.0`; its generated protocol schema is authoritative for every request sent by the released app. `rust-v0.147.0` and current `main` are forward-compatibility review references only and must not replace pinned-runtime enum spellings without upgrading the executable and its verified asset digests together.
+
+In particular, the pinned runtime expects kebab-case strings for `thread/start.sandbox`, `thread/resume.sandbox`, and approval overrides, while the tagged `turn/start.sandboxPolicy.type` value remains camelCase.
 
 The integration deliberately remains on the stable surfaces used by Stages 1–24. Experimental APIs are not enabled merely because a newer schema exposes them.
 

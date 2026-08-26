@@ -290,7 +290,7 @@ private fun CodexAppServerTurnStartParams.toJson(
     personality?.let { put("personality", JsonPrimitive(it.wireValue)) }
     outputSchema?.let { put("outputSchema", it) }
     serviceTier?.let { put("serviceTier", JsonPrimitive(it)) }
-    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.wireValue)) }
+    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.runtimeWireValue)) }
     sandboxPolicy?.let { put("sandboxPolicy", it.toJson()) }
 }.let(::JsonObject)
 

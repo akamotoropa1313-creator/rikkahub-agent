@@ -224,8 +224,8 @@ private fun CodexAppServerThreadStartParams.toJson() = buildMap<String, JsonElem
     personality?.let { put("personality", JsonPrimitive(it.wireValue)) }
     ephemeral?.let { put("ephemeral", JsonPrimitive(it)) }
     putOptional("serviceTier", serviceTier)
-    sandbox?.let { put("sandbox", JsonPrimitive(it.wireValue)) }
-    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.wireValue)) }
+    sandbox?.let { put("sandbox", JsonPrimitive(it.threadWireValue)) }
+    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.runtimeWireValue)) }
 }.let(::JsonObject)
 
 private fun CodexAppServerThreadResumeParams.toJson(threadId: String) = buildMap<String, JsonElement> {
@@ -234,8 +234,8 @@ private fun CodexAppServerThreadResumeParams.toJson(threadId: String) = buildMap
     config?.let { put("config", JsonObject(it)) }; putOptional("baseInstructions", baseInstructions)
     putOptional("developerInstructions", developerInstructions)
     personality?.let { put("personality", JsonPrimitive(it.wireValue)) }
-    sandbox?.let { put("sandbox", JsonPrimitive(it.wireValue)) }
-    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.wireValue)) }
+    sandbox?.let { put("sandbox", JsonPrimitive(it.threadWireValue)) }
+    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.runtimeWireValue)) }
 }.let(::JsonObject)
 
 private fun MutableMap<String, JsonElement>.putOptional(name: String, value: String?) {
