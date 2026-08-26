@@ -304,6 +304,7 @@ class CodexAppServerTurnApiTest {
             f.respond(request, turnResult("id", "completed"))
             call.await()
         }
+        Unit
     }
 
     @Test
