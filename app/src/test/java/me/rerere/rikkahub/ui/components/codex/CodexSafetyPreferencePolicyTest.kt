@@ -12,8 +12,8 @@ class CodexSafetyPreferencePolicyTest {
     fun `managed sandbox diagnostics warn without mutating preferences`() {
         val restricted = me.rerere.rikkahub.data.codex.appserver.CodexConfigRequirementsSnapshot(
             allowedSandboxModes = listOf(
-                me.rerere.rikkahub.data.codex.appserver.CodexDiagnosticSandboxMode("read-only"),
-                me.rerere.rikkahub.data.codex.appserver.CodexDiagnosticSandboxMode("workspace-write"),
+                me.rerere.rikkahub.data.codex.appserver.CodexDiagnosticSandboxMode("readOnly"),
+                me.rerere.rikkahub.data.codex.appserver.CodexDiagnosticSandboxMode("workspaceWrite"),
             ),
         )
         assertNull(managedSandboxWarning("danger-full-access", false, restricted))
@@ -22,6 +22,18 @@ class CodexSafetyPreferencePolicyTest {
         assertNull(managedSandboxWarning("workspace-write", true, restricted))
         assertNotNull(managedSandboxWarning("danger-full-access", true, restricted))
         assertNull(managedSandboxWarning(null, true, restricted))
+        assertNotNull(
+            managedSandboxWarning(
+                null,
+                true,
+                me.rerere.rikkahub.data.codex.appserver.CodexConfigRequirementsSnapshot(
+                    allowedSandboxModes = listOf(
+                        me.rerere.rikkahub.data.codex.appserver.CodexDiagnosticSandboxMode("readOnly"),
+                    ),
+                ),
+            ),
+        )
+        assertNull(managedSandboxWarning("server-default", true, restricted))
         assertNull(managedSandboxWarning("future-mode", true, restricted))
     }
     @Test fun warningAndConfirmationStatesArePure() {
@@ -48,7 +60,7 @@ class CodexSafetyPreferencePolicyTest {
             ),
         )
         assertEquals(
-            "サーバーの安全設定 · リセットすると固定された上書き設定を解除します",
+            "承認はApp Server設定 · 固定された上書きの解除にはリセットが必要です",
             codexSafetyIndicator(base),
         )
         assertNull(
@@ -56,6 +68,18 @@ class CodexSafetyPreferencePolicyTest {
                 base.copy(codexSandboxMode = "workspace-write", codexApprovalPolicy = "on-request"),
             ),
         )
+        assertEquals(
+            "サンドボックスはApp Server設定 · 固定された上書きの解除にはリセットが必要です",
+            codexSafetyIndicator(
+                base.copy(codexSandboxMode = "server-default", codexApprovalPolicy = "on-request"),
+            ),
+        )
+        assertNull(
+            codexSafetyIndicator(
+                base.copy(codexApprovalPolicy = "on-request"),
+            ),
+        )
+        org.junit.Assert.assertTrue(codexSandboxKnown("server-default"))
         assertFalse(codexSandboxKnown("future"))
         assertFalse(codexApprovalKnown("future"))
     }

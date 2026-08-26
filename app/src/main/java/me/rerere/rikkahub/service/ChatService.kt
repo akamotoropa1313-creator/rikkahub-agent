@@ -120,8 +120,8 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSessionOpenResult
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams
-import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSandboxMode
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalPolicy
+import me.rerere.rikkahub.data.codex.appserver.effectiveCodexSandboxMode
 import me.rerere.rikkahub.data.codex.appserver.serviceTierIds
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnInput
 import me.rerere.rikkahub.data.codex.appserver.CodexInputCapability
@@ -826,7 +826,7 @@ class ChatService(
                         serviceTier = assistant.codexServiceTier,
                         developerInstructions = instructions,
                         personality = personality,
-                        sandbox = CodexAppServerSandboxMode.fromPreference(assistant.codexSandboxMode),
+                        sandbox = effectiveCodexSandboxMode(assistant.codexSandboxMode),
                         approvalPolicy = approvalPolicy,
                     ),
                 )
@@ -895,7 +895,7 @@ class ChatService(
             when (val opened = opener.open(conversationId.toString(), workspaceId, cwd,
                 CodexAppServerThreadStartParams(model = assistant.codexModel, serviceTier = assistant.codexServiceTier,
                     developerInstructions = instructions, personality = threadPersonality,
-                    sandbox = CodexAppServerSandboxMode.fromPreference(assistant.codexSandboxMode),
+                    sandbox = effectiveCodexSandboxMode(assistant.codexSandboxMode),
                     approvalPolicy = approvalPolicy))) {
                 is CodexAppServerConversationSessionOpenResult.Started -> opened.session
                 is CodexAppServerConversationSessionOpenResult.Recovered -> opened.session
@@ -980,7 +980,7 @@ class ChatService(
             summary = assistant.codexReasoningSummary?.let { CodexAppServerReasoningSummary.valueOf(it.name) },
             serviceTier = serviceTier,
             personality = personality,
-            sandbox = CodexAppServerSandboxMode.fromPreference(assistant.codexSandboxMode),
+            sandbox = effectiveCodexSandboxMode(assistant.codexSandboxMode),
             approvalPolicy = approvalPolicy,
         )
         val result = acceptCodexSkillAfterStart({ runtime.session.startTurn(input, params) }, onAccepted)
@@ -1184,7 +1184,7 @@ class ChatService(
                 when (val opened = checkNotNull(codexSessionOpener).recoverBound(
                     conversationId.toString(),
                     me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadResumeParams(
-                        sandbox = CodexAppServerSandboxMode.fromPreference(assistant.codexSandboxMode),
+                        sandbox = effectiveCodexSandboxMode(assistant.codexSandboxMode),
                         approvalPolicy = approvalPolicy,
                     ),
                 )) {

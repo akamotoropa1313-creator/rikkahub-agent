@@ -14,14 +14,31 @@ class CodexAppServerSafetyPolicyTest {
         assertEquals(CodexAppServerSandboxMode.READ_ONLY, CodexAppServerSandboxMode.fromPreference("read-only"))
         assertEquals(CodexAppServerSandboxMode.WORKSPACE_WRITE, CodexAppServerSandboxMode.fromPreference("workspace-write"))
         assertEquals(CodexAppServerSandboxMode.DANGER_FULL_ACCESS, CodexAppServerSandboxMode.fromPreference("danger-full-access"))
+        assertEquals("readOnly", CodexAppServerSandboxMode.READ_ONLY.wireValue)
+        assertEquals("workspaceWrite", CodexAppServerSandboxMode.WORKSPACE_WRITE.wireValue)
+        assertEquals("dangerFullAccess", CodexAppServerSandboxMode.DANGER_FULL_ACCESS.wireValue)
         assertNull(CodexAppServerSandboxMode.fromPreference(null))
         assertNull(CodexAppServerSandboxMode.fromPreference("future"))
         assertEquals(CodexAppServerApprovalPolicy.UNTRUSTED, CodexAppServerApprovalPolicy.fromPreference("untrusted"))
         assertEquals(CodexAppServerApprovalPolicy.ON_REQUEST, CodexAppServerApprovalPolicy.fromPreference("on-request"))
         assertEquals(CodexAppServerApprovalPolicy.NEVER, CodexAppServerApprovalPolicy.fromPreference("never"))
+        assertEquals("unlessTrusted", CodexAppServerApprovalPolicy.UNTRUSTED.wireValue)
+        assertEquals("onRequest", CodexAppServerApprovalPolicy.ON_REQUEST.wireValue)
+        assertTrue(CodexDiagnosticSandboxMode("workspaceWrite").known)
+        assertTrue(CodexDiagnosticSandboxMode("workspace-write").known)
+        assertFalse(CodexDiagnosticSandboxMode("future").known)
         listOf(null, "future", "on-failure", "unlessTrusted", "granular").forEach {
             assertNull(CodexAppServerApprovalPolicy.fromPreference(it))
         }
+    }
+
+    @Test fun missingPreferenceDefaultsToBoundWorkspaceWriteWithoutGrantingFullAccess() {
+        assertEquals(CodexAppServerSandboxMode.WORKSPACE_WRITE, effectiveCodexSandboxMode(null))
+        assertEquals(CodexAppServerSandboxMode.READ_ONLY, effectiveCodexSandboxMode("read-only"))
+        assertEquals(CodexAppServerSandboxMode.WORKSPACE_WRITE, effectiveCodexSandboxMode("workspace-write"))
+        assertEquals(CodexAppServerSandboxMode.DANGER_FULL_ACCESS, effectiveCodexSandboxMode("danger-full-access"))
+        assertNull(effectiveCodexSandboxMode(CODEX_SANDBOX_SERVER_DEFAULT))
+        assertNull(effectiveCodexSandboxMode("future"))
     }
 
     @Test fun publicPresetPoliciesHaveExactStableShape() {

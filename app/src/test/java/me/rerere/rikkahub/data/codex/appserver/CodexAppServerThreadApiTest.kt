@@ -173,12 +173,16 @@ class CodexAppServerThreadApiTest {
                     baseInstructions = "base", developerInstructions = "dev",
                     personality = CodexAppServerPersonality.PRAGMATIC, ephemeral = false,
                     serviceTier = "future-tier",
+                    sandbox = CodexAppServerSandboxMode.WORKSPACE_WRITE,
+                    approvalPolicy = CodexAppServerApprovalPolicy.ON_REQUEST,
                 )
                 val call = async { f.api.startThread(params) }
                 val request = f.takeRequest()
                 val objectValue = request.params!!.jsonObject
-                assertEquals(setOf("model", "modelProvider", "cwd", "config", "serviceName", "baseInstructions", "developerInstructions", "personality", "ephemeral", "serviceTier"), objectValue.keys)
+                assertEquals(setOf("model", "modelProvider", "cwd", "config", "serviceName", "baseInstructions", "developerInstructions", "personality", "ephemeral", "serviceTier", "sandbox", "approvalPolicy"), objectValue.keys)
                 assertEquals("future-tier", objectValue["serviceTier"]?.jsonPrimitive?.content)
+                assertEquals("workspaceWrite", objectValue["sandbox"]?.jsonPrimitive?.content)
+                assertEquals("onRequest", objectValue["approvalPolicy"]?.jsonPrimitive?.content)
                 assertEquals(false, objectValue["ephemeral"]?.jsonPrimitive?.content?.toBoolean())
                 f.respond(request, result("id")); call.await()
             }
@@ -213,9 +217,11 @@ class CodexAppServerThreadApiTest {
     fun `resume overrides serialize only supported fields`() {
         runBlocking {
             fixture().use { f ->
-                val call = async { f.api.resumeThread("id", CodexAppServerThreadResumeParams(model = "gpt", modelProvider = "p", cwd = "/x", config = mapOf("x" to JsonPrimitive(1)), baseInstructions = "b", developerInstructions = "d", personality = CodexAppServerPersonality.FRIENDLY)) }
+                val call = async { f.api.resumeThread("id", CodexAppServerThreadResumeParams(model = "gpt", modelProvider = "p", cwd = "/x", config = mapOf("x" to JsonPrimitive(1)), baseInstructions = "b", developerInstructions = "d", personality = CodexAppServerPersonality.FRIENDLY, sandbox = CodexAppServerSandboxMode.WORKSPACE_WRITE, approvalPolicy = CodexAppServerApprovalPolicy.ON_REQUEST)) }
                 val request = f.takeRequest()
-                assertEquals(setOf("threadId", "model", "modelProvider", "cwd", "config", "baseInstructions", "developerInstructions", "personality"), request.params!!.jsonObject.keys)
+                assertEquals(setOf("threadId", "model", "modelProvider", "cwd", "config", "baseInstructions", "developerInstructions", "personality", "sandbox", "approvalPolicy"), request.params!!.jsonObject.keys)
+                assertEquals("workspaceWrite", request.params!!.jsonObject["sandbox"]!!.jsonPrimitive.content)
+                assertEquals("onRequest", request.params!!.jsonObject["approvalPolicy"]!!.jsonPrimitive.content)
                 f.respond(request, result("id")); call.await()
             }
         }

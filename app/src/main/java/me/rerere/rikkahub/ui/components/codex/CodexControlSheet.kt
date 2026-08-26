@@ -33,6 +33,9 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerItemSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerUserInput
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerStaleBindingReason
+import me.rerere.rikkahub.data.codex.appserver.CODEX_SANDBOX_SERVER_DEFAULT
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSandboxMode
+import me.rerere.rikkahub.data.codex.appserver.effectiveCodexSandboxMode
 import me.rerere.rikkahub.service.CodexReviewUiState
 import me.rerere.rikkahub.service.CodexReviewAction
 
@@ -304,8 +307,15 @@ fun CodexControlSheet(
         item {
             Section("安全性と権限") {
                 Text("サンドボックス", style = MaterialTheme.typography.titleMedium)
-                Text("「サーバー設定」では上書きを送信しません。既存スレッドでは以前の上書きが残る場合があるため、完全にサーバー設定へ戻すにはリセットが必要です。")
-                listOf(null to "サーバー設定", "read-only" to "読み取り専用", "workspace-write" to "Workspace書き込み", "danger-full-access" to "フルアクセス").forEach { (value, label) ->
+                Text("選択したWorkspaceはCodexの作業領域です。既定では、端末全体を開放せずにWorkspace内へ書き込める設定を各ターンへ送信します。")
+                Text("コマンドの承認確認と書き込み範囲は別設定です。承認確認をオフにしても、読み取り専用ではファイルを作成できません。")
+                listOf(
+                    null to "Workspace書き込み（推奨）",
+                    "read-only" to "読み取り専用",
+                    "workspace-write" to "Workspace書き込み（固定）",
+                    CODEX_SANDBOX_SERVER_DEFAULT to "App Server設定",
+                    "danger-full-access" to "フルアクセス",
+                ).forEach { (value, label) ->
                     TextButton(onClick = {
                         val confirmation = codexSafetyConfirmation(assistant, sandbox = value)
                         if (confirmation == CodexSafetyConfirmation.NONE) onUpdateAssistant { it.copy(codexSandboxMode = value) }
@@ -316,7 +326,9 @@ fun CodexControlSheet(
                     "read-only" -> "Codexはプロジェクトファイルを読み取れますが、書き込みは制限されます。"
                     "workspace-write" -> "CodexはWorkspaceサンドボックスで許可されたファイルを変更できます。"
                     "danger-full-access" -> "App Serverから利用できる環境に対するCodexのサンドボックス制限を解除します。"
-                    else -> "明示的な上書きを選ばない場合はApp Serverの設定を使用します。"
+                    CODEX_SANDBOX_SERVER_DEFAULT -> "上書きを送信せずApp Serverの設定を使用します。以前の上書きを完全に解除するにはセッションのリセットが必要です。"
+                    null -> "Codexは次の送信からWorkspace内のファイルを作成・変更できます。端末全体へのフルアクセスではありません。"
+                    else -> "未対応の保存値はApp Serverへ送信しません。"
                 })
                 if (!codexSandboxKnown(assistant.codexSandboxMode)) Text("保存済みの未対応サンドボックス設定「${assistant.codexSandboxMode}」は保持しますが、App Serverには送信しません。", color = MaterialTheme.colorScheme.error)
                 managedSandboxWarning(assistant.codexSandboxMode, capabilities.requirementsLoaded, capabilities.requirements)?.let {
@@ -657,15 +669,16 @@ internal fun managedSandboxWarning(
     requirementsLoaded: Boolean,
     requirements: CodexConfigRequirementsSnapshot?,
 ): String? {
-    if (!requirementsLoaded || savedMode !in setOf("read-only", "workspace-write", "danger-full-access")) return null
+    if (!requirementsLoaded) return null
+    val effectiveMode = effectiveCodexSandboxMode(savedMode) ?: return null
     val allowed = requirements?.allowedSandboxModes ?: return null
-    if (allowed.any { it.wireValue == savedMode }) return null
-    val label = when (savedMode) {
-        "read-only" -> "読み取り専用"
-        "workspace-write" -> "Workspace書き込み"
-        else -> "フルアクセス"
+    if (allowed.any { effectiveMode.matchesServerValue(it.wireValue) }) return null
+    val label = when (effectiveMode) {
+        CodexAppServerSandboxMode.READ_ONLY -> "読み取り専用"
+        CodexAppServerSandboxMode.WORKSPACE_WRITE -> "Workspace書き込み"
+        CodexAppServerSandboxMode.DANGER_FULL_ACCESS -> "フルアクセス"
     }
-    return "管理ポリシーでは現在「$label」を許可していません。保存済みの設定は変更せず、App Server側のポリシーを優先します。"
+    return "管理ポリシーでは現在「$label」を許可していません。このままでは開始・実行に失敗する場合があるため、許可済みの設定を選択してください。"
 }
 
 internal fun codexReconnectEligible(
