@@ -119,6 +119,7 @@ import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSessionOpener
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSessionOpenResult
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
+import me.rerere.rikkahub.data.codex.appserver.CodexNetworkEnvironmentPreparer
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalPolicy
 import me.rerere.rikkahub.data.codex.appserver.effectiveCodexSandboxMode
@@ -320,6 +321,7 @@ class ChatService(
     private val folderRepository: FolderRepository,
     private val codexSessionOpener: CodexAppServerConversationSessionOpener? = null,
     private val codexBindingRepository: CodexAppServerSessionBindingRepository? = null,
+    private val codexNetworkEnvironmentPreparer: CodexNetworkEnvironmentPreparer? = null,
 ) {
     private val codexMediaStager = CodexMediaStager(context, workspaceRepository)
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
@@ -1156,7 +1158,19 @@ class ChatService(
     }
     suspend fun setCodexSkillEnabled(id: Uuid, skill: CodexSkillMetadata, enabled: Boolean) = withCodexCapabilityLease(id) { it.setSkillEnabled(skill, enabled) }
     suspend fun refreshCodexAccount(id: Uuid) = withCodexCapabilityLease(id) { it.refreshAccount() }
-    suspend fun beginCodexAccountLogin(id: Uuid, launcher: CodexAppServerAuthUrlLauncher) = withCodexCapabilityLease(id) { it.beginAccountLogin(launcher) }
+    suspend fun beginCodexAccountLogin(id: Uuid, launcher: CodexAppServerAuthUrlLauncher) =
+        withCodexCapabilityLease(id) { runtime ->
+            codexNetworkEnvironmentPreparer?.let { preparer ->
+                val binding = checkNotNull(codexBindingRepository?.getBinding(id.toString())) {
+                    "Reconnect Codex before signing in"
+                }
+                val workspace = checkNotNull(workspaceRepository.getById(binding.workspaceId)) {
+                    "Codex workspace no longer exists"
+                }
+                preparer.prepare(workspace.root)
+            }
+            runtime.beginAccountLogin(launcher)
+        }
     suspend fun cancelCodexAccountLogin(id: Uuid) = withCodexCapabilityLease(id) { it.cancelAccountLogin() }
     suspend fun logoutCodexAccount(id: Uuid) = withCodexCapabilityLease(id) { it.logoutAccount() }
     suspend fun refreshCodexMcp(id: Uuid) = withCodexCapabilityLease(id) { it.refreshMcp() }

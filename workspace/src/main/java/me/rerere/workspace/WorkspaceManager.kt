@@ -49,6 +49,12 @@ class WorkspaceManager(
 
     fun hasRootfs(root: String): Boolean = File(linuxDir(root), "bin/sh").isFile
 
+    /** Refreshes host-managed Rootfs files without starting a PRoot process. */
+    fun patchRootfs(root: String, options: RootfsPatchOptions) = synchronized(processLifecycleLock) {
+        requireValidRoot(root)
+        RootfsPatcher().patch(linuxDir(root), options)
+    }
+
     fun deleteWorkspace(root: String): Boolean = synchronized(processLifecycleLock) {
         // 先杀掉该 workspace 所有后台进程, 再删目录, 避免进程仍持有已删除目录下的 fd
         killAllBackground(root)

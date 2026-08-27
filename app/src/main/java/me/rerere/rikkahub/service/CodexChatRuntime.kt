@@ -1153,11 +1153,22 @@ internal fun applyMcpOAuthCompletion(state: CodexCapabilitiesUiState, event: Cod
 internal fun applyAccountLoginCompletion(state: CodexCapabilitiesUiState, event: CodexAppServerAccountEvent.LoginCompleted): CodexCapabilitiesUiState {
     val pending = state.pendingLoginId
     if (event.loginId != null && pending != null && event.loginId != pending) return state
+    val error = event.error?.let(::actionableAccountLoginError)
     return state.copy(
         pendingLoginId = null,
-        accountStatus = if (event.success) null else event.error ?: "Sign-in failed",
-        accountError = event.error,
+        accountStatus = if (event.success) null else error ?: "Sign-in failed",
+        accountError = error,
     )
+}
+
+private fun actionableAccountLoginError(error: String): String {
+    val normalized = error.lowercase()
+    return if ("token exchange failed" in normalized && "error sending request for url" in normalized) {
+        "OpenAI認証サーバーに接続できません。VPN・プライベートDNS・広告ブロックを一時停止するか、" +
+            "Wi-Fiとモバイル通信を切り替えて、もう一度サインインしてください。"
+    } else {
+        error
+    }
 }
 
 private fun Throwable.safeMessage(): String = message?.replace(Regex("https?://\\S+"), "<redacted>") ?: this::class.simpleName.orEmpty()

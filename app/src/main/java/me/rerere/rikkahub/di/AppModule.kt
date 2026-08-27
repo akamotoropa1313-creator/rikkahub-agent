@@ -256,7 +256,8 @@ val appModule = module {
             workspaceRepository = get(),
             folderRepository = get(),
             codexSessionOpener = get(),
-            codexBindingRepository = get()
+            codexBindingRepository = get(),
+            codexNetworkEnvironmentPreparer = get(),
         )
     }
 

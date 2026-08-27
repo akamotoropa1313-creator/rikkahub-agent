@@ -20,6 +20,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexHarnessThreadConfigurationRe
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessTranslatedResponsesBackend
 import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeManager
 import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeResolver
+import me.rerere.rikkahub.data.codex.appserver.CodexNetworkEnvironmentPreparer
 import me.rerere.rikkahub.data.codex.appserver.RoomCodexAppServerLocalState
 import me.rerere.rikkahub.data.codex.appserver.SettingsStoreCodexHarnessProviderSettingsSource
 import me.rerere.rikkahub.data.codex.appserver.WorkspaceCodexAppServerConnectionFactory
@@ -62,8 +63,20 @@ val repositoryModule = module {
             get<CodexRuntimeManager>().ensureReady(root)
         }
     }
+    single {
+        CodexNetworkEnvironmentPreparer(
+            context = get(),
+            workspaceManager = get(),
+            caBundle = get(),
+        )
+    }
     single<CodexAppServerConnectionCreator> {
-        WorkspaceCodexAppServerConnectionFactory(get(), get(), BuildConfig.VERSION_NAME)
+        WorkspaceCodexAppServerConnectionFactory(
+            workspaceManager = get(),
+            runtimeResolver = get(),
+            appVersion = BuildConfig.VERSION_NAME,
+            networkEnvironmentPreparer = get(),
+        )
     }
     single { CodexAppServerSessionRecovery(get(), get(), get(), autoRefreshModelCatalog = true) }
 

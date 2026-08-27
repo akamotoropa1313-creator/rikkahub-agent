@@ -48,6 +48,28 @@ class CodexCapabilityCompletionTest {
         assertEquals("denied", result.accountStatus)
     }
 
+    @Test fun `token exchange transport failure shows network recovery steps`() {
+        val event = CodexAppServerAccountEvent.LoginCompleted(
+            "login-1",
+            false,
+            "Token exchange failed: error sending request for url (https://auth.openai.com/oauth/token)",
+            null,
+            JsonObject(emptyMap()),
+        )
+
+        val result = applyAccountLoginCompletion(
+            CodexCapabilitiesUiState(pendingLoginId = "login-1"),
+            event,
+        )
+
+        assertNull(result.pendingLoginId)
+        assertEquals(
+            "OpenAI認証サーバーに接続できません。VPN・プライベートDNS・広告ブロックを一時停止するか、" +
+                "Wi-Fiとモバイル通信を切り替えて、もう一度サインインしてください。",
+            result.accountError,
+        )
+    }
+
     private fun mcpEvent(name: String, success: Boolean, error: String?) =
         CodexAppServerMcpEvent.OAuthLoginCompleted(name, "thread", success, error, JsonObject(emptyMap()))
 }
