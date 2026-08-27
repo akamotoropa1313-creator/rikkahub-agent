@@ -275,6 +275,9 @@
   <string name="chat_page_conversation_system_prompt_clear">Clear</string>
   <string name="chat_page_conversation_system_prompt_hint">Override the assistant\'s system prompt for this conversation</string>
   <string name="chat_page_conversation_system_prompt_save">Save</string>
+  <string name="chat_codex_delete_reset_confirm">Reset and delete</string>
+  <string name="chat_codex_delete_reset_message">This conversation is connected to a Codex thread. Deleting the message will reset that Codex session first so the two histories do not diverge. The remaining RikkaHub messages will stay, but the next send will start a new Codex thread.</string>
+  <string name="chat_codex_delete_reset_title">Reset Codex session and delete?</string>
   <string name="chat_page_delete">Delete</string>
   <string name="chat_page_dismiss_error">Dismiss error</string>
   <string name="chat_page_edit_nickname">Edit Nickname</string>

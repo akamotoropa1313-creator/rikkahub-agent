@@ -272,6 +272,9 @@
   <string name="chat_page_conversation_system_prompt_clear">クリア</string>
   <string name="chat_page_conversation_system_prompt_hint">この会話でアシスタントのシステムプロンプトを上書き</string>
   <string name="chat_page_conversation_system_prompt_save">保存</string>
+  <string name="chat_codex_delete_reset_confirm">リセットして削除</string>
+  <string name="chat_codex_delete_reset_message">この会話はCodexスレッドに接続されています。履歴の食い違いを防ぐため、メッセージを削除する前にCodexセッションをリセットします。RikkaHubの残りのメッセージは保持されますが、次回の送信時には新しいCodexスレッドが作成されます。</string>
+  <string name="chat_codex_delete_reset_title">Codexセッションをリセットして削除しますか？</string>
   <string name="chat_page_delete">削除</string>
   <string name="chat_page_dismiss_error">エラーを閉じる</string>
   <string name="chat_page_edit_nickname">ニックネームを編集</string>

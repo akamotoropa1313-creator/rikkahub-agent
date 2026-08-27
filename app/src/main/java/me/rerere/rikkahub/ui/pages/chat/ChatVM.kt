@@ -397,9 +397,26 @@ class ChatVM(
         return chatService.forkConversationAtMessage(_conversationId, message.id)
     }
 
-    fun deleteMessage(message: UIMessage) {
+    fun deleteMessage(
+        message: UIMessage,
+        resetCodexSession: Boolean = false,
+    ) {
         viewModelScope.launch {
-            chatService.deleteMessage(_conversationId, message)
+            deleteChatMessageSafely(
+                resetCodexSession = resetCodexSession,
+                resetSession = { chatService.resetCodexSession(_conversationId) },
+                deleteMessage = { chatService.deleteMessage(_conversationId, message) },
+                onSessionReset = {
+                    _selectedCodexSkill.value = null
+                    _hasCodexBinding.value = false
+                },
+            ).onFailure { failure ->
+                chatService.addError(
+                    error = failure,
+                    conversationId = _conversationId,
+                    title = context.getString(R.string.error_title_operation),
+                )
+            }
         }
     }
 

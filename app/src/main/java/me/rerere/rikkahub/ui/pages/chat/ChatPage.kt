@@ -59,6 +59,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.Model
+import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.common.android.appTempFolder
 import me.rerere.hugeicons.HugeIcons
@@ -300,6 +301,7 @@ private fun ChatPageContent(
     val assistant = setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
     var showFilesSheet by remember { mutableStateOf(false) }
     var showCodexControls by remember { mutableStateOf(false) }
+    var pendingCodexMessageDelete by remember { mutableStateOf<UIMessage?>(null) }
     val codexCapabilities by vm.codexCapabilities.collectAsStateWithLifecycle()
     val codexReview by vm.codexReview.collectAsStateWithLifecycle()
     val codexOperationBusy by vm.codexOperationBusy.collectAsStateWithLifecycle()
@@ -547,6 +549,8 @@ private fun ChatPageContent(
                 onDelete = {
                     if (loadingJob != null) {
                         vm.showDeleteBlockedWhileGeneratingError()
+                    } else if (hasCodexBinding) {
+                        pendingCodexMessageDelete = it
                     } else {
                         vm.deleteMessage(it)
                     }
@@ -643,6 +647,28 @@ private fun ChatPageContent(
                     onResetSession = vm::resetCodexSession,
                 )
             }
+        }
+        pendingCodexMessageDelete?.let { message ->
+            AlertDialog(
+                onDismissRequest = { pendingCodexMessageDelete = null },
+                title = { Text(stringResource(R.string.chat_codex_delete_reset_title)) },
+                text = { Text(stringResource(R.string.chat_codex_delete_reset_message)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            pendingCodexMessageDelete = null
+                            vm.deleteMessage(message, resetCodexSession = true)
+                        },
+                    ) {
+                        Text(stringResource(R.string.chat_codex_delete_reset_confirm))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingCodexMessageDelete = null }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+            )
         }
     }
 }
