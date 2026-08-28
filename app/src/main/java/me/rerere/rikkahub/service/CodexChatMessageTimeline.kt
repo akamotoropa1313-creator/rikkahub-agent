@@ -18,6 +18,8 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileUpdateChange
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerItemSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerPatchApplyStatus
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerPatchChangeKind
+import me.rerere.rikkahub.data.codex.appserver.CODEX_FILE_CHANGE_STATUS_METADATA_KEY
+import me.rerere.rikkahub.data.codex.appserver.metadataValue
 import kotlin.time.Clock
 import kotlin.time.Instant
 
@@ -356,6 +358,9 @@ internal class CodexChatMessageTimeline(
             input = input.toString(),
             output = output,
             approvalState = if (index == 0) approvalState else ToolApprovalState.Auto,
+            metadata = buildJsonObject {
+                put(CODEX_FILE_CHANGE_STATUS_METADATA_KEY, item.status.metadataValue())
+            },
         )
     }
 

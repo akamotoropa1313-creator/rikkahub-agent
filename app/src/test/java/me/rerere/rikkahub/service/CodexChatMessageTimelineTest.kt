@@ -17,6 +17,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileUpdateChange
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerItemSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerPatchApplyStatus
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerPatchChangeKind
+import me.rerere.rikkahub.data.codex.appserver.CODEX_FILE_CHANGE_STATUS_METADATA_KEY
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -78,7 +79,37 @@ class CodexChatMessageTimelineTest {
         assertEquals("fun main() {}", tools[1].inputAsJson().jsonObject["text"]?.jsonPrimitive?.content)
         assertEquals("codex:turn:file-1:0", tools[1].toolCallId)
         assertEquals("codex:turn:file-1:1", tools[2].toolCallId)
+        assertEquals(
+            "completed",
+            tools[1].metadata?.get(CODEX_FILE_CHANGE_STATUS_METADATA_KEY)?.jsonPrimitive?.content,
+        )
         assertNotNull(tools[2].output.single().metadataAs<DiffMetadata>()?.diff)
+    }
+
+    @Test
+    fun `failed file change is persisted with failure status for presentation filtering`() {
+        val timeline = CodexChatMessageTimeline(nowMs = { 99L })
+        val file = CodexAppServerItemSnapshot.FileChange(
+            id = "file-failed",
+            changes = listOf(
+                change(
+                    "/workspace/index.html",
+                    CodexAppServerPatchChangeKind.Add(buildJsonObject { put("type", "add") }),
+                    "--- /dev/null\n+++ b/index.html\n@@ -0,0 +1 @@\n+failed\n",
+                ),
+            ),
+            status = CodexAppServerPatchApplyStatus.Failed,
+            raw = buildJsonObject { put("type", "fileChange") },
+        )
+
+        timeline.itemStarted("turn", file, 10L)
+        timeline.itemCompleted("turn", file, 11L)
+
+        val tool = timeline.parts("turn").single() as UIMessagePart.Tool
+        assertEquals(
+            "failed",
+            tool.metadata?.get(CODEX_FILE_CHANGE_STATUS_METADATA_KEY)?.jsonPrimitive?.content,
+        )
     }
 
     @Test

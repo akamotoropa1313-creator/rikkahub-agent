@@ -324,10 +324,10 @@ fun CodexControlSheet(
                 }
                 Text(when (assistant.codexSandboxMode) {
                     "read-only" -> "Codexはプロジェクトファイルを読み取れますが、書き込みは制限されます。"
-                    "workspace-write" -> "CodexはWorkspaceサンドボックスで許可されたファイルを変更できます。"
+                    "workspace-write" -> "Codexは選択したRikkaHub Workspace（PRoot）を実行境界としてファイルを変更します。Android内でbubblewrapは重ねません。"
                     "danger-full-access" -> "App Serverから利用できる環境に対するCodexのサンドボックス制限を解除します。"
                     CODEX_SANDBOX_SERVER_DEFAULT -> "上書きを送信せずApp Serverの設定を使用します。以前の上書きを完全に解除するにはセッションのリセットが必要です。"
-                    null -> "Codexは次の送信からWorkspace内のファイルを作成・変更できます。端末全体へのフルアクセスではありません。"
+                    null -> "Codexは次の送信から選択したRikkaHub Workspace（PRoot）内のファイルを作成・変更できます。Android内でbubblewrapは重ねず、端末全体へのフルアクセスにも切り替えません。"
                     else -> "未対応の保存値はApp Serverへ送信しません。"
                 })
                 if (!codexSandboxKnown(assistant.codexSandboxMode)) Text("保存済みの未対応サンドボックス設定「${assistant.codexSandboxMode}」は保持しますが、App Serverには送信しません。", color = MaterialTheme.colorScheme.error)

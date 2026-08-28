@@ -14,7 +14,7 @@ import org.junit.Test
 
 class CodexStage16ProtocolTypesTest {
     @Test
-    fun `legacy missing preference becomes Workspace write on both thread and turn`() {
+    fun `legacy missing preference keeps thread mode and uses managed PRoot on turns`() {
         val effective = effectiveCodexSandboxMode(null)
 
         assertEquals(
@@ -22,7 +22,7 @@ class CodexStage16ProtocolTypesTest {
             CodexAppServerThreadStartParams(sandbox = effective).sandbox,
         )
         assertEquals(
-            CodexAppServerSandboxPolicy.WorkspaceWrite,
+            CodexAppServerSandboxPolicy.ExternalWorkspace,
             CodexAppServerTurnStartParams(sandbox = effective).sandboxPolicy,
         )
     }

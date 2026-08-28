@@ -21,6 +21,16 @@ sealed interface CodexAppServerCommandAction { val raw: JsonObject
     data class Other(val type: String, override val raw: JsonObject) : CodexAppServerCommandAction
 }
 sealed interface CodexAppServerPatchApplyStatus { data object InProgress : CodexAppServerPatchApplyStatus; data object Completed : CodexAppServerPatchApplyStatus; data object Failed : CodexAppServerPatchApplyStatus; data object Declined : CodexAppServerPatchApplyStatus; data class Unknown(val rawValue: String) : CodexAppServerPatchApplyStatus }
+
+internal const val CODEX_FILE_CHANGE_STATUS_METADATA_KEY = "codexFileChangeStatus"
+
+internal fun CodexAppServerPatchApplyStatus.metadataValue(): String = when (this) {
+    CodexAppServerPatchApplyStatus.InProgress -> "inProgress"
+    CodexAppServerPatchApplyStatus.Completed -> "completed"
+    CodexAppServerPatchApplyStatus.Failed -> "failed"
+    CodexAppServerPatchApplyStatus.Declined -> "declined"
+    is CodexAppServerPatchApplyStatus.Unknown -> "unknown:$rawValue"
+}
 sealed interface CodexAppServerPatchChangeKind { val raw: JsonObject; data class Add(override val raw: JsonObject) : CodexAppServerPatchChangeKind; data class Delete(override val raw: JsonObject) : CodexAppServerPatchChangeKind; data class Update(val movePath: String?, override val raw: JsonObject) : CodexAppServerPatchChangeKind; data class Other(val type: String, override val raw: JsonObject) : CodexAppServerPatchChangeKind }
 data class CodexAppServerFileUpdateChange(val path: String, val kind: CodexAppServerPatchChangeKind, val diff: String, val raw: JsonObject)
 

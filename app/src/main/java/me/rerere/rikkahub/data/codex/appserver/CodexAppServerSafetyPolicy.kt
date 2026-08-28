@@ -83,6 +83,20 @@ sealed interface CodexAppServerSandboxPolicy {
         )
     }
 
+    /**
+     * The Codex process is already contained by RikkaHub's selected Android PRoot Workspace.
+     * Asking Codex to create another Linux sandbox would require bubblewrap/user namespaces,
+     * which are not available on supported unrooted Android devices.
+     */
+    data object ExternalWorkspace : CodexAppServerSandboxPolicy {
+        override fun toJson() = JsonObject(
+            mapOf(
+                "type" to JsonPrimitive("externalSandbox"),
+                "networkAccess" to JsonPrimitive("restricted"),
+            ),
+        )
+    }
+
     data object DangerFullAccess : CodexAppServerSandboxPolicy {
         override fun toJson() = JsonObject(
             mapOf("type" to JsonPrimitive(CodexAppServerSandboxMode.DANGER_FULL_ACCESS.turnPolicyType)),
@@ -94,4 +108,17 @@ fun CodexAppServerSandboxMode.toTurnPolicy(): CodexAppServerSandboxPolicy = when
     CodexAppServerSandboxMode.READ_ONLY -> CodexAppServerSandboxPolicy.ReadOnly
     CodexAppServerSandboxMode.WORKSPACE_WRITE -> CodexAppServerSandboxPolicy.WorkspaceWrite
     CodexAppServerSandboxMode.DANGER_FULL_ACCESS -> CodexAppServerSandboxPolicy.DangerFullAccess
+}
+
+/**
+ * Turn policy for the App Server process launched inside RikkaHub's managed PRoot Workspace.
+ *
+ * Keep [toTurnPolicy] as the exact native Codex preset mapping for protocol-level callers and
+ * tests. Production turns use this mapping so normal Workspace writes do not try to nest
+ * bubblewrap inside PRoot. This is not a full-access fallback: the outer Workspace remains the
+ * execution boundary and Codex network access stays restricted.
+ */
+fun CodexAppServerSandboxMode.toManagedProotTurnPolicy(): CodexAppServerSandboxPolicy = when (this) {
+    CodexAppServerSandboxMode.WORKSPACE_WRITE -> CodexAppServerSandboxPolicy.ExternalWorkspace
+    else -> toTurnPolicy()
 }

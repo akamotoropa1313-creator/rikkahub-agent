@@ -66,4 +66,20 @@ class CodexAppServerSafetyPolicyTest {
             assertFalse(workspace[it]!!.jsonPrimitive.boolean)
         }
     }
+
+    @Test fun managedProotWorkspacePolicyUsesStableExternalSandboxWithoutFullAccess() {
+        val workspace = CodexAppServerSandboxMode.WORKSPACE_WRITE.toManagedProotTurnPolicy().toJson()
+        assertEquals(setOf("type", "networkAccess"), workspace.keys)
+        assertEquals("externalSandbox", workspace["type"]!!.jsonPrimitive.content)
+        assertEquals("restricted", workspace["networkAccess"]!!.jsonPrimitive.content)
+
+        assertEquals(
+            CodexAppServerSandboxPolicy.ReadOnly,
+            CodexAppServerSandboxMode.READ_ONLY.toManagedProotTurnPolicy(),
+        )
+        assertEquals(
+            CodexAppServerSandboxPolicy.DangerFullAccess,
+            CodexAppServerSandboxMode.DANGER_FULL_ACCESS.toManagedProotTurnPolicy(),
+        )
+    }
 }

@@ -1,7 +1,7 @@
 package me.rerere.rikkahub.service
 
 import me.rerere.rikkahub.data.codex.appserver.CodexModelCatalogKnowledge
-import me.rerere.rikkahub.data.codex.appserver.toTurnPolicy
+import me.rerere.rikkahub.data.codex.appserver.toManagedProotTurnPolicy
 
 /**
  * A saved personality request is intentionally distinct from the protocol enum. The request can
@@ -43,7 +43,7 @@ internal fun CodexAppServerTurnStartParams(
         summary = summary,
         personality = personality?.value?.takeIf { CodexModelCatalogKnowledge.personalitySupported(model) },
         serviceTier = serviceTier,
-        sandboxPolicy = sandbox?.toTurnPolicy(),
+        sandboxPolicy = sandbox?.toManagedProotTurnPolicy(),
         approvalPolicy = approvalPolicy,
     )
 

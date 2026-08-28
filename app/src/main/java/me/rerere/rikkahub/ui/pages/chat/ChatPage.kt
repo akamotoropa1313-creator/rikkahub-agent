@@ -369,23 +369,28 @@ private fun ChatPageContent(
                             is CodexConversationUiState.Terminal -> state.telemetry
                             else -> null
                         }?.latest?.tokenUsage
-                        TextButton(
-                            onClick = { showCodexControls = true },
+                        Surface(
                             modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.background,
                         ) {
-                            Column {
-                                Text(
-                                    text = codexComposerLabel(assistant, codexCapabilities.models, setting.providers),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                currentUsage?.let { usage ->
+                            TextButton(
+                                onClick = { showCodexControls = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column {
                                     Text(
-                                        text = compactContextText(usage),
+                                        text = codexComposerLabel(assistant, codexCapabilities.models, setting.providers),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
-                                        style = MaterialTheme.typography.labelSmall,
                                     )
+                                    currentUsage?.let { usage ->
+                                        Text(
+                                            text = compactContextText(usage),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.labelSmall,
+                                        )
+                                    }
                                 }
                             }
                         }
