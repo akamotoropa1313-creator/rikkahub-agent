@@ -375,6 +375,38 @@ class CodexChatRuntime(
         }
     }
 
+    suspend fun syncExternalAccount(sync: suspend () -> Boolean) = capabilityOperation {
+        accountSnapshotRefreshJob?.cancelAndJoin()
+        accountSnapshotRefreshJob = null
+        _capabilities.value = _capabilities.value.copy(
+            accountSubmitting = true,
+            accountError = null,
+            accountStatus = null,
+        )
+        try {
+            check(sync()) {
+                "RikkaHubのプロバイダー設定でCodexにサインインしてください"
+            }
+            val account = session.accountApi.readAccount()
+            _capabilities.value = _capabilities.value.copy(
+                account = account,
+                pendingLoginId = null,
+                accountStatus = "RikkaHubのCodexプロバイダー認証を同期しました",
+                accountError = null,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            _capabilities.value = _capabilities.value.copy(
+                accountStatus = null,
+                accountError = failure.safeMessage(),
+            )
+            throw failure
+        } finally {
+            _capabilities.value = _capabilities.value.copy(accountSubmitting = false)
+        }
+    }
+
     suspend fun beginAccountLogin(launcher: CodexAppServerAuthUrlLauncher) = capabilityOperation {
         accountSnapshotRefreshJob?.cancelAndJoin()
         accountSnapshotRefreshJob = null

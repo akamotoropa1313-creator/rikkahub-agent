@@ -18,6 +18,7 @@ class WorkspaceCodexAppServerConnectionFactory(
     private val appVersion: String,
     private val networkEnvironmentPreparer: CodexNetworkEnvironmentPreparer? = null,
     private val initializeTimeout: Duration = 30.seconds,
+    private val enableExperimentalApi: Boolean = false,
 ) : CodexAppServerConnectionCreator {
     private val launcher = WorkspaceCodexAppServerLauncher(workspaceManager)
 
@@ -31,6 +32,11 @@ class WorkspaceCodexAppServerConnectionFactory(
             CodexAppServerConnection(
                 dispatcher = CodexAppServerRequestDispatcher(transport),
                 clientInfo = CodexAppServerClientInfo(version = appVersion),
+                capabilities = if (enableExperimentalApi) {
+                    CodexAppServerInitializeCapabilities(experimentalApi = true)
+                } else {
+                    null
+                },
                 initializeTimeout = initializeTimeout,
             )
         } catch (error: Throwable) {

@@ -62,6 +62,7 @@ fun CodexControlSheet(
     onCancelSignIn: () -> Unit,
     onLogout: () -> Unit,
     onSetSkillEnabled: (CodexSkillMetadata, Boolean) -> Unit,
+    selectedSkillPaths: Set<String>,
     onUseSkill: (CodexSkillMetadata) -> Unit,
     onMcpSignIn: (String) -> Unit,
     operationBusy: Boolean,
@@ -460,8 +461,11 @@ fun CodexControlSheet(
             }
         }
         item {
-            Section("Codexスキル") {
+            Section("Codex / RikkaHubスキル") {
                 Text("${capabilities.skillGroups.sumOf { it.skills.size }}件のスキル")
+                if (selectedSkillPaths.isNotEmpty()) {
+                    Text("${selectedSkillPaths.size}件を次の送信で使用")
+                }
                 Button(
                     onClick = onRefreshSkills,
                     enabled = capabilities.connected && !capabilities.skillsLoading && !operationBusy,
@@ -502,7 +506,9 @@ fun CodexControlSheet(
                                 onClick = { onSetSkillEnabled(skill, !skill.enabled) },
                                 enabled = capabilities.skillUpdatingPath == null && !operationBusy,
                             ) { Text(if (skill.enabled) "無効化" else "有効化") }
-                            TextButton(onClick = { onUseSkill(skill) }, enabled = skill.enabled && !operationBusy) { Text("使用") }
+                            TextButton(onClick = { onUseSkill(skill) }, enabled = skill.enabled && !operationBusy) {
+                                Text(if (skill.path in selectedSkillPaths) "選択解除" else "使用")
+                            }
                         }
                     }
                 }

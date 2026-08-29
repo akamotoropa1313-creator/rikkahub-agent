@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.ConnectivityManager
 import me.rerere.rikkahub.BuildConfig
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConnectionCreator
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConnectionBootstrapper
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerChatGptCredentialSource
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSessionOpener
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerLocalState
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSessionBindingRepository
@@ -24,6 +26,8 @@ import me.rerere.rikkahub.data.codex.appserver.CodexNetworkEnvironmentPreparer
 import me.rerere.rikkahub.data.codex.appserver.RoomCodexAppServerLocalState
 import me.rerere.rikkahub.data.codex.appserver.SettingsStoreCodexHarnessProviderSettingsSource
 import me.rerere.rikkahub.data.codex.appserver.WorkspaceCodexAppServerConnectionFactory
+import me.rerere.rikkahub.data.codex.appserver.RikkaHubCodexAppServerBridge
+import me.rerere.rikkahub.data.codex.CodexAppServerCredentialSource
 import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.files.SkillManager
@@ -70,15 +74,29 @@ val repositoryModule = module {
             caBundle = get(),
         )
     }
+    single<CodexAppServerChatGptCredentialSource> {
+        CodexAppServerCredentialSource(get())
+    }
+    single { RikkaHubCodexAppServerBridge(get()) }
+    single<CodexAppServerConnectionBootstrapper> { get<RikkaHubCodexAppServerBridge>() }
     single<CodexAppServerConnectionCreator> {
         WorkspaceCodexAppServerConnectionFactory(
             workspaceManager = get(),
             runtimeResolver = get(),
             appVersion = BuildConfig.VERSION_NAME,
             networkEnvironmentPreparer = get(),
+            enableExperimentalApi = true,
         )
     }
-    single { CodexAppServerSessionRecovery(get(), get(), get(), autoRefreshModelCatalog = true) }
+    single {
+        CodexAppServerSessionRecovery(
+            repository = get(),
+            localState = get(),
+            connectionFactory = get(),
+            autoRefreshModelCatalog = true,
+            connectionBootstrapper = get(),
+        )
+    }
 
     // Codex harness model-provider bridge. These are lazy Koin singletons: the loopback server is
     // not started until an Assistant actually selects an external RikkaHub provider model.
@@ -89,7 +107,17 @@ val repositoryModule = module {
     single { CodexHarnessResponsesGatewayServer(get(), get(), get()) }
     single { CodexHarnessThreadConfigurationResolver(get(), get()) }
     single { CodexHarnessConversationProjectionResolver(get(), get(), get()) }
-    single { CodexAppServerConversationSessionOpener(get(), get(), get(), get(), get(), autoRefreshModelCatalog = true) }
+    single {
+        CodexAppServerConversationSessionOpener(
+            repository = get(),
+            localState = get(),
+            connectionFactory = get(),
+            recovery = get(),
+            harnessProjectionResolver = get(),
+            autoRefreshModelCatalog = true,
+            connectionBootstrapper = get(),
+        )
+    }
 
     single { ConversationRepository(get(), get(), get(), get(), get(), get(), get()) }
     single { FolderRepository(get(), get()) }

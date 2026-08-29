@@ -258,6 +258,7 @@ val appModule = module {
             codexSessionOpener = get(),
             codexBindingRepository = get(),
             codexNetworkEnvironmentPreparer = get(),
+            codexRikkaHubBridge = get(),
         )
     }
 

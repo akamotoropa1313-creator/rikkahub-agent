@@ -30,17 +30,17 @@ internal fun codexAccountPresentation(
         loginPending -> listOf("ChatGPTへのサインインを待っています")
         snapshot == null -> listOf("アカウント状態を取得できません")
         snapshot.account is CodexAppServerAccount.ChatGpt -> buildList {
-            add("ChatGPTでサインイン済み")
+            add("RikkaHubのCodexプロバイダー認証で接続済み")
             snapshot.account.email?.takeIf(String::isNotBlank)?.let(::add)
             add(snapshot.account.planType.displayName)
         }
         snapshot.account != null -> listOf("認証済みアカウント")
-        snapshot.requiresOpenaiAuth -> listOf("ChatGPTへのサインインが必要です")
+        snapshot.requiresOpenaiAuth -> listOf("RikkaHubのCodexプロバイダーでサインインしてください")
         else -> listOf("OpenAIへのサインインは不要です")
     }
     return CodexAccountPresentation(
         lines, showSignIn = !loginPending && snapshot?.account == null && snapshot?.requiresOpenaiAuth == true,
-        showCancel = loginPending, showLogout = snapshot?.account != null, actionsEnabled = enabled && !submitting,
+        showCancel = loginPending, showLogout = false, actionsEnabled = enabled && !submitting,
     )
 }
 
@@ -66,7 +66,7 @@ fun CodexAccountCard(
         ),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Codexアカウント", style = MaterialTheme.typography.titleMedium)
+            Text("Codexアカウント（RikkaHubプロバイダー連携）", style = MaterialTheme.typography.titleMedium)
             presentation.lines.forEach { Text(it) }
             statusMessage?.let {
                 Text(
@@ -84,7 +84,7 @@ fun CodexAccountCard(
             ) {
                 if (presentation.showCancel) OutlinedButton(onCancelSignIn, enabled = presentation.actionsEnabled) { Text("キャンセル") }
                 else if (presentation.showSignIn) {
-                    Button(onSignIn, enabled = presentation.actionsEnabled) { Text("ChatGPTでサインイン") }
+                    Button(onSignIn, enabled = presentation.actionsEnabled) { Text("プロバイダー認証を同期") }
                 }
                 OutlinedButton(onRefresh, enabled = presentation.actionsEnabled) { Text("更新") }
                 if (presentation.showLogout) OutlinedButton(onLogout, enabled = presentation.actionsEnabled) { Text("ログアウト") }

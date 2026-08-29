@@ -5,7 +5,9 @@ import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -306,7 +308,7 @@ private fun ChatPageContent(
     val codexReview by vm.codexReview.collectAsStateWithLifecycle()
     val codexOperationBusy by vm.codexOperationBusy.collectAsStateWithLifecycle()
     val codexPrepareJob by vm.codexPrepareJob.collectAsStateWithLifecycle()
-    val selectedCodexSkill by vm.selectedCodexSkill.collectAsStateWithLifecycle()
+    val selectedCodexSkills by vm.selectedCodexSkills.collectAsStateWithLifecycle()
 
     val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
         assistant.workspaceId?.let { workspaceId ->
@@ -348,18 +350,24 @@ private fun ChatPageContent(
             },
             bottomBar = {
                 Column {
-                    selectedCodexSkill?.let { skill ->
-                        AssistChip(
-                            onClick = { vm.selectCodexSkill(null) },
-                            label = {
-                                Text(
-                                    "スキル: ${skill.name}  ×",
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            },
+                    if (selectedCodexSkills.isNotEmpty()) {
+                        FlowRow(
                             modifier = Modifier.padding(horizontal = 8.dp),
-                        )
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            selectedCodexSkills.forEach { skill ->
+                                AssistChip(
+                                    onClick = { vm.removeCodexSkill(skill.path) },
+                                    label = {
+                                        Text(
+                                            "${skill.name}  ×",
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                )
+                            }
+                        }
                     }
                     if (assistant.codexAppServerEnabled) {
                         val currentUsage = when (val state = codexState) {
@@ -645,7 +653,8 @@ private fun ChatPageContent(
                     onCancelSignIn = vm::cancelCodexAccountLogin,
                     onLogout = vm::logoutCodexAccount,
                     onSetSkillEnabled = vm::setCodexSkillEnabled,
-                    onUseSkill = { vm.selectCodexSkill(it); showCodexControls = false },
+                    selectedSkillPaths = selectedCodexSkills.mapTo(linkedSetOf()) { it.path },
+                    onUseSkill = vm::toggleCodexSkill,
                     onMcpSignIn = vm::beginCodexMcpOAuth,
                     operationBusy = codexOperationBusy,
                     onReconnect = vm::reconnectCodexSession,

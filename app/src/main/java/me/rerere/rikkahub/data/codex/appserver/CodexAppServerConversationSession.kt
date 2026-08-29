@@ -194,6 +194,7 @@ class CodexAppServerConversationSessionOpener(
     private val recovery: CodexAppServerSessionRecovery,
     private val harnessProjectionResolver: CodexHarnessConversationProjectionResolver? = null,
     private val autoRefreshModelCatalog: Boolean = false,
+    private val connectionBootstrapper: CodexAppServerConnectionBootstrapper? = null,
 ) {
     /** Recovery entry point. Replaces only a server-missing binding that has never observed a turn. */
     suspend fun recoverBound(
@@ -325,6 +326,7 @@ class CodexAppServerConversationSessionOpener(
         var transferred = false
         try {
             connection.initialize()
+            connectionBootstrapper?.bootstrap(connection)
             val started = CodexAppServerThreadApi(connection).startThread(
                 overrides.copy(ephemeral = false),
             )

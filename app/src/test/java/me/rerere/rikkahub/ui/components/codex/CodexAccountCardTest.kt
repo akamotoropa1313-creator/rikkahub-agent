@@ -19,7 +19,10 @@ class CodexAccountCardTest {
     }
     @Test fun `chatgpt null email and unknown account are safe`() {
         val chat = CodexAppServerAccount.ChatGpt("person@example.test", CodexAppServerPlanType.Plus, empty)
-        assertTrue(codexAccountPresentation(snapshot(chat), false, true, false).lines.containsAll(listOf("person@example.test", "Plus")))
+        val presentation = codexAccountPresentation(snapshot(chat), false, true, false)
+        assertTrue(presentation.lines.containsAll(listOf("person@example.test", "Plus")))
+        assertTrue(presentation.lines.any { "RikkaHub" in it })
+        assertFalse(presentation.showLogout)
         val noEmail = codexAccountPresentation(snapshot(chat.copy(email = null)), false, true, false)
         assertFalse(noEmail.lines.any { it == "null" })
         val unknownRaw = buildJsonObject { put("accessToken", "must-not-render"); put("authUrl", "https://secret") }

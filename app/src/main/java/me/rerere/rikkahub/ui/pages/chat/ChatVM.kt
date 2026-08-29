@@ -97,16 +97,21 @@ class ChatVM(
     val codexOperationBusy = chatService.getCodexOperationBusyFlow(_conversationId)
     private val _codexPrepareJob = MutableStateFlow<Job?>(null)
     val codexPrepareJob: StateFlow<Job?> = _codexPrepareJob
-    private val _selectedCodexSkill = MutableStateFlow<CodexSkillMetadata?>(null)
-    val selectedCodexSkill: StateFlow<CodexSkillMetadata?> = _selectedCodexSkill
-    fun selectCodexSkill(skill: CodexSkillMetadata?) { _selectedCodexSkill.value = skill }
+    private val _selectedCodexSkills = MutableStateFlow<List<CodexSkillMetadata>>(emptyList())
+    val selectedCodexSkills: StateFlow<List<CodexSkillMetadata>> = _selectedCodexSkills
+    fun toggleCodexSkill(skill: CodexSkillMetadata) {
+        _selectedCodexSkills.value = toggleCodexSkillSelection(_selectedCodexSkills.value, skill)
+    }
+    fun removeCodexSkill(path: String) {
+        _selectedCodexSkills.value = _selectedCodexSkills.value.filterNot { it.path == path }
+    }
     val codexEnabled: StateFlow<Boolean> = kotlinx.coroutines.flow.combine(conversation, settingsStore.settingsFlow) { conversation, settings ->
         (settings.getAssistantById(conversation.assistantId) ?: settings.getCurrentAssistant()).codexAppServerEnabled
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _hasCodexBinding = MutableStateFlow(false)
     val hasCodexBinding: StateFlow<Boolean> = _hasCodexBinding
-    fun resetCodexSession() { _selectedCodexSkill.value = null; viewModelScope.launch {
+    fun resetCodexSession() { _selectedCodexSkills.value = emptyList(); viewModelScope.launch {
         chatService.resetCodexSession(_conversationId)
         _hasCodexBinding.value = false
     } }
@@ -148,6 +153,10 @@ class ChatVM(
                 ensureCodexRuntimeReadyBeforeSession()
                 ensureCodexConversationPersistedBeforeSession()
                 chatService.prepareCodexSession(_conversationId)
+                // The connection bootstrap already selected and installed one provider account.
+                // Read that snapshot without advancing the repository's round-robin selector again.
+                runCatching { chatService.refreshCodexAccount(_conversationId, syncProvider = false) }
+                runCatching { chatService.refreshCodexSkills(_conversationId) }
             }
             _hasCodexBinding.value = chatService.hasCodexBinding(_conversationId)
         }
@@ -168,7 +177,7 @@ class ChatVM(
             }
             if (enabled) launchCodexPreparation() else {
                 cancelCodexSetup()
-                _selectedCodexSkill.value = null
+                _selectedCodexSkills.value = emptyList()
             }
         }
     }
@@ -208,7 +217,7 @@ class ChatVM(
             )
             if (requiresReset && chatService.hasCodexBinding(_conversationId)) {
                 chatService.resetCodexSession(_conversationId)
-                _selectedCodexSkill.value = null
+                _selectedCodexSkills.value = emptyList()
                 _hasCodexBinding.value = false
             }
             updateCodexPreferencesNow(transform)
@@ -236,8 +245,11 @@ class ChatVM(
     fun refreshCodexMcp() { viewModelScope.launch { runCatching { chatService.refreshCodexMcp(_conversationId) } } }
     fun reloadCodexMcp() { viewModelScope.launch { runCatching { chatService.reloadCodexMcp(_conversationId) } } }
     private val codexAuthLauncher = CodexAppServerAuthUrlLauncher { url -> context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-    fun setCodexSkillEnabled(skill: CodexSkillMetadata, enabled: Boolean) { viewModelScope.launch { runCatching { chatService.setCodexSkillEnabled(_conversationId, skill, enabled) } } }
-    fun beginCodexAccountLogin() { viewModelScope.launch { runCatching { chatService.beginCodexAccountLogin(_conversationId, codexAuthLauncher) } } }
+    fun setCodexSkillEnabled(skill: CodexSkillMetadata, enabled: Boolean) {
+        if (!enabled) removeCodexSkill(skill.path)
+        viewModelScope.launch { runCatching { chatService.setCodexSkillEnabled(_conversationId, skill, enabled) } }
+    }
+    fun beginCodexAccountLogin() { viewModelScope.launch { runCatching { chatService.beginCodexAccountLogin(_conversationId) } } }
     fun cancelCodexAccountLogin() { viewModelScope.launch { runCatching { chatService.cancelCodexAccountLogin(_conversationId) } } }
     fun logoutCodexAccount() { viewModelScope.launch { runCatching { chatService.logoutCodexAccount(_conversationId) } } }
     fun beginCodexMcpOAuth(name: String) { viewModelScope.launch { runCatching { chatService.beginCodexMcpOAuth(_conversationId, name, codexAuthLauncher) } } }
@@ -276,7 +288,7 @@ class ChatVM(
                 if (enabled) launchCodexPreparation()
                 else {
                     cancelCodexSetup()
-                    _selectedCodexSkill.value = null
+                    _selectedCodexSkills.value = emptyList()
                 }
             }
         }
@@ -367,11 +379,12 @@ class ChatVM(
         )
 
     fun handleMessageSend(content: List<UIMessagePart>,answer: Boolean = true) {
-        val skill = _selectedCodexSkill.value
-        if (content.isEmptyInputMessage() && skill == null) return
-        if (skill != null && answer) {
-            val prompt = content.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
-            chatService.sendCodexSkillMessage(_conversationId, skill, prompt) { _selectedCodexSkill.value = null }
+        val skills = _selectedCodexSkills.value
+        if (content.isEmptyInputMessage() && skills.isEmpty()) return
+        if (skills.isNotEmpty() && answer) {
+            chatService.sendCodexSkillsMessage(_conversationId, skills, content) {
+                _selectedCodexSkills.value = emptyList()
+            }
         } else chatService.sendMessage(_conversationId, content, answer)
     }
 
@@ -407,7 +420,7 @@ class ChatVM(
                 resetSession = { chatService.resetCodexSession(_conversationId) },
                 deleteMessage = { chatService.deleteMessage(_conversationId, message) },
                 onSessionReset = {
-                    _selectedCodexSkill.value = null
+                    _selectedCodexSkills.value = emptyList()
                     _hasCodexBinding.value = false
                 },
             ).onFailure { failure ->

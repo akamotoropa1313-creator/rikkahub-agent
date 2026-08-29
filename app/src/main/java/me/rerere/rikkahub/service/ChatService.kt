@@ -133,6 +133,7 @@ import me.rerere.rikkahub.data.codex.appserver.codexHarnessInputCapability
 import me.rerere.rikkahub.data.codex.appserver.effectiveCodexHarnessModelTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAuthUrlLauncher
+import me.rerere.rikkahub.data.codex.appserver.RikkaHubCodexAppServerBridge
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
@@ -322,6 +323,7 @@ class ChatService(
     private val codexSessionOpener: CodexAppServerConversationSessionOpener? = null,
     private val codexBindingRepository: CodexAppServerSessionBindingRepository? = null,
     private val codexNetworkEnvironmentPreparer: CodexNetworkEnvironmentPreparer? = null,
+    private val codexRikkaHubBridge: RikkaHubCodexAppServerBridge? = null,
 ) {
     private val codexMediaStager = CodexMediaStager(context, workspaceRepository)
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
@@ -642,13 +644,32 @@ class ChatService(
     // ---- 发送消息 ----
 
     fun sendMessage(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean = true) =
-        sendMessageInternal(conversationId, content, answer, null)
+        sendMessageInternal(conversationId, content, answer, emptyList())
 
     fun sendCodexSkillMessage(conversationId: Uuid, skill: CodexSkillMetadata, prompt: String, onAccepted: () -> Unit = {}) =
-        sendMessageInternal(conversationId, listOf(UIMessagePart.Text(codexSkillTranscript(skill, prompt))), true, skill, onAccepted)
+        sendCodexSkillsMessage(
+            conversationId = conversationId,
+            skills = listOf(skill),
+            content = listOf(UIMessagePart.Text(prompt)),
+            onAccepted = onAccepted,
+        )
 
-    private fun sendMessageInternal(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean, explicitSkill: CodexSkillMetadata?, onAccepted: () -> Unit = {}) {
-        if (content.isEmptyInputMessage() && explicitSkill == null) return
+    fun sendCodexSkillsMessage(
+        conversationId: Uuid,
+        skills: List<CodexSkillMetadata>,
+        content: List<UIMessagePart>,
+        onAccepted: () -> Unit = {},
+    ) {
+        require(skills.isNotEmpty()) { "At least one Codex skill must be selected" }
+        val distinctSkills = skills.distinctBy { it.path }
+        val prompt = content.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
+        val persistedContent = listOf(UIMessagePart.Text(codexSkillTranscript(distinctSkills, prompt))) +
+            content.filterNot { it is UIMessagePart.Text }
+        sendMessageInternal(conversationId, persistedContent, true, distinctSkills, onAccepted)
+    }
+
+    private fun sendMessageInternal(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean, explicitSkills: List<CodexSkillMetadata>, onAccepted: () -> Unit = {}) {
+        if (content.isEmptyInputMessage() && explicitSkills.isEmpty()) return
         var session = getOrCreateSession(conversationId)
         val releaseForegroundWork = foregroundWorkTracker.acquire()
         val foregroundReleased = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -704,7 +725,7 @@ class ChatService(
                     tryFastPathRoute(conversationId, processedContent, withUser, assistant)
                 else false
                 if (answer && assistant.codexAppServerEnabled) {
-                    sendCodexTurn(conversationId, session, withUser, assistant, processedContent, explicitSkill, onAccepted)
+                    sendCodexTurn(conversationId, session, withUser, assistant, processedContent, explicitSkills, onAccepted)
                 } else if (answer && !routedHandled) {
                     handleMessageComplete(conversationId)
                 }
@@ -864,7 +885,7 @@ class ChatService(
         conversation: Conversation,
         assistant: Assistant,
         parts: List<UIMessagePart>,
-        explicitSkill: CodexSkillMetadata? = null,
+        explicitSkills: List<CodexSkillMetadata> = emptyList(),
         onAccepted: () -> Unit = {},
     ) = codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {
         val workspaceId = assistant.workspaceId?.toString()
@@ -961,10 +982,10 @@ class ChatService(
                 else -> error("Unsupported Codex input")
             } }
         }
-        val input = explicitSkill?.let { skill ->
+        val input = explicitSkills.takeIf { it.isNotEmpty() }?.let { skills ->
             val prompt = parts.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
-                .removePrefix("$${skill.name}").trimStart()
-            buildCodexSkillInvocation(skill, prompt) + normalInput.filterNot { it is CodexAppServerTurnInput.Text }
+                .let { codexSkillPromptFromTranscript(skills, it) }
+            buildCodexSkillInvocation(skills, prompt) + normalInput.filterNot { it is CodexAppServerTurnInput.Text }
         } ?: normalInput
         require(input.isNotEmpty()) { "Codex input must not be empty" }
         val selectedCatalogModel = if (assistant.codexModel != null)
@@ -986,7 +1007,9 @@ class ChatService(
             approvalPolicy = approvalPolicy,
         )
         val result = acceptCodexSkillAfterStart({ runtime.session.startTurn(input, params) }, onAccepted)
-        explicitSkill?.let { runtime.presentSkillInvocation(result.turn.id, it.name, it.path) }
+        explicitSkills.distinctBy { it.path }.forEach {
+            runtime.presentSkillInvocation(result.turn.id, it.name, it.path)
+        }
         runtime.acceptStartResponse(result.turn.id, result.turn.status)
         try {
             runtime.awaitTurnTerminal(result.turn.id)
@@ -1157,8 +1180,15 @@ class ChatService(
         try { runtime.awaitTurnTerminal(result.turn.id) } finally { runtime.finishTurn(result.turn.id) }
     }
     suspend fun setCodexSkillEnabled(id: Uuid, skill: CodexSkillMetadata, enabled: Boolean) = withCodexCapabilityLease(id) { it.setSkillEnabled(skill, enabled) }
-    suspend fun refreshCodexAccount(id: Uuid) = withCodexCapabilityLease(id) { it.refreshAccount() }
-    suspend fun beginCodexAccountLogin(id: Uuid, launcher: CodexAppServerAuthUrlLauncher) =
+    suspend fun refreshCodexAccount(
+        id: Uuid,
+        syncProvider: Boolean = true,
+    ) = withCodexCapabilityLease(id) { runtime ->
+        val bridge = codexRikkaHubBridge
+        if (bridge == null || !syncProvider) runtime.refreshAccount()
+        else runtime.syncExternalAccount { bridge.syncAccount(runtime.session.connection) }
+    }
+    suspend fun beginCodexAccountLogin(id: Uuid) =
         withCodexCapabilityLease(id) { runtime ->
             codexNetworkEnvironmentPreparer?.let { preparer ->
                 val binding = checkNotNull(codexBindingRepository?.getBinding(id.toString())) {
@@ -1169,7 +1199,10 @@ class ChatService(
                 }
                 preparer.prepare(workspace.root)
             }
-            runtime.beginAccountLogin(launcher)
+            val bridge = checkNotNull(codexRikkaHubBridge) {
+                "RikkaHub Codex provider authentication bridge is unavailable"
+            }
+            runtime.syncExternalAccount { bridge.syncAccount(runtime.session.connection) }
         }
     suspend fun cancelCodexAccountLogin(id: Uuid) = withCodexCapabilityLease(id) { it.cancelAccountLogin() }
     suspend fun logoutCodexAccount(id: Uuid) = withCodexCapabilityLease(id) { it.logoutAccount() }

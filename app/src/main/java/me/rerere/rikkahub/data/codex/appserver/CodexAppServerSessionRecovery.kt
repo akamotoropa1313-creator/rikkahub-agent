@@ -43,6 +43,7 @@ class CodexAppServerSessionRecovery(
     private val localState: CodexAppServerLocalState,
     private val connectionFactory: CodexAppServerConnectionCreator,
     private val autoRefreshModelCatalog: Boolean = false,
+    private val connectionBootstrapper: CodexAppServerConnectionBootstrapper? = null,
 ) {
     suspend fun recover(
         conversationId: String,
@@ -68,6 +69,7 @@ class CodexAppServerSessionRecovery(
         var usageTracker: CodexTokenUsageTracker? = null
         try {
             connection.initialize()
+            connectionBootstrapper?.bootstrap(connection)
             if (routeGuard != null) {
                 val existing = CodexAppServerThreadApi(connection).readThread(binding.threadId)
                 if (!routeGuard.accepts(existing.modelProvider)) {

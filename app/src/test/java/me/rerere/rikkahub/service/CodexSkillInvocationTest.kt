@@ -11,6 +11,7 @@ import kotlinx.coroutines.runBlocking
 
 class CodexSkillInvocationTest {
     private val skill = CodexSkillMetadata("review", "Review code", null, "/skills/review", "user", true, null, null, JsonObject(emptyMap()))
+    private val imagegen = CodexSkillMetadata("imagegen", "Generate images", null, "/skills/imagegen", "user", true, null, null, JsonObject(emptyMap()))
 
     @Test fun promptProducesOneTranscriptAndOrderedWireSignals() {
         val input = buildCodexSkillInvocation(skill, "check this code")
@@ -21,6 +22,32 @@ class CodexSkillInvocationTest {
     @Test fun emptyPromptHasNoTrailingSpace() {
         assertEquals(listOf(CodexAppServerTurnInput.Text("\$review"), CodexAppServerTurnInput.Skill("review", "/skills/review")), buildCodexSkillInvocation(skill, ""))
         assertEquals("\$review", codexSkillTranscript(skill, ""))
+    }
+
+    @Test fun `multiple skills keep selection order and each gets a typed wire item`() {
+        val input = buildCodexSkillInvocation(listOf(skill, imagegen), "check and illustrate")
+        assertEquals(
+            listOf(
+                CodexAppServerTurnInput.Text("\$review \$imagegen check and illustrate"),
+                CodexAppServerTurnInput.Skill("review", "/skills/review"),
+                CodexAppServerTurnInput.Skill("imagegen", "/skills/imagegen"),
+            ),
+            input,
+        )
+        val transcript = codexSkillTranscript(listOf(skill, imagegen), "check and illustrate")
+        assertEquals("\$review \$imagegen check and illustrate", transcript)
+        assertEquals("check and illustrate", codexSkillPromptFromTranscript(listOf(skill, imagegen), transcript))
+    }
+
+    @Test fun `duplicate skill paths are injected only once`() {
+        val duplicate = skill.copy(name = "review-alias")
+        assertEquals(
+            listOf(
+                CodexAppServerTurnInput.Text("\$review"),
+                CodexAppServerTurnInput.Skill("review", "/skills/review"),
+            ),
+            buildCodexSkillInvocation(listOf(skill, duplicate), ""),
+        )
     }
 
     @Test fun `selection clears only after successful turn start acceptance`() = runBlocking {

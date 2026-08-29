@@ -1,10 +1,12 @@
 package me.rerere.rikkahub.data.codex.appserver
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
@@ -75,6 +77,65 @@ class CodexAppServerAccountApiTest {
             }
         } finally {
             CodexModelCatalogKnowledge.clearForTest()
+        }
+    }
+
+    @Test fun `external RikkaHub tokens login and refresh use the experimental host-auth contract`() = runBlocking {
+        fixture().use { f ->
+            val tokens = CodexAppServerExternalChatGptTokens(
+                sourceAccountId = "rikkahub-account",
+                accessToken = "access-secret",
+                chatgptAccountId = "chatgpt-account",
+            )
+            assertFalse(tokens.toString().contains("access-secret"))
+            assertFalse(tokens.toString().contains("chatgpt-account"))
+
+            val login = async { f.api.startChatGptAuthTokensLogin(tokens) }
+            val request = f.takeRequest()
+            assertEquals("account/login/start", request.method)
+            assertEquals(
+                buildJsonObject {
+                    put("type", "chatgptAuthTokens")
+                    put("accessToken", "access-secret")
+                    put("chatgptAccountId", "chatgpt-account")
+                },
+                request.params,
+            )
+            f.respond(request, buildJsonObject { put("type", "chatgptAuthTokens") })
+            login.await()
+
+            val refresh = async(start = CoroutineStart.UNDISPATCHED) {
+                f.api.chatGptAuthTokensRefreshRequests.first()
+            }
+            f.transport.injectServerLine(
+                codec.encode(
+                    JsonRpcRequest(
+                        id = JsonRpcId.StringId("refresh-1"),
+                        method = "account/chatgptAuthTokens/refresh",
+                        params = buildJsonObject {
+                            put("reason", "unauthorized")
+                            put("previousAccountId", "chatgpt-account")
+                        },
+                    ),
+                ),
+            )
+            val refreshRequest = refresh.await()
+            assertEquals("unauthorized", refreshRequest.reason)
+            assertEquals("chatgpt-account", refreshRequest.previousAccountId)
+            f.api.respondChatGptAuthTokensRefresh(
+                refreshRequest,
+                tokens.copy(accessToken = "fresh-secret"),
+            )
+            val response = codec.decode(f.transport.takeClientLine()).getOrThrow() as JsonRpcMessage.Response
+            assertEquals(JsonRpcId.StringId("refresh-1"), response.value.id)
+            assertEquals(
+                buildJsonObject {
+                    put("accessToken", "fresh-secret")
+                    put("chatgptAccountId", "chatgpt-account")
+                    put("chatgptPlanType", null)
+                },
+                response.value.result,
+            )
         }
     }
 
@@ -188,6 +249,11 @@ class CodexAppServerAccountApiTest {
         val writes = transport.successfulWriteCount()
         expect<CodexAppServerNotReadyException> { api.readAccount() }
         expect<CodexAppServerNotReadyException> { api.startChatGptLogin() }
+        expect<CodexAppServerNotReadyException> {
+            api.startChatGptAuthTokensLogin(
+                CodexAppServerExternalChatGptTokens("source", "token", "account"),
+            )
+        }
         expect<CodexAppServerNotReadyException> { api.cancelLogin("id") }
         expect<CodexAppServerNotReadyException> { api.logout() }
         assertEquals(writes, transport.successfulWriteCount()); connection.close()

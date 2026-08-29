@@ -32,6 +32,20 @@ data class CodexSkillsListResult(val data: List<CodexSkillsListEntry>, val raw: 
 data class CodexSkillsConfigWriteResult(val effectiveEnabled: Boolean, val raw: JsonObject)
 
 class CodexAppServerSkillsApi(private val connection: CodexAppServerConnection) {
+    suspend fun replaceExtraRoots(
+        extraRoots: List<String>,
+        timeout: Duration = 30.seconds,
+    ) {
+        require(extraRoots.all { it.startsWith('/') && it.isNotBlank() }) {
+            "extra skill roots must be absolute paths"
+        }
+        val params = JsonObject(
+            mapOf("extraRoots" to JsonArray(extraRoots.distinct().map(::JsonPrimitive))),
+        )
+        connection.sendRequestAfterReady("skills/extraRoots/set", params, timeout)
+            .skillObject("skills/extraRoots/set result")
+    }
+
     suspend fun list(
         cwds: List<String> = emptyList(),
         forceReload: Boolean = false,

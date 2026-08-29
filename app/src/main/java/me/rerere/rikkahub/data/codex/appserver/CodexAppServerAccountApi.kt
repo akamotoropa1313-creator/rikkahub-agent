@@ -42,6 +42,28 @@ sealed interface CodexAppServerAccount {
 
 data class CodexAppServerAccountSnapshot(val account: CodexAppServerAccount?, val requiresOpenaiAuth: Boolean, val raw: JsonObject)
 
+data class CodexAppServerExternalChatGptTokens(
+    val sourceAccountId: String,
+    val accessToken: String,
+    val chatgptAccountId: String,
+    val chatgptPlanType: String? = null,
+) {
+    init {
+        require(sourceAccountId.isNotBlank()) { "sourceAccountId must not be blank" }
+        require(accessToken.isNotBlank()) { "accessToken must not be blank" }
+        require(chatgptAccountId.isNotBlank()) { "chatgptAccountId must not be blank" }
+    }
+
+    override fun toString(): String =
+        "CodexAppServerExternalChatGptTokens(sourceAccountId=<redacted>, accessToken=<redacted>, chatgptAccountId=<redacted>, chatgptPlanType=$chatgptPlanType)"
+}
+
+data class CodexAppServerChatGptAuthTokensRefreshRequest(
+    val requestId: JsonRpcId,
+    val reason: String,
+    val previousAccountId: String?,
+)
+
 /** The URL is intentionally omitted from [toString]; this value must remain transient. */
 class CodexAppServerChatGptLoginStart internal constructor(
     val loginId: String,
@@ -134,6 +156,51 @@ class CodexAppServerAccountApi(private val connection: CodexAppServerConnection)
         return CodexAppServerChatGptLoginStart(loginId, authUrl)
     }
 
+    suspend fun startChatGptAuthTokensLogin(tokens: CodexAppServerExternalChatGptTokens) {
+        val raw = connection.sendRequestAfterReady(
+            "account/login/start",
+            buildJsonObject {
+                put("type", "chatgptAuthTokens")
+                put("accessToken", tokens.accessToken)
+                put("chatgptAccountId", tokens.chatgptAccountId)
+                tokens.chatgptPlanType?.let { put("chatgptPlanType", it) }
+            },
+        ).requiredObject("account/login/start result")
+        val type = raw.requiredString("type")
+        if (type != "chatgptAuthTokens") {
+            throw CodexAppServerUnexpectedLoginVariantException(type, raw)
+        }
+        CodexModelCatalogKnowledge.invalidateAccountCatalog()
+    }
+
+    val chatGptAuthTokensRefreshRequests: Flow<CodexAppServerChatGptAuthTokensRefreshRequest> =
+        connection.events.mapNotNull { event ->
+            if (event !is CodexAppServerEvent.ServerRequest ||
+                event.method != CHATGPT_AUTH_TOKENS_REFRESH_METHOD
+            ) return@mapNotNull null
+            val params = event.params.requiredObject("$CHATGPT_AUTH_TOKENS_REFRESH_METHOD params")
+            CodexAppServerChatGptAuthTokensRefreshRequest(
+                requestId = event.id,
+                reason = params.requiredString("reason"),
+                previousAccountId = params.optionalString("previousAccountId"),
+            )
+        }
+
+    suspend fun respondChatGptAuthTokensRefresh(
+        request: CodexAppServerChatGptAuthTokensRefreshRequest,
+        tokens: CodexAppServerExternalChatGptTokens,
+    ) {
+        connection.respondServerRequestAfterReady(
+            request.requestId,
+            buildJsonObject {
+                put("accessToken", tokens.accessToken)
+                put("chatgptAccountId", tokens.chatgptAccountId)
+                // Unlike account/login/start, the refresh response requires this nullable field.
+                put("chatgptPlanType", tokens.chatgptPlanType)
+            },
+        )
+    }
+
     suspend fun cancelLogin(loginId: String): CodexAppServerCancelLoginResult {
         require(loginId.isNotBlank()) { "loginId must not be blank" }
         val raw = connection.sendRequestAfterReady(
@@ -178,6 +245,8 @@ private fun String.toAuthMode() = when (this) {
     "agentIdentity" -> CodexAppServerAuthMode.AgentIdentity; "personalAccessToken" -> CodexAppServerAuthMode.PersonalAccessToken
     "bedrockApiKey" -> CodexAppServerAuthMode.BedrockApiKey; else -> CodexAppServerAuthMode.Unknown(this)
 }
+
+private const val CHATGPT_AUTH_TOKENS_REFRESH_METHOD = "account/chatgptAuthTokens/refresh"
 private fun JsonElement?.requiredObject(label: String) = this as? JsonObject ?: throw protocol("$label must be an object")
 private fun JsonObject.requiredString(name: String) = (this[name] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: throw protocol("$name must be a string")
 private fun JsonObject.requiredNonBlankString(name: String) = requiredString(name).also { if (it.isBlank()) throw protocol("$name must not be blank") }
