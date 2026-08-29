@@ -25,7 +25,17 @@ class RikkaHubCodexAppServerBridgeTest {
 
             val roots = f.request()
             assertEquals("skills/extraRoots/set", roots.method)
-            assertEquals(buildJsonObject { put("extraRoots", kotlinx.serialization.json.buildJsonArray { add("/skills") }) }, roots.params)
+            assertEquals(
+                buildJsonObject {
+                    put(
+                        "extraRoots",
+                        kotlinx.serialization.json.buildJsonArray {
+                            add(kotlinx.serialization.json.JsonPrimitive("/skills"))
+                        },
+                    )
+                },
+                roots.params,
+            )
             f.respond(roots, buildJsonObject {})
 
             val login = f.request()
