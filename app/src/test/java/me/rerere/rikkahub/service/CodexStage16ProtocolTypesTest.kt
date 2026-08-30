@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.service
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerModel
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSandboxMode
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSandboxPolicy
@@ -25,6 +26,13 @@ class CodexStage16ProtocolTypesTest {
             CodexAppServerSandboxPolicy.ExternalWorkspace,
             CodexAppServerTurnStartParams(sandbox = effective).sandboxPolicy,
         )
+    }
+
+    @Test
+    fun `new thread passes assistant skill config through the guarded factory`() {
+        val config = mapOf("skills" to JsonPrimitive("assistant-profile"))
+
+        assertEquals(config, CodexAppServerThreadStartParams(config = config).config)
     }
 
     @Test

@@ -57,6 +57,7 @@ internal fun CodexAppServerTurnStartParams(
  */
 internal fun CodexAppServerThreadStartParams(
     model: String? = null,
+    config: Map<String, kotlinx.serialization.json.JsonElement>? = null,
     developerInstructions: String? = null,
     personality: RequestedCodexPersonality? = null,
     serviceTier: String? = null,
@@ -65,6 +66,7 @@ internal fun CodexAppServerThreadStartParams(
 ): me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams =
     me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams(
         model = model,
+        config = config,
         developerInstructions = developerInstructions,
         personality = null,
         serviceTier = when (serviceTier) {
