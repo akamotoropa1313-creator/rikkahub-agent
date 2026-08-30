@@ -816,28 +816,36 @@ class ChatService(
 
     suspend fun prepareCodexSession(conversationId: Uuid) {
         val owner = getOrCreateSession(conversationId)
-        if (owner.codexRuntime != null) return
+        ensureHydrated(conversationId)
+        val initialConversation = owner.state.value
+        val initialAssistant = settingsStore.settingsFlow.first().let {
+            it.getAssistantById(initialConversation.assistantId) ?: it.getCurrentAssistant()
+        }
+        val initialSkillProfile = codexAssistantSkillProfile(initialAssistant)
+        if (owner.codexRuntime?.assistantSkillProfile == initialSkillProfile) return
         check(owner.tryBeginCodexOperation()) { "Another Codex operation is already running" }
         try {
             codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {
-                if (owner.codexRuntime != null) return@withLock
                 ensureHydrated(conversationId)
                 val conversation = owner.state.value
                 val assistant = settingsStore.settingsFlow.first().let {
                     it.getAssistantById(conversation.assistantId) ?: it.getCurrentAssistant()
                 }
                 check(assistant.codexAppServerEnabled) { "Codex App Server is disabled" }
+                val skillProfile = codexAssistantSkillProfile(assistant)
+                owner.codexRuntime?.let { existing ->
+                    if (existing.assistantSkillProfile == skillProfile) return@withLock
+                    check(existing.activeTurnId() == null) {
+                        "The RikkaHub assistant skill selection changed during a Codex turn"
+                    }
+                    owner.replaceCodexRuntime(null)
+                }
                 validateCodexPreflight(conversationId, conversation, assistant, emptyList())
                 val workspaceId = checkNotNull(assistant.workspaceId).toString()
                 val cwd = conversation.workspaceCwd.orEmpty()
                 val approvalPolicy = codexApprovalIntegrationPolicy(assistant, workspaceId)
                     .effectiveAppServerPolicy()
-                val instructions = buildString {
-                    append(assistant.systemPrompt)
-                    if (assistant.allowConversationSystemPrompt && !conversation.customSystemPrompt.isNullOrBlank()) {
-                        append("\n\n--- Conversation instructions ---\n").append(conversation.customSystemPrompt)
-                    }
-                }.ifBlank { null }
+                val instructions = codexDeveloperInstructions(assistant, conversation, skillProfile)
                 val personality = assistant.codexPersonality?.let { CodexAppServerPersonality.valueOf(it.name) }
                 owner.publishCodexState(CodexConversationUiState.Opening)
                 val opened = checkNotNull(codexSessionOpener) { "Codex App Server is unavailable" }.open(
@@ -847,6 +855,7 @@ class ChatService(
                     CodexAppServerThreadStartParams(
                         model = assistant.codexModel,
                         serviceTier = assistant.codexServiceTier,
+                        config = skillProfile.threadConfig(),
                         developerInstructions = instructions,
                         personality = personality,
                         sandbox = effectiveCodexSandboxMode(assistant.codexSandboxMode),
@@ -855,9 +864,15 @@ class ChatService(
                 )
                 when (opened) {
                     is CodexAppServerConversationSessionOpenResult.Started ->
-                        installCodexRuntime(conversationId, owner, opened.session, assistant.effectiveCodexHarnessModelTarget(), workspaceId)
+                        installCodexRuntime(
+                            conversationId, owner, opened.session,
+                            assistant.effectiveCodexHarnessModelTarget(), workspaceId, skillProfile,
+                        )
                     is CodexAppServerConversationSessionOpenResult.Recovered ->
-                        installCodexRuntime(conversationId, owner, opened.session, assistant.effectiveCodexHarnessModelTarget(), workspaceId)
+                        installCodexRuntime(
+                            conversationId, owner, opened.session,
+                            assistant.effectiveCodexHarnessModelTarget(), workspaceId, skillProfile,
+                        )
                     is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
                         owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason))
                         error("The existing Codex binding is stale; reset is required")
@@ -905,19 +920,24 @@ class ChatService(
                 throw IllegalStateException("Existing Codex thread is bound to another workspace/CWD. Reset the Codex session first.")
             }
         }
+        val skillProfile = codexAssistantSkillProfile(assistant)
+        owner.codexRuntime?.let { existing ->
+            if (existing.assistantSkillProfile != skillProfile) {
+                check(existing.activeTurnId() == null) {
+                    "The RikkaHub assistant skill selection changed during a Codex turn"
+                }
+                owner.replaceCodexRuntime(null)
+            }
+        }
         val runtime = owner.codexRuntime ?: run {
             val opener = checkNotNull(codexSessionOpener) { "Codex App Server is unavailable" }
             owner.publishCodexState(CodexConversationUiState.Opening)
-            val instructions = buildString {
-                append(assistant.systemPrompt)
-                if (assistant.allowConversationSystemPrompt && !conversation.customSystemPrompt.isNullOrBlank()) {
-                    append("\n\n--- Conversation instructions ---\n").append(conversation.customSystemPrompt)
-                }
-            }.ifBlank { null }
+            val instructions = codexDeveloperInstructions(assistant, conversation, skillProfile)
             val threadPersonality = assistant.codexPersonality?.let { CodexAppServerPersonality.valueOf(it.name) }
             when (val opened = opener.open(conversationId.toString(), workspaceId, cwd,
                 CodexAppServerThreadStartParams(model = assistant.codexModel, serviceTier = assistant.codexServiceTier,
-                    developerInstructions = instructions, personality = threadPersonality,
+                    config = skillProfile.threadConfig(), developerInstructions = instructions,
+                    personality = threadPersonality,
                     sandbox = effectiveCodexSandboxMode(assistant.codexSandboxMode),
                     approvalPolicy = approvalPolicy))) {
                 is CodexAppServerConversationSessionOpenResult.Started -> opened.session
@@ -927,40 +947,14 @@ class ChatService(
                     throw IllegalStateException("The existing Codex binding is stale; reset is required")
                 }
             }.let { protocolSession ->
-                lateinit var installed: CodexChatRuntime
-                installed = CodexChatRuntime(
-                    session = protocolSession,
-                    scope = appScope,
-                    onTurnParts = { turnId, messageParts ->
-                        persistCodexTurnParts(
-                            conversationId,
-                            turnId,
-                            messageParts,
-                            protocolSession.tokenUsageTracker.state.value.latest,
-                        )
-                    },
+                installCodexRuntime(
+                    conversationId = conversationId,
+                    owner = owner,
+                    protocolSession = protocolSession,
                     harnessTarget = assistant.effectiveCodexHarnessModelTarget(),
-                    onTokenUsage = { persistCodexUsageSafely(conversationId, it) },
-                    onTurnTerminal = { turnId, durationMs ->
-                        persistCodexTurnTerminal(conversationId, turnId, durationMs)
-                    },
-                    onTurnDurationUpdated = { turnId, durationMs ->
-                        persistCodexTurnTerminal(conversationId, turnId, durationMs)
-                    },
-                    shouldAutoApprove = { event ->
-                        shouldAutoApproveCodexRequest(conversationId, workspaceId, event)
-                    },
-                    onInterruptFailure = { cause -> addError(cause, conversationId, title = "Codex interrupt failed") },
-                    onFailure = { failed, cause ->
-                        appScope.launch {
-                            owner.publishCodexState(CodexConversationUiState.Failed(cause.message ?: cause.toString()))
-                            if (owner.detachCodexRuntime(failed)) failed.close()
-                            // The active send coroutine owns the single user-facing ChatError.
-                            // Idle failures remain visible through CodexConversationUiState.Failed.
-                        }
-                    },
+                    workspaceId = workspaceId,
+                    assistantSkillProfile = skillProfile,
                 )
-                installed.also { owner.replaceCodexRuntime(it) }
             }
         }
         check(runtime.activeTurnId() == null) { "A Codex turn is already running" }
@@ -1219,6 +1213,7 @@ class ChatService(
                 ensureHydrated(conversationId)
                 val conversation = owner.state.value
                 val assistant = settingsStore.settingsFlow.first().let { it.getAssistantById(conversation.assistantId) ?: it.getCurrentAssistant() }
+                val skillProfile = codexAssistantSkillProfile(assistant)
                 val workspaceId = assistant.workspaceId?.toString() ?: error("Codex App Server requires a workspace")
                 val approvalPolicy = codexApprovalIntegrationPolicy(assistant, workspaceId)
                     .effectiveAppServerPolicy()
@@ -1231,14 +1226,22 @@ class ChatService(
                 when (val opened = checkNotNull(codexSessionOpener).recoverBound(
                     conversationId.toString(),
                     me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadResumeParams(
+                        config = skillProfile.threadConfig(),
+                        developerInstructions = codexDeveloperInstructions(assistant, conversation, skillProfile),
                         sandbox = effectiveCodexSandboxMode(assistant.codexSandboxMode),
                         approvalPolicy = approvalPolicy,
                     ),
                 )) {
                     is CodexAppServerConversationSessionOpenResult.Recovered ->
-                        installCodexRuntime(conversationId, owner, opened.session, assistant.effectiveCodexHarnessModelTarget(), workspaceId)
+                        installCodexRuntime(
+                            conversationId, owner, opened.session,
+                            assistant.effectiveCodexHarnessModelTarget(), workspaceId, skillProfile,
+                        )
                     is CodexAppServerConversationSessionOpenResult.Started ->
-                        installCodexRuntime(conversationId, owner, opened.session, assistant.effectiveCodexHarnessModelTarget(), workspaceId)
+                        installCodexRuntime(
+                            conversationId, owner, opened.session,
+                            assistant.effectiveCodexHarnessModelTarget(), workspaceId, skillProfile,
+                        )
                     is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
                         owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason))
                         error("The existing Codex binding is stale")
@@ -1257,6 +1260,7 @@ class ChatService(
         protocolSession: me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession,
         harnessTarget: CodexHarnessModelTarget,
         workspaceId: String,
+        assistantSkillProfile: CodexAssistantSkillProfile,
     ): CodexChatRuntime {
         lateinit var installed: CodexChatRuntime
         installed = CodexChatRuntime(protocolSession, appScope,
@@ -1269,6 +1273,7 @@ class ChatService(
                 )
             },
             harnessTarget = harnessTarget,
+            assistantSkillProfile = assistantSkillProfile,
             onTokenUsage = { persistCodexUsageSafely(conversationId, it) },
             onTurnTerminal = { turnId, durationMs ->
                 persistCodexTurnTerminal(conversationId, turnId, durationMs)
@@ -1285,6 +1290,26 @@ class ChatService(
         owner.replaceCodexRuntime(installed)
         return installed
     }
+
+    private fun codexAssistantSkillProfile(assistant: Assistant): CodexAssistantSkillProfile =
+        buildCodexAssistantSkillProfile(
+            enabledSkillNames = assistant.enabledSkills,
+            installedSkills = skillManager.listSkills(),
+            readAutoLoadBody = { skill ->
+                runCatching { skillManager.readAutoLoadBody(skill) }.getOrNull()
+            },
+        )
+
+    private fun codexDeveloperInstructions(
+        assistant: Assistant,
+        conversation: Conversation,
+        skillProfile: CodexAssistantSkillProfile,
+    ): String? = buildCodexDeveloperInstructions(
+        assistantSystemPrompt = assistant.systemPrompt,
+        conversationSystemPrompt = conversation.customSystemPrompt,
+        allowConversationSystemPrompt = assistant.allowConversationSystemPrompt,
+        skillProfile = skillProfile,
+    )
 
     suspend fun resetCodexSession(conversationId: Uuid) {
         val owner = getOrCreateSession(conversationId)

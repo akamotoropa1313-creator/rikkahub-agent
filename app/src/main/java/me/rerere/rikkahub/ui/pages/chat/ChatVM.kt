@@ -54,6 +54,7 @@ import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.service.CodexReviewAction
 import me.rerere.rikkahub.service.CodexReviewServiceOwner
+import me.rerere.rikkahub.service.isRikkaHubCodexSkill
 import me.rerere.rikkahub.ui.hooks.writeStringPreference
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.rikkahub.utils.UiState
@@ -247,7 +248,36 @@ class ChatVM(
     private val codexAuthLauncher = CodexAppServerAuthUrlLauncher { url -> context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     fun setCodexSkillEnabled(skill: CodexSkillMetadata, enabled: Boolean) {
         if (!enabled) removeCodexSkill(skill.path)
-        viewModelScope.launch { runCatching { chatService.setCodexSkillEnabled(_conversationId, skill, enabled) } }
+        viewModelScope.launch {
+            runCatching {
+                if (isRikkaHubCodexSkill(skill)) {
+                    settingsStore.update { settings ->
+                        val activeConversation = conversation.value
+                        val latestAssistant = settings.getAssistantById(activeConversation.assistantId)
+                            ?: settings.getCurrentAssistant()
+                        val enabledSkills = if (enabled) {
+                            latestAssistant.enabledSkills + skill.name
+                        } else {
+                            latestAssistant.enabledSkills - skill.name
+                        }
+                        settings.copy(
+                            assistants = settings.assistants.map { assistant ->
+                                if (assistant.id == latestAssistant.id) {
+                                    assistant.copy(enabledSkills = enabledSkills)
+                                } else {
+                                    assistant
+                                }
+                            }
+                        )
+                    }
+                    // Re-resume the persistent thread with the new per-assistant session config.
+                    chatService.prepareCodexSession(_conversationId)
+                    chatService.refreshCodexSkills(_conversationId)
+                } else {
+                    chatService.setCodexSkillEnabled(_conversationId, skill, enabled)
+                }
+            }
+        }
     }
     fun beginCodexAccountLogin() { viewModelScope.launch { runCatching { chatService.beginCodexAccountLogin(_conversationId) } } }
     fun cancelCodexAccountLogin() { viewModelScope.launch { runCatching { chatService.cancelCodexAccountLogin(_conversationId) } } }

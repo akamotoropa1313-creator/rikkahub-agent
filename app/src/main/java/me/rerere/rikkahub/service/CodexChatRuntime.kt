@@ -30,12 +30,13 @@ import kotlin.time.Clock
 private const val ACTIVITY_STATE_INTERVAL_MS = 250L
 
 /** Conversation-owned application adapter around the single Stage 13 protocol session. */
-class CodexChatRuntime(
+class CodexChatRuntime internal constructor(
     val session: CodexAppServerConversationSession,
     private val scope: CoroutineScope,
     private val onAgentText: (suspend (turnId: String, itemId: String, text: String) -> Unit)? = null,
     private val onTurnParts: suspend (turnId: String, parts: List<UIMessagePart>) -> Unit = { _, _ -> },
     val harnessTarget: CodexHarnessModelTarget? = null,
+    internal val assistantSkillProfile: CodexAssistantSkillProfile = CodexAssistantSkillProfile.EMPTY,
     private val onTokenUsage: suspend (CodexTokenUsageSnapshot) -> Unit = {},
     private val onTurnTerminal: suspend (turnId: String, durationMs: Long) -> Unit = { _, _ -> },
     private val onTurnDurationUpdated: suspend (turnId: String, durationMs: Long) -> Unit = { _, _ -> },
@@ -204,7 +205,9 @@ class CodexChatRuntime(
         _capabilities.value = _capabilities.value.copy(skillsLoading = true, skillsError = null)
         try {
             val result = session.skillsApi.list(cwds = emptyList(), forceReload = forceReload)
-            _capabilities.value = _capabilities.value.copy(skillGroups = result.data)
+            _capabilities.value = _capabilities.value.copy(
+                skillGroups = assistantSkillProfile.applyToCatalog(result.data)
+            )
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
