@@ -8,7 +8,7 @@ RikkaHub Agent manages the Codex App Server runtime automatically. Normal use do
 2. Enable **Codex コーディングエージェント（App Server）**. The switch itself immediately starts managed runtime provisioning when the runtime is not ready; sending a chat message is not required to begin installation.
 3. Wait for **Codex環境** to reach the ready state. RikkaHub performs Workspace/platform checks, downloads the pinned supported OpenAI Codex standalone runtime when necessary, verifies its SHA-256 digest, installs it atomically in app-managed storage, and starts `codex app-server` for the conversation.
 4. Open **Codex App Serverの設定**.
-5. If required, choose **ChatGPTでサインイン**. This App Server account is independent from the normal **設定 > プロバイダー > Codex** provider account.
+5. If required, configure or refresh **設定 > プロバイダー > Codex**. The App Server account control synchronizes that same RikkaHub provider credential; it does not create an independent browser-owned login.
 6. Load the model catalog and select a model, or keep the server default.
 7. Send a normal chat message.
 
@@ -33,16 +33,19 @@ Setup can be canceled and retried. A failed or incomplete managed runtime is not
 
 Because the primary path is a standalone binary install, Debian package-manager recovery (`dpkg --configure -a`, debconf repair, timezone prompting, and similar operations) is not part of normal Codex provisioning.
 
-## Accounts
+## Account ownership
 
-The two Codex features in RikkaHub are intentionally separate:
-
-- **Codex Provider** uses the user's ChatGPT/OpenAI authorization as a conventional LLM provider.
-- **Codex コーディングエージェント（App Server）** runs the Codex CLI App Server harness and has its own App Server account state.
-
-Signing in to one does not imply that the other is authenticated.
+**設定 > プロバイダー > Codex** is the credential owner for both conventional Codex provider requests and the managed App Server harness. App Server account state still comes from `account/read`, while sign-in/refresh uses RikkaHub's provider bridge and the App Server external-token protocol.
 
 After an authoritative `account/read` snapshot or a completed login transition, obsolete temporary UI text such as a previous cancellation or waiting message must not remain alongside the current account state.
+
+## Assistant Skills, MCP, and Android tools
+
+The conversation-owned RikkaHub Assistant supplies the model-facing session: its prompts, Codex options, every enabled Skill, selected local Android/Termux tools, and selected MCP servers/tools. Skills are not limited to the first enabled entry.
+
+Local and MCP tools are registered through App Server `thread/start.dynamicTools` and executed in RikkaHub's Android tool layer. Thus an enabled `termux_run_command` does not require `termux_run_command`, Node, npm, OpenClaw, or ClawHub binaries inside `/workspace`. Interactive `ask_user` calls return the in-chat answer to App Server rather than executing the headless fallback.
+
+Assistant/tool/Skill/prompt changes refresh the in-memory runtime before the next turn. Since pinned App Server 0.146 persists dynamic tools on `thread/start`, RikkaHub stores a tool fingerprint in Room and replaces a durable thread whose tool surface is stale. Provider-only sampling/body/header fields and UI-only settings are not fabricated as App Server options.
 
 ## Models and compatibility
 

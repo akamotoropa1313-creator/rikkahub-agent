@@ -1,10 +1,12 @@
 package me.rerere.rikkahub.service
 
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -20,6 +22,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import me.rerere.ai.core.InputSchema
+import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerAccount
@@ -418,6 +422,61 @@ class CodexChatRuntimeIntegrationTest {
         }
     }
 
+    @Test fun `enabled Termux dynamic tool executes on Android side`() = runBlocking {
+        var received: JsonObject? = null
+        val tool = Tool("termux_run_command", "Run through Termux", { InputSchema.Obj(JsonObject(emptyMap())) }, execute = {
+            received = it.jsonObject; listOf(UIMessagePart.Text("termux-ok"))
+        })
+        val harness = harness(this, assistantToolProfile = CodexAssistantToolProfile.from(listOf(tool), "assistant:false"))
+        try {
+            initialize(harness); harness.transport.emit(notification("turn/started", turnParams("inProgress")))
+            awaitState(harness.runtime) { it is CodexConversationUiState.Running }
+            harness.transport.emit(serverRequest(JsonRpcId.NumberId(77L), "item/tool/call", dynamicToolParams(
+                "call-1", "termux_run_command", buildJsonObject { put("command", "pwd") },
+            )))
+            val response = awaitClientMessage(harness.transport, 2)
+            assertEquals("pwd", received?.get("command")?.jsonPrimitive?.content)
+            assertEquals(true, response["result"]?.jsonObject?.get("success")?.jsonPrimitive?.content?.toBoolean())
+        } finally { harness.runtime.close() }
+    }
+
+    @Test fun `approval gated dynamic tool waits then executes`() = runBlocking {
+        val executions = AtomicInteger()
+        val tool = Tool("send_notification", "Send", { InputSchema.Obj(JsonObject(emptyMap())) }, needsApproval = { true }, execute = {
+            executions.incrementAndGet(); listOf(UIMessagePart.Text("sent"))
+        })
+        val harness = harness(this, assistantToolProfile = CodexAssistantToolProfile.from(listOf(tool), "assistant:false"))
+        try {
+            initialize(harness); harness.transport.emit(notification("turn/started", turnParams("inProgress")))
+            awaitState(harness.runtime) { it is CodexConversationUiState.Running }
+            val id = JsonRpcId.StringId("tool-approval")
+            harness.transport.emit(serverRequest(id, "item/tool/call", dynamicToolParams("call-2", "send_notification", JsonObject(emptyMap()))))
+            awaitState(harness.runtime) { it is CodexConversationUiState.WaitingForApproval && it.requestId == id }
+            assertEquals(0, executions.get()); assertTrue(harness.runtime.respondDynamicToolApproval(id, true))
+            awaitClientMessage(harness.transport, 2); assertEquals(1, executions.get())
+        } finally { harness.runtime.close() }
+    }
+
+    @Test fun `ask_user answer returns without headless fallback`() = runBlocking {
+        val executions = AtomicInteger()
+        val tool = Tool("ask_user", "Ask", { InputSchema.Obj(JsonObject(emptyMap())) }, needsApproval = { true }, execute = {
+            executions.incrementAndGet(); listOf(UIMessagePart.Text("ask_user_unavailable"))
+        })
+        val harness = harness(this, assistantToolProfile = CodexAssistantToolProfile.from(listOf(tool), "assistant:false"))
+        try {
+            initialize(harness); harness.transport.emit(notification("turn/started", turnParams("inProgress")))
+            awaitState(harness.runtime) { it is CodexConversationUiState.Running }
+            val id = JsonRpcId.StringId("ask-user")
+            harness.transport.emit(serverRequest(id, "item/tool/call", dynamicToolParams("call-ask", "ask_user", JsonObject(emptyMap()))))
+            awaitState(harness.runtime) { it is CodexConversationUiState.WaitingForApproval && it.requestId == id }
+            val answer = "{\"destination\":\"Tokyo\"}"
+            assertTrue(harness.runtime.respondDynamicToolAnswer(id, answer))
+            val response = awaitClientMessage(harness.transport, 2)
+            assertEquals(0, executions.get())
+            assertEquals(answer, (response["result"]?.jsonObject?.get("contentItems") as JsonArray).single().jsonObject["text"]?.jsonPrimitive?.content)
+        } finally { harness.runtime.close() }
+    }
+
     @Test
     fun `successful account completion does not leave contradictory temporary status`() {
         val state = CodexCapabilitiesUiState(pendingLoginId = "login-1", accountStatus = "Waiting for ChatGPT sign-in")
@@ -451,6 +510,7 @@ class CodexChatRuntimeIntegrationTest {
         scope: CoroutineScope,
         onAgentText: suspend (turnId: String, itemId: String, text: String) -> Unit = { _, _, _ -> },
         onTurnParts: suspend (turnId: String, parts: List<UIMessagePart>) -> Unit = { _, _ -> },
+        assistantToolProfile: CodexAssistantToolProfile = CodexAssistantToolProfile.EMPTY,
     ): Harness {
         val binding = CodexAppServerSessionBindingEntity(
             conversationId = "conversation-1",
@@ -478,6 +538,7 @@ class CodexChatRuntimeIntegrationTest {
                 scope,
                 onAgentText = onAgentText,
                 onTurnParts = onTurnParts,
+                assistantToolProfile = assistantToolProfile,
             ),
             transport,
             connection,
@@ -561,6 +622,13 @@ class CodexChatRuntimeIntegrationTest {
             Json.parseToJsonElement(transport.sentLines[index]).jsonObject
         }
 
+    private suspend fun initialize(harness: Harness) = coroutineScope {
+        val initializing = async { harness.connection.initialize() }
+        val request = awaitClientMessage(harness.transport, 0)
+        harness.transport.emit("""{"id":${request["id"]},"result":{"userAgent":"test","codexHome":"/home","platformFamily":"unix","platformOs":"linux"}}""")
+        initializing.await(); assertEquals("initialized", awaitClientMessage(harness.transport, 1)["method"]?.jsonPrimitive?.content)
+    }
+
     private fun serverRequest(id: JsonRpcId, method: String, params: JsonObject): String {
         val encodedId = when (id) {
             is JsonRpcId.StringId -> JsonPrimitive(id.value)
@@ -630,6 +698,11 @@ class CodexChatRuntimeIntegrationTest {
         put("turnId", turnId)
         put("itemId", itemId)
         put("startedAtMs", 21)
+    }
+
+    private fun dynamicToolParams(callId: String, tool: String, arguments: JsonObject) = buildJsonObject {
+        put("threadId", "thread-1"); put("turnId", "turn-1"); put("callId", callId)
+        put("tool", tool); put("arguments", arguments)
     }
 
     private fun resolved(requestId: Any) = buildJsonObject {

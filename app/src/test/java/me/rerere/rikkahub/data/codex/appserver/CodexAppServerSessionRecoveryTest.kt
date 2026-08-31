@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.supervisorScope
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
@@ -136,6 +137,25 @@ class CodexAppServerSessionRecoveryTest {
         assertEquals("thread/resume", resume["method"]?.jsonPrimitive?.content)
         transport.injectServerLine("""{"id":${resume["id"]},"result":{"thread":{"id":"thread-1"},"model":"m","modelProvider":"p","cwd":"src"}}""")
         val result = opening.await() as CodexAppServerConversationSessionOpenResult.Recovered
+        result.session.close()
+    }
+
+    @Test fun `changed dynamic tool fingerprint replaces durable thread before resume`() = runBlocking {
+        val transport = FakeCodexAppServerTransport(); val connection = connection(transport)
+        val f = Fixture(creator = CodexAppServerConnectionCreator { _, _ -> connection })
+        val oldTools = listOf(CodexAppServerDynamicToolSpec("old_tool", "old", JsonObject(emptyMap())))
+        val newTools = listOf(CodexAppServerDynamicToolSpec("new_tool", "new", JsonObject(emptyMap())))
+        f.repo.bindPersistentThread("a", "w", "src", snapshot("thread-1"), codexDynamicToolsFingerprint(oldTools))
+        val opener = CodexAppServerConversationSessionOpener(f.repo, f.local, f.creator, f.recovery)
+        val opening = async { opener.open("a", "w", "src", CodexAppServerThreadStartParams(dynamicTools = newTools)) }
+        respondInitialize(transport)
+        val start = Json.parseToJsonElement(transport.takeClientLine()).jsonObject
+        assertEquals("thread/start", start["method"]?.jsonPrimitive?.content)
+        assertEquals("new_tool", (start["params"]?.jsonObject?.get("dynamicTools") as JsonArray).single().jsonObject["name"]?.jsonPrimitive?.content)
+        transport.injectServerLine("""{"id":${start["id"]},"result":{"thread":{"id":"thread-2","ephemeral":false},"model":"m","modelProvider":"p","cwd":"src"}}""")
+        val result = opening.await() as CodexAppServerConversationSessionOpenResult.Started
+        assertEquals("thread-2", result.session.threadId)
+        assertEquals(codexDynamicToolsFingerprint(newTools), f.repo.getBinding("a")?.dynamicToolsFingerprint)
         result.session.close()
     }
 
