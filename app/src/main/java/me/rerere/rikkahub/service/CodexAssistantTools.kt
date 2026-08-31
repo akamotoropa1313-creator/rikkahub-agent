@@ -2,6 +2,7 @@ package me.rerere.rikkahub.service
 
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -56,7 +57,7 @@ private fun InputSchema?.toCodexJsonSchema(): JsonElement = when (this) {
         put("type", "object")
         put("properties", properties)
         required?.let { values ->
-            putJsonArray("required") { values.forEach(::add) }
+            putJsonArray("required") { values.forEach { add(JsonPrimitive(it)) } }
         }
     }
 }

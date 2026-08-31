@@ -63,6 +63,7 @@ internal fun CodexAppServerThreadStartParams(
     serviceTier: String? = null,
     sandbox: me.rerere.rikkahub.data.codex.appserver.CodexAppServerSandboxMode? = null,
     approvalPolicy: me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalPolicy? = null,
+    dynamicTools: List<me.rerere.rikkahub.data.codex.appserver.CodexAppServerDynamicToolSpec>? = null,
 ): me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams =
     me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams(
         model = model,
@@ -76,4 +77,5 @@ internal fun CodexAppServerThreadStartParams(
         },
         sandbox = sandbox,
         approvalPolicy = approvalPolicy,
+        dynamicTools = dynamicTools,
     )
