@@ -605,6 +605,8 @@ private fun historyItemText(item: CodexAppServerItemSnapshot): String = when (it
     is CodexAppServerItemSnapshot.Reasoning -> "推論: ${(item.summary + item.content).joinToString("\n")}"
     is CodexAppServerItemSnapshot.CommandExecution -> "コマンド: ${item.command}${item.aggregatedOutput?.let { "\n$it" }.orEmpty()}"
     is CodexAppServerItemSnapshot.FileChange -> "ファイル変更: ${item.changes.size}件"
+    is CodexAppServerItemSnapshot.DynamicToolCall ->
+        "RikkaHubツール: ${item.tool} (${item.status})"
     is CodexAppServerItemSnapshot.EnteredReviewMode -> "レビューモード開始: ${item.review}"
     is CodexAppServerItemSnapshot.ExitedReviewMode -> "レビューモード終了: ${item.review}"
     is CodexAppServerItemSnapshot.Other -> "${item.type} アイテム"

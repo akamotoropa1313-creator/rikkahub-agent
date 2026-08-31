@@ -15,6 +15,8 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandAction
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalRequest
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandExecutionStatus
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileUpdateChange
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerDynamicToolCallRequest
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerDynamicToolOutputContentItem
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerItemSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerPatchApplyStatus
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerPatchChangeKind
@@ -53,6 +55,7 @@ internal class CodexChatMessageTimeline(
         val terminalInteractions: MutableList<String> = mutableListOf(),
         var approvalState: ToolApprovalState = ToolApprovalState.Auto,
         var commandApprovalRequest: CodexAppServerCommandApprovalRequest? = null,
+        var dynamicToolRequest: CodexAppServerDynamicToolCallRequest? = null,
     )
 
     private val entries = linkedMapOf<String, LinkedHashMap<String, Entry>>()
@@ -137,6 +140,14 @@ internal class CodexChatMessageTimeline(
     @Synchronized
     fun fileApprovalRequested(turnId: String, itemId: String) {
         entry(turnId, itemId, "fileChange").approvalState = ToolApprovalState.Pending
+    }
+
+    @Synchronized
+    fun dynamicToolApprovalRequested(request: CodexAppServerDynamicToolCallRequest) {
+        entry(request.turnId, request.callId, "dynamicToolCall").apply {
+            dynamicToolRequest = request
+            approvalState = ToolApprovalState.Pending
+        }
     }
 
     @Synchronized
@@ -225,6 +236,15 @@ internal class CodexChatMessageTimeline(
                     ToolApprovalState.Approved
                 }
             }
+            is CodexAppServerItemSnapshot.DynamicToolCall -> if (
+                completed && approvalState is ToolApprovalState.Pending
+            ) {
+                approvalState = if (snapshot.success == false) {
+                    ToolApprovalState.Denied()
+                } else {
+                    ToolApprovalState.Approved
+                }
+            }
             else -> Unit
         }
     }
@@ -243,12 +263,14 @@ internal class CodexChatMessageTimeline(
         is CodexAppServerItemSnapshot.FileChange -> snapshot.changes.mapIndexed { index, change ->
             fileChangePart(snapshot, change, index)
         }
+        is CodexAppServerItemSnapshot.DynamicToolCall -> listOf(dynamicToolPart(snapshot))
         is CodexAppServerItemSnapshot.Other -> listOf(otherPart(snapshot))
         null -> when (inferredType) {
             "agentMessage" -> if (suppressAgentMessages || agentText.isBlank()) emptyList()
                 else listOf(UIMessagePart.Text(agentText.toString()))
             "reasoning" -> reasoningPart()?.let(::listOf).orEmpty()
             "commandExecution" -> commandApprovalRequest?.let { listOf(commandApprovalPart(it)) }.orEmpty()
+            "dynamicToolCall" -> dynamicToolRequest?.let { listOf(dynamicToolApprovalPart(it)) }.orEmpty()
             else -> emptyList()
         }
     }
@@ -384,6 +406,27 @@ internal class CodexChatMessageTimeline(
         )
     }
 
+    private fun Entry.dynamicToolPart(item: CodexAppServerItemSnapshot.DynamicToolCall): UIMessagePart.Tool {
+        val terminal = completedAtMs != null || item.status !in setOf("inProgress", "in_progress", "running")
+        return UIMessagePart.Tool(
+            toolCallId = codexToolCallIdFromEntry(item.id),
+            toolName = item.tool,
+            input = item.arguments.toString(),
+            output = if (terminal) item.contentItems.orEmpty().map { it.toUiPart() } else emptyList(),
+            approvalState = approvalState,
+            executionStartedAt = startedAtMs,
+        )
+    }
+
+    private fun Entry.dynamicToolApprovalPart(
+        request: CodexAppServerDynamicToolCallRequest,
+    ): UIMessagePart.Tool = UIMessagePart.Tool(
+        toolCallId = codexToolCallIdFromEntry(request.callId),
+        toolName = request.tool,
+        input = request.arguments.toString(),
+        approvalState = approvalState,
+    )
+
     private fun CodexSkillInvocationPresentation.toPart(turnId: String, index: Int) = UIMessagePart.Tool(
         toolCallId = "codex:$turnId:skill:$index",
         toolName = "use_skill",
@@ -404,6 +447,12 @@ internal class CodexChatMessageTimeline(
     private fun Entry.codexToolCallIdFromEntry(itemId: String, index: Int? = null): String {
         return codexToolCallId(turnId, itemId, index)
     }
+}
+
+private fun CodexAppServerDynamicToolOutputContentItem.toUiPart(): UIMessagePart = when (this) {
+    is CodexAppServerDynamicToolOutputContentItem.Text -> UIMessagePart.Text(text)
+    is CodexAppServerDynamicToolOutputContentItem.Image -> UIMessagePart.Image(imageUrl)
+    is CodexAppServerDynamicToolOutputContentItem.Audio -> UIMessagePart.Audio(audioUrl)
 }
 
 private fun JsonObject.stringOrNull(key: String): String? =

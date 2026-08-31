@@ -18,8 +18,11 @@ class CodexAppServerSessionBindingRepository(
         workspaceId: String,
         workspaceCwd: String,
         thread: CodexAppServerThreadSnapshot,
+        dynamicToolsFingerprint: String? = null,
     ): CodexAppServerSessionBindingEntity {
-        val binding = persistentBinding(conversationId, workspaceId, workspaceCwd, thread, null)
+        val binding = persistentBinding(
+            conversationId, workspaceId, workspaceCwd, thread, null, dynamicToolsFingerprint,
+        )
         if (bindingDao.insertIfAbsent(binding) == -1L) {
             throw CodexAppServerBindingConflictException(conversationId, thread.id)
         }
@@ -36,9 +39,12 @@ class CodexAppServerSessionBindingRepository(
         workspaceId: String,
         workspaceCwd: String,
         thread: CodexAppServerThreadSnapshot,
+        dynamicToolsFingerprint: String? = null,
     ): CodexAppServerSessionBindingEntity {
         val existing = bindingDao.getByConversationId(conversationId)
-        val binding = persistentBinding(conversationId, workspaceId, workspaceCwd, thread, existing)
+        val binding = persistentBinding(
+            conversationId, workspaceId, workspaceCwd, thread, existing, dynamicToolsFingerprint,
+        )
         val owner = bindingDao.getByThreadId(thread.id)
         check(owner == null || owner.conversationId == conversationId) {
             "Codex thread ${thread.id} is already bound to conversation ${owner?.conversationId}"
@@ -54,6 +60,7 @@ class CodexAppServerSessionBindingRepository(
         workspaceCwd: String,
         thread: CodexAppServerThreadSnapshot,
         existing: CodexAppServerSessionBindingEntity?,
+        dynamicToolsFingerprint: String?,
     ): CodexAppServerSessionBindingEntity {
         require(conversationId.isNotBlank()) { "conversationId must not be blank" }
         require(workspaceId.isNotBlank()) { "workspaceId must not be blank" }
@@ -77,6 +84,7 @@ class CodexAppServerSessionBindingRepository(
             lastObservedTurnId = null,
             lastObservedTurnStatus = null,
             lastResumedAtMs = null,
+            dynamicToolsFingerprint = dynamicToolsFingerprint,
         )
     }
 

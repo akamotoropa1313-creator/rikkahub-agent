@@ -721,10 +721,10 @@ class ChatService(
                 )
                 saveConversation(conversationId, withUser)
 
-                val routedHandled = if (answer && !assistant.codexAppServerEnabled)
+                val routedHandled = if (answer)
                     tryFastPathRoute(conversationId, processedContent, withUser, assistant)
                 else false
-                if (answer && assistant.codexAppServerEnabled) {
+                if (answer && assistant.codexAppServerEnabled && !routedHandled) {
                     sendCodexTurn(conversationId, session, withUser, assistant, processedContent, explicitSkills, onAccepted)
                 } else if (answer && !routedHandled) {
                     handleMessageComplete(conversationId)
@@ -811,7 +811,27 @@ class ChatService(
         val conversation = getConversationFlow(conversationId).value
         val settings = settingsStore.settingsFlow.first()
         val assistant = settings.getAssistantById(conversation.assistantId) ?: settings.getCurrentAssistant()
+        if (event is CodexAppServerApprovalEvent.DynamicToolRequest) {
+            return isRikkaHubToolAutoApproved(conversationId, event.request.tool)
+        }
         return codexApprovalIntegrationPolicy(assistant, workspaceId).shouldAutoApprove(event)
+    }
+
+    private suspend fun isRikkaHubToolAutoApproved(
+        conversationId: Uuid,
+        toolName: String,
+    ): Boolean {
+        if (toolName == "ask_user") {
+            return me.rerere.rikkahub.data.ai.tools.HeadlessConversations
+                .shouldAutoApprove(conversationId)
+        }
+        return toolApprovalPreferences.currentYolo() ||
+            me.rerere.rikkahub.data.ai.tools.HeadlessConversations
+                .shouldAutoApprove(conversationId) ||
+            me.rerere.rikkahub.data.ai.tools.ToolApprovalAllowList
+                .isAllowedForChat(conversationId, toolName) ||
+            (!isWorkspaceToolName(toolName) &&
+                toolApprovalPreferences.current().contains(toolName))
     }
 
     suspend fun prepareCodexSession(conversationId: Uuid) {
@@ -822,7 +842,14 @@ class ChatService(
             it.getAssistantById(initialConversation.assistantId) ?: it.getCurrentAssistant()
         }
         val initialSkillProfile = codexAssistantSkillProfile(initialAssistant)
-        if (owner.codexRuntime?.assistantSkillProfile == initialSkillProfile) return
+        val initialToolProfile = codexAssistantToolProfile(initialAssistant, conversationId)
+        val initialDeveloperInstructions = codexDeveloperInstructions(initialAssistant, initialConversation, initialSkillProfile)
+        if (owner.codexRuntime?.let {
+                it.assistantSkillProfile == initialSkillProfile &&
+                    it.assistantToolProfile == initialToolProfile &&
+                    it.assistantDeveloperInstructions == initialDeveloperInstructions
+            } == true
+        ) return
         check(owner.tryBeginCodexOperation()) { "Another Codex operation is already running" }
         try {
             codexOpenMutexes.getOrPut(conversationId) { Mutex() }.withLock {
@@ -833,10 +860,15 @@ class ChatService(
                 }
                 check(assistant.codexAppServerEnabled) { "Codex App Server is disabled" }
                 val skillProfile = codexAssistantSkillProfile(assistant)
+                val toolProfile = codexAssistantToolProfile(assistant, conversationId)
+                val instructions = codexDeveloperInstructions(assistant, conversation, skillProfile)
                 owner.codexRuntime?.let { existing ->
-                    if (existing.assistantSkillProfile == skillProfile) return@withLock
+                    if (existing.assistantSkillProfile == skillProfile &&
+                        existing.assistantToolProfile == toolProfile &&
+                        existing.assistantDeveloperInstructions == instructions
+                    ) return@withLock
                     check(existing.activeTurnId() == null) {
-                        "The RikkaHub assistant skill selection changed during a Codex turn"
+                        "The RikkaHub assistant skill or tool selection changed during a Codex turn"
                     }
                     owner.replaceCodexRuntime(null)
                 }
@@ -845,7 +877,6 @@ class ChatService(
                 val cwd = conversation.workspaceCwd.orEmpty()
                 val approvalPolicy = codexApprovalIntegrationPolicy(assistant, workspaceId)
                     .effectiveAppServerPolicy()
-                val instructions = codexDeveloperInstructions(assistant, conversation, skillProfile)
                 val personality = assistant.codexPersonality?.let { CodexAppServerPersonality.valueOf(it.name) }
                 owner.publishCodexState(CodexConversationUiState.Opening)
                 val opened = checkNotNull(codexSessionOpener) { "Codex App Server is unavailable" }.open(
@@ -860,18 +891,21 @@ class ChatService(
                         personality = personality,
                         sandbox = effectiveCodexSandboxMode(assistant.codexSandboxMode),
                         approvalPolicy = approvalPolicy,
+                        dynamicTools = toolProfile.specs,
                     ),
                 )
                 when (opened) {
                     is CodexAppServerConversationSessionOpenResult.Started ->
                         installCodexRuntime(
                             conversationId, owner, opened.session,
-                            assistant.effectiveCodexHarnessModelTarget(), workspaceId, skillProfile,
+                            assistant.effectiveCodexHarnessModelTarget(), workspaceId,
+                            skillProfile, toolProfile, instructions,
                         )
                     is CodexAppServerConversationSessionOpenResult.Recovered ->
                         installCodexRuntime(
                             conversationId, owner, opened.session,
-                            assistant.effectiveCodexHarnessModelTarget(), workspaceId, skillProfile,
+                            assistant.effectiveCodexHarnessModelTarget(), workspaceId,
+                            skillProfile, toolProfile, instructions,
                         )
                     is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
                         owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason))
@@ -921,10 +955,15 @@ class ChatService(
             }
         }
         val skillProfile = codexAssistantSkillProfile(assistant)
+        val toolProfile = codexAssistantToolProfile(assistant, conversationId)
+        val instructions = codexDeveloperInstructions(assistant, conversation, skillProfile)
         owner.codexRuntime?.let { existing ->
-            if (existing.assistantSkillProfile != skillProfile) {
+            if (existing.assistantSkillProfile != skillProfile ||
+                existing.assistantToolProfile != toolProfile ||
+                existing.assistantDeveloperInstructions != instructions
+            ) {
                 check(existing.activeTurnId() == null) {
-                    "The RikkaHub assistant skill selection changed during a Codex turn"
+                    "The RikkaHub assistant skill or tool selection changed during a Codex turn"
                 }
                 owner.replaceCodexRuntime(null)
             }
@@ -932,14 +971,14 @@ class ChatService(
         val runtime = owner.codexRuntime ?: run {
             val opener = checkNotNull(codexSessionOpener) { "Codex App Server is unavailable" }
             owner.publishCodexState(CodexConversationUiState.Opening)
-            val instructions = codexDeveloperInstructions(assistant, conversation, skillProfile)
             val threadPersonality = assistant.codexPersonality?.let { CodexAppServerPersonality.valueOf(it.name) }
             when (val opened = opener.open(conversationId.toString(), workspaceId, cwd,
                 CodexAppServerThreadStartParams(model = assistant.codexModel, serviceTier = assistant.codexServiceTier,
                     config = skillProfile.threadConfig(), developerInstructions = instructions,
                     personality = threadPersonality,
                     sandbox = effectiveCodexSandboxMode(assistant.codexSandboxMode),
-                    approvalPolicy = approvalPolicy))) {
+                    approvalPolicy = approvalPolicy,
+                    dynamicTools = toolProfile.specs))) {
                 is CodexAppServerConversationSessionOpenResult.Started -> opened.session
                 is CodexAppServerConversationSessionOpenResult.Recovered -> opened.session
                 is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
@@ -954,6 +993,8 @@ class ChatService(
                     harnessTarget = assistant.effectiveCodexHarnessModelTarget(),
                     workspaceId = workspaceId,
                     assistantSkillProfile = skillProfile,
+                    assistantToolProfile = toolProfile,
+                    assistantDeveloperInstructions = instructions,
                 )
             }
         }
@@ -1118,13 +1159,22 @@ class ChatService(
                 event.request.turnId to event.request.itemId
             is CodexAppServerApprovalEvent.FileChangeRequest ->
                 event.request.turnId to event.request.itemId
+            is CodexAppServerApprovalEvent.DynamicToolRequest ->
+                event.request.turnId to event.request.callId
             else -> return false
         }
         val baseToolCallId = codexToolCallId(turnId, itemId)
         if (toolCallId != baseToolCallId && toolCallId != "$baseToolCallId:0") return false
 
-        if (approved && scope == ApprovalScope.Always) {
-            runCatching { grantAlwaysScope(conversationId, toolName) }
+        if (approved && scope != ApprovalScope.Once) {
+            runCatching {
+                when (scope) {
+                    ApprovalScope.Once -> Unit
+                    ApprovalScope.ChatScope -> me.rerere.rikkahub.data.ai.tools
+                        .ToolApprovalAllowList.grantForChat(conversationId, toolName)
+                    ApprovalScope.Always -> grantAlwaysScope(conversationId, toolName)
+                }
+            }
                 .onFailure { Log.w(TAG, "Codex approval grant write failed", it) }
         }
         val forSession = scope != ApprovalScope.Once
@@ -1149,8 +1199,24 @@ class ChatService(
                     },
                     denialReason = reason,
                 )
+            is CodexAppServerApprovalEvent.DynamicToolRequest ->
+                runtime.respondDynamicToolApproval(
+                    event.requestId,
+                    approved = approved,
+                    denialReason = reason,
+                )
             else -> false
         }
+    }
+
+    suspend fun respondCodexToolAnswer(conversationId: Uuid, toolCallId: String, answer: String): Boolean {
+        val runtime = sessions[conversationId]?.codexRuntime ?: return false
+        val waiting = runtime.state.value as? CodexConversationUiState.WaitingForApproval ?: return false
+        val event = waiting.event as? CodexAppServerApprovalEvent.DynamicToolRequest ?: return false
+        if (event.request.tool != "ask_user") return false
+        val baseToolCallId = codexToolCallId(event.request.turnId, event.request.callId)
+        if (toolCallId != baseToolCallId && toolCallId != "$baseToolCallId:0") return false
+        return runtime.respondDynamicToolAnswer(event.requestId, answer)
     }
 
     suspend fun hasCodexBinding(conversationId: Uuid): Boolean =
@@ -1214,6 +1280,8 @@ class ChatService(
                 val conversation = owner.state.value
                 val assistant = settingsStore.settingsFlow.first().let { it.getAssistantById(conversation.assistantId) ?: it.getCurrentAssistant() }
                 val skillProfile = codexAssistantSkillProfile(assistant)
+                val toolProfile = codexAssistantToolProfile(assistant, conversationId)
+                val developerInstructions = codexDeveloperInstructions(assistant, conversation, skillProfile)
                 val workspaceId = assistant.workspaceId?.toString() ?: error("Codex App Server requires a workspace")
                 val approvalPolicy = codexApprovalIntegrationPolicy(assistant, workspaceId)
                     .effectiveAppServerPolicy()
@@ -1223,24 +1291,29 @@ class ChatService(
                     error("Existing Codex binding belongs to another workspace/CWD")
                 }
                 owner.publishCodexState(CodexConversationUiState.Opening)
-                when (val opened = checkNotNull(codexSessionOpener).recoverBound(
+                when (val opened = checkNotNull(codexSessionOpener).open(
                     conversationId.toString(),
-                    me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadResumeParams(
+                    workspaceId,
+                    conversation.workspaceCwd.orEmpty(),
+                    CodexAppServerThreadStartParams(
                         config = skillProfile.threadConfig(),
-                        developerInstructions = codexDeveloperInstructions(assistant, conversation, skillProfile),
+                        developerInstructions = developerInstructions,
                         sandbox = effectiveCodexSandboxMode(assistant.codexSandboxMode),
                         approvalPolicy = approvalPolicy,
+                        dynamicTools = toolProfile.specs,
                     ),
                 )) {
                     is CodexAppServerConversationSessionOpenResult.Recovered ->
                         installCodexRuntime(
                             conversationId, owner, opened.session,
-                            assistant.effectiveCodexHarnessModelTarget(), workspaceId, skillProfile,
+                            assistant.effectiveCodexHarnessModelTarget(), workspaceId,
+                            skillProfile, toolProfile, developerInstructions,
                         )
                     is CodexAppServerConversationSessionOpenResult.Started ->
                         installCodexRuntime(
                             conversationId, owner, opened.session,
-                            assistant.effectiveCodexHarnessModelTarget(), workspaceId, skillProfile,
+                            assistant.effectiveCodexHarnessModelTarget(), workspaceId,
+                            skillProfile, toolProfile, developerInstructions,
                         )
                     is CodexAppServerConversationSessionOpenResult.StaleBinding -> {
                         owner.publishCodexState(CodexConversationUiState.StaleBinding(opened.reason))
@@ -1261,6 +1334,8 @@ class ChatService(
         harnessTarget: CodexHarnessModelTarget,
         workspaceId: String,
         assistantSkillProfile: CodexAssistantSkillProfile,
+        assistantToolProfile: CodexAssistantToolProfile,
+        assistantDeveloperInstructions: String?,
     ): CodexChatRuntime {
         lateinit var installed: CodexChatRuntime
         installed = CodexChatRuntime(protocolSession, appScope,
@@ -1274,6 +1349,8 @@ class ChatService(
             },
             harnessTarget = harnessTarget,
             assistantSkillProfile = assistantSkillProfile,
+            assistantToolProfile = assistantToolProfile,
+            assistantDeveloperInstructions = assistantDeveloperInstructions,
             onTokenUsage = { persistCodexUsageSafely(conversationId, it) },
             onTurnTerminal = { turnId, durationMs ->
                 persistCodexTurnTerminal(conversationId, turnId, durationMs)
@@ -1299,6 +1376,53 @@ class ChatService(
                 runCatching { skillManager.readAutoLoadBody(skill) }.getOrNull()
             },
         )
+
+    private suspend fun codexAssistantToolProfile(
+        assistant: Assistant,
+        conversationId: Uuid,
+    ): CodexAssistantToolProfile {
+        val isHeadless = me.rerere.rikkahub.data.ai.tools.HeadlessConversations.isHeadless(conversationId)
+        val invocationContext = me.rerere.rikkahub.data.ai.tools.ToolInvocationContext(
+            callerAssistantId = assistant.id.toString(),
+            callerConversationId = conversationId.toString(),
+            isHeadless = isHeadless,
+            // Dynamic tool results support inputImage/inputAudio. Individual tools still
+            // degrade non-inline files to a text envelope in CodexChatRuntime.
+            modelCanSeeImages = true,
+        )
+        val tools = buildList {
+            addAll(localTools.getTools(assistant.localTools, invocationContext))
+            // Codex owns use_skill itself. Keep the RikkaHub read-only skill accessor but do
+            // not register a second use_skill function with the same model-facing name.
+            if (assistant.enabledSkills.isNotEmpty()) {
+                addAll(
+                    createSkillTools(
+                        enabledSkills = assistant.enabledSkills,
+                        allSkills = skillManager.listSkills(),
+                        skillManager = skillManager,
+                    ).filterNot { it.name == "use_skill" },
+                )
+            }
+            mcpManager.getAllAvailableTools(assistant).forEach { (serverId, serverName, mcpTool) ->
+                val toolName = mcpModelToolName(serverId.toString(), serverName, mcpTool.name)
+                add(
+                    Tool(
+                        name = toolName,
+                        description = mcpTool.description ?: "",
+                        parameters = { mcpTool.inputSchema },
+                        needsApproval = {
+                            me.rerere.rikkahub.data.ai.tools.ToolApprovalDefaults
+                                .requiresApproval(toolName) || mcpTool.needsApproval
+                        },
+                        execute = { arguments ->
+                            mcpManager.callTool(serverId, mcpTool.name, arguments.jsonObject)
+                        },
+                    ),
+                )
+            }
+        }
+        return CodexAssistantToolProfile.from(tools, executionIdentity = "${assistant.id}:$isHeadless")
+    }
 
     private fun codexDeveloperInstructions(
         assistant: Assistant,
@@ -1878,9 +2002,8 @@ class ChatService(
                 )
             )
         }
-        mcpManager.getAllAvailableTools().forEach { (serverId, serverName, mcpTool) ->
-            val serverSlug = serverId.toString().take(8).replace("-", "")
-            val mcpToolName = "mcp__" + serverSlug + "_" + serverName + "__" + mcpTool.name
+        mcpManager.getAllAvailableTools(assistant).forEach { (serverId, serverName, mcpTool) ->
+            val mcpToolName = mcpModelToolName(serverId.toString(), serverName, mcpTool.name)
             add(
                 Tool(
                     name = mcpToolName,
@@ -2132,28 +2255,7 @@ class ChatService(
                             )
                         )
                     }
-                    mcpManager.getAllAvailableTools().also { allTools ->
-                        // Upstream name validation: a server name that isn't pure
-                        // English+digits would produce an invalid `mcp__<name>__tool`
-                        // surface, so surface it as an error rather than emit a tool the
-                        // model can't address.
-                        val invalidNames = allTools
-                            .map { it.second }
-                            .distinct()
-                            .filter { name -> name.isEmpty() || !name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' } }
-                        if (invalidNames.isNotEmpty()) {
-                            addError(
-                                error = IllegalStateException(
-                                    context.getString(
-                                        R.string.error_mcp_invalid_server_name,
-                                        invalidNames.joinToString(", ")
-                                    )
-                                ),
-                                conversationId = conversationId,
-                            )
-                            return
-                        }
-                    }.forEach { (serverId, serverName, tool) ->
+                    mcpManager.getAllAvailableTools(assistant).forEach { (serverId, serverName, tool) ->
                         // Namespace MCP tools by a server-id slug so two enabled servers that
                         // each expose a tool of the same name don't collide (which would 400 or
                         // mis-route to whichever server registered last). Keep the `mcp__` prefix
@@ -2164,8 +2266,7 @@ class ChatService(
                         // ^[a-zA-Z0-9_-]+$ limit. The execute lambda below still calls callTool
                         // with the REAL tool.name, since the namespacing exists only on the
                         // model-facing surface.
-                        val serverSlug = serverId.toString().take(8).replace("-", "")
-                        val mcpToolName = "mcp__" + serverSlug + "_" + serverName + "__" + tool.name
+                        val mcpToolName = mcpModelToolName(serverId.toString(), serverName, tool.name)
                         add(
                             Tool(
                                 name = mcpToolName,

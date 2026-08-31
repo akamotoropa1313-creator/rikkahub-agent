@@ -301,6 +301,9 @@ class ChatVM(
             )
         }
     }
+    fun respondCodexToolAnswer(toolCallId: String, answer: String) {
+        viewModelScope.launch { chatService.respondCodexToolAnswer(_conversationId, toolCallId, answer) }
+    }
 
     val conversationJobs = chatService
         .getConversationJobs()

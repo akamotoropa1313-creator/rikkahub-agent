@@ -14,8 +14,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.ai.core.Tool
+import me.rerere.rikkahub.data.ai.limits.ToolRuntimeLimits
+import me.rerere.rikkahub.data.ai.tools.HardlineCommandGuard
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConversationSession
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
@@ -37,6 +45,8 @@ class CodexChatRuntime internal constructor(
     private val onTurnParts: suspend (turnId: String, parts: List<UIMessagePart>) -> Unit = { _, _ -> },
     val harnessTarget: CodexHarnessModelTarget? = null,
     internal val assistantSkillProfile: CodexAssistantSkillProfile = CodexAssistantSkillProfile.EMPTY,
+    internal val assistantToolProfile: CodexAssistantToolProfile = CodexAssistantToolProfile.EMPTY,
+    internal val assistantDeveloperInstructions: String? = null,
     private val onTokenUsage: suspend (CodexTokenUsageSnapshot) -> Unit = {},
     private val onTurnTerminal: suspend (turnId: String, durationMs: Long) -> Unit = { _, _ -> },
     private val onTurnDurationUpdated: suspend (turnId: String, durationMs: Long) -> Unit = { _, _ -> },
@@ -50,7 +60,7 @@ class CodexChatRuntime internal constructor(
         @Volatile var status: CodexAppServerTurnStatus = CodexAppServerTurnStatus.InProgress,
     )
 
-    private enum class ApprovalKind { Command, FileChange }
+    private enum class ApprovalKind { Command, FileChange, DynamicTool }
     private data class PendingApproval(
         val kind: ApprovalKind,
         val threadId: String,
@@ -901,6 +911,7 @@ class CodexChatRuntime internal constructor(
                     )
                     turnPartsPublisher.request(request.turnId)
                 }
+                is CodexAppServerApprovalEvent.DynamicToolRequest -> Unit
                 is CodexAppServerApprovalEvent.Resolved -> {
                     if (event.threadId != session.threadId) return@collect
                     val resolved = synchronized(approvalLock) {
@@ -929,6 +940,245 @@ class CodexChatRuntime internal constructor(
             }
         }
     }
+
+    private val dynamicToolCollector: Job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+        session.dynamicToolApi.events.collect { event ->
+            try {
+                when (event) {
+                    is CodexAppServerDynamicToolEvent.Call -> handleDynamicToolCall(event)
+                    is CodexAppServerDynamicToolEvent.MalformedCall -> {
+                        session.dynamicToolApi.respond(
+                            event.requestId,
+                            listOf(dynamicToolError("invalid_tool_call", event.cause.message.orEmpty())),
+                            success = false,
+                        )
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                failRuntime(failure)
+            }
+        }
+    }
+
+    private suspend fun handleDynamicToolCall(event: CodexAppServerDynamicToolEvent.Call) {
+        val request = event.request
+        val rejection = when {
+            request.threadId != session.threadId -> "Dynamic tool call belongs to another Codex thread"
+            request.namespace != null -> "RikkaHub tools do not use a dynamic-tool namespace"
+            !admitNonTerminalTurn(request.turnId) -> "Dynamic tool call belongs to an inactive Codex turn"
+            request.arguments !is JsonObject -> "Dynamic tool arguments must be a JSON object"
+            else -> null
+        }
+        if (rejection != null) {
+            respondDynamicToolFailure(event.requestId, "invalid_tool_context", rejection)
+            return
+        }
+
+        val tool = assistantToolProfile.tool(request.tool)
+        if (tool == null) {
+            respondDynamicToolFailure(
+                event.requestId,
+                "tool_not_available",
+                "Tool '${request.tool}' is not enabled for this RikkaHub assistant",
+            )
+            return
+        }
+        HardlineCommandGuard.checkTool(request.tool, request.arguments.toString())?.let { reason ->
+            respondDynamicToolFailure(
+                event.requestId,
+                "blocked_by_safety_floor",
+                reason,
+            )
+            return
+        }
+
+        val needsApproval = try {
+            tool.needsApproval(request.arguments)
+        } catch (failure: Throwable) {
+            respondDynamicToolFailure(
+                event.requestId,
+                "approval_check_failed",
+                failure.safeMessage(),
+            )
+            return
+        }
+
+        if (!needsApproval) {
+            if (!claimDynamicResponse(event.requestId)) return
+            scope.launch { executeDynamicTool(event, tool, resolvedApproval = null) }
+            return
+        }
+
+        val approval = CodexAppServerApprovalEvent.DynamicToolRequest(event.requestId, request)
+        if (!registerApproval(
+                approval,
+                PendingApproval(
+                    ApprovalKind.DynamicTool,
+                    request.threadId,
+                    request.turnId,
+                    request.callId,
+                ),
+            )
+        ) {
+            respondDynamicToolFailure(event.requestId, "approval_unavailable", "Tool approval is no longer active")
+            return
+        }
+        if (shouldAutoApproveSafely(approval) && claimDynamicResponse(event.requestId)) {
+            scope.launch { executeDynamicTool(event, tool, resolvedApproval = ToolApprovalState.Auto) }
+            return
+        }
+
+        messageTimeline.dynamicToolApprovalRequested(request)
+        val progress = touchProgress(request.turnId, CodexTurnStage.WaitingForApproval)
+        _state.value = CodexConversationUiState.WaitingForApproval(
+            approval,
+            activity = activity(request.turnId),
+            telemetry = tokenUsage.value,
+            progress = progress,
+        )
+        turnPartsPublisher.request(request.turnId)
+    }
+
+    private fun claimDynamicResponse(requestId: JsonRpcId): Boolean = synchronized(approvalLock) {
+        approvalResponses.add(requestId)
+    }
+
+    private suspend fun executeDynamicTool(
+        event: CodexAppServerDynamicToolEvent.Call,
+        tool: Tool,
+        resolvedApproval: ToolApprovalState?,
+    ) {
+        val request = event.request
+        try {
+            val hardline = HardlineCommandGuard.checkTool(request.tool, request.arguments.toString())
+            if (hardline != null) {
+                session.dynamicToolApi.respond(
+                    event.requestId,
+                    listOf(dynamicToolError("blocked_by_safety_floor", hardline)),
+                    success = false,
+                )
+                resolveDynamicApproval(event, ToolApprovalState.Denied(hardline))
+                return
+            }
+            val turnStartedAt = ensureProgress(request.turnId).startedAtMs.takeIf { it > 0L } ?: nowMs()
+            val remainingMs = ToolRuntimeLimits.turnBudgetMs - (nowMs() - turnStartedAt).coerceAtLeast(0L)
+            val result = if (remainingMs <= 0L) {
+                null
+            } else {
+                withTimeoutOrNull(remainingMs) { tool.execute(request.arguments) }
+            }
+            val timedOut = result == null
+            session.dynamicToolApi.respond(
+                event.requestId,
+                if (timedOut) {
+                    listOf(
+                        dynamicToolError(
+                            "tool_cancelled_wall_clock",
+                            "Tool execution exceeded the ${ToolRuntimeLimits.turnBudgetMs / 1000}s turn budget",
+                        ),
+                    )
+                } else {
+                    result.toDynamicToolOutput()
+                },
+                success = !timedOut,
+            )
+            resolveDynamicApproval(
+                event,
+                if (timedOut) ToolApprovalState.Denied("Tool execution timed out")
+                else resolvedApproval ?: ToolApprovalState.Auto,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            try {
+                session.dynamicToolApi.respond(
+                    event.requestId,
+                    listOf(dynamicToolError("tool_execution_failed", failure.safeMessage())),
+                    success = false,
+                )
+                resolveDynamicApproval(event, ToolApprovalState.Denied(failure.safeMessage()))
+            } catch (responseFailure: Throwable) {
+                responseFailure.addSuppressed(failure)
+                failRuntime(responseFailure)
+            }
+        }
+    }
+
+    private suspend fun respondDynamicToolFailure(
+        requestId: JsonRpcId,
+        code: String,
+        detail: String,
+    ) {
+        if (!claimDynamicResponse(requestId)) return
+        session.dynamicToolApi.respond(
+            requestId,
+            listOf(dynamicToolError(code, detail)),
+            success = false,
+        )
+    }
+
+    private suspend fun resolveDynamicApproval(
+        event: CodexAppServerDynamicToolEvent.Call,
+        state: ToolApprovalState,
+    ) {
+        val request = event.request
+        synchronized(approvalLock) { pendingApprovals.remove(event.requestId) }
+        messageTimeline.approvalResolved(request.turnId, request.callId, state)
+        turnPartsPublisher.request(request.turnId)
+        val waiting = _state.value as? CodexConversationUiState.WaitingForApproval
+        if (waiting?.requestId == event.requestId) {
+            _state.value = CodexConversationUiState.Running(
+                threadId = session.threadId,
+                turnId = request.turnId,
+                activity = activity(request.turnId),
+                telemetry = tokenUsage.value,
+                progress = touchProgress(request.turnId, CodexTurnStage.Thinking),
+            )
+        }
+    }
+
+    private fun dynamicToolError(code: String, detail: String) =
+        CodexAppServerDynamicToolOutputContentItem.Text(
+            buildJsonObject {
+                put("error", code)
+                put("detail", detail)
+            }.toString(),
+        )
+
+    private fun List<UIMessagePart>.toDynamicToolOutput(): List<CodexAppServerDynamicToolOutputContentItem> =
+        flatMap { part ->
+            when (part) {
+                is UIMessagePart.Text -> listOf(CodexAppServerDynamicToolOutputContentItem.Text(part.text))
+                is UIMessagePart.Image -> if (part.url.startsWith("data:image/")) {
+                    listOf(CodexAppServerDynamicToolOutputContentItem.Image(part.url))
+                } else {
+                    listOf(CodexAppServerDynamicToolOutputContentItem.Text(
+                        buildJsonObject { put("imageUrl", part.url) }.toString(),
+                    ))
+                }
+                is UIMessagePart.Audio -> if (part.url.startsWith("data:audio/")) {
+                    listOf(CodexAppServerDynamicToolOutputContentItem.Audio(part.url))
+                } else {
+                    listOf(CodexAppServerDynamicToolOutputContentItem.Text(
+                        buildJsonObject { put("audioUrl", part.url) }.toString(),
+                    ))
+                }
+                is UIMessagePart.Video -> listOf(CodexAppServerDynamicToolOutputContentItem.Text(
+                    buildJsonObject { put("videoUrl", part.url) }.toString(),
+                ))
+                is UIMessagePart.Document -> listOf(CodexAppServerDynamicToolOutputContentItem.Text(
+                    buildJsonObject {
+                        put("documentUrl", part.url)
+                        put("fileName", part.fileName)
+                        put("mime", part.mime)
+                    }.toString(),
+                ))
+                is UIMessagePart.Reasoning -> listOf(CodexAppServerDynamicToolOutputContentItem.Text(part.reasoning))
+                else -> listOf(CodexAppServerDynamicToolOutputContentItem.Text(part.toString()))
+            }
+        }.ifEmpty { listOf(CodexAppServerDynamicToolOutputContentItem.Text("{}")) }
 
     /** Auto-answers requests suppressed by RikkaHub's existing Workspace/global policy. */
     private suspend fun shouldAutoApproveSafely(event: CodexAppServerApprovalEvent): Boolean = try {
@@ -1049,6 +1299,75 @@ class CodexChatRuntime internal constructor(
         }
     }
 
+    suspend fun respondDynamicToolApproval(
+        id: JsonRpcId,
+        approved: Boolean,
+        denialReason: String = "",
+    ): Boolean {
+        val waiting = claimApproval(id, ApprovalKind.DynamicTool) ?: return false
+        val event = waiting.event as? CodexAppServerApprovalEvent.DynamicToolRequest
+            ?: run {
+                releaseApprovalClaim(id, waiting)
+                return false
+            }
+        val call = CodexAppServerDynamicToolEvent.Call(id, event.request)
+        return try {
+            if (!approved) {
+                val reason = denialReason.ifBlank { "Tool execution denied by user" }
+                session.dynamicToolApi.respond(
+                    id,
+                    listOf(dynamicToolError("tool_execution_denied", reason)),
+                    success = false,
+                )
+                resolveDynamicApproval(call, ToolApprovalState.Denied(reason))
+            } else {
+                val tool = assistantToolProfile.tool(event.request.tool)
+                if (tool == null) {
+                    session.dynamicToolApi.respond(
+                        id,
+                        listOf(dynamicToolError("tool_not_available", "Tool is no longer enabled")),
+                        success = false,
+                    )
+                    resolveDynamicApproval(call, ToolApprovalState.Denied("Tool is no longer enabled"))
+                } else {
+                    executeDynamicTool(call, tool, ToolApprovalState.Approved)
+                }
+            }
+            true
+        } catch (cancelled: CancellationException) {
+            releaseApprovalClaim(id, waiting)
+            throw cancelled
+        } catch (failure: Throwable) {
+            releaseApprovalClaim(id, waiting)
+            false
+        }
+    }
+
+    suspend fun respondDynamicToolAnswer(id: JsonRpcId, answer: String): Boolean {
+        val waiting = claimApproval(id, ApprovalKind.DynamicTool) ?: return false
+        val event = waiting.event as? CodexAppServerApprovalEvent.DynamicToolRequest
+        if (event?.request?.tool != "ask_user") {
+            releaseApprovalClaim(id, waiting)
+            return false
+        }
+        val call = CodexAppServerDynamicToolEvent.Call(id, event.request)
+        return try {
+            session.dynamicToolApi.respond(
+                id,
+                listOf(CodexAppServerDynamicToolOutputContentItem.Text(answer)),
+                success = true,
+            )
+            resolveDynamicApproval(call, ToolApprovalState.Answered(answer))
+            true
+        } catch (cancelled: CancellationException) {
+            releaseApprovalClaim(id, waiting)
+            throw cancelled
+        } catch (_: Throwable) {
+            releaseApprovalClaim(id, waiting)
+            false
+        }
+    }
+
     fun requestStop() {
         if (!hasInterruptibleTurn()) return
         stopController.requestStop()
@@ -1103,6 +1422,7 @@ class CodexChatRuntime internal constructor(
         collector.cancel()
         failureCollector.cancel()
         approvalCollector.cancel()
+        dynamicToolCollector.cancel()
         accountCollector.cancel()
         accountSnapshotRefreshJob?.cancel()
         mcpCollector.cancel()
@@ -1287,6 +1607,7 @@ sealed interface CodexConversationUiState {
         val requestId: JsonRpcId? get() = when (event) {
             is CodexAppServerApprovalEvent.CommandExecutionRequest -> event.requestId
             is CodexAppServerApprovalEvent.FileChangeRequest -> event.requestId
+            is CodexAppServerApprovalEvent.DynamicToolRequest -> event.requestId
             else -> null
         }
     }
@@ -1306,6 +1627,7 @@ private fun CodexConversationUiState.withTelemetry(value: CodexTokenUsageTelemet
 private fun CodexAppServerApprovalEvent.requestIdOrNull(): JsonRpcId? = when (this) {
     is CodexAppServerApprovalEvent.CommandExecutionRequest -> requestId
     is CodexAppServerApprovalEvent.FileChangeRequest -> requestId
+    is CodexAppServerApprovalEvent.DynamicToolRequest -> requestId
     is CodexAppServerApprovalEvent.Resolved -> requestId
     is CodexAppServerApprovalEvent.MalformedRequest -> requestId
     is CodexAppServerApprovalEvent.MalformedNotification -> null
@@ -1314,6 +1636,7 @@ private fun CodexAppServerApprovalEvent.requestIdOrNull(): JsonRpcId? = when (th
 private fun CodexAppServerApprovalEvent.turnIdOrNull(): String? = when (this) {
     is CodexAppServerApprovalEvent.CommandExecutionRequest -> request.turnId
     is CodexAppServerApprovalEvent.FileChangeRequest -> request.turnId
+    is CodexAppServerApprovalEvent.DynamicToolRequest -> request.turnId
     else -> null
 }
 
@@ -1324,6 +1647,7 @@ private fun CodexAppServerItemSnapshot.runningStage(): CodexTurnStage = when (th
         -> CodexTurnStage.Writing
     is CodexAppServerItemSnapshot.CommandExecution -> CodexTurnStage.RunningCommand
     is CodexAppServerItemSnapshot.FileChange -> CodexTurnStage.ApplyingChanges
+    is CodexAppServerItemSnapshot.DynamicToolCall -> CodexTurnStage.RunningCommand
     else -> CodexTurnStage.Preparing
 }
 

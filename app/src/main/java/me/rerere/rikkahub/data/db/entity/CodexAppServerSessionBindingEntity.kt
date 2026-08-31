@@ -24,4 +24,6 @@ data class CodexAppServerSessionBindingEntity(
     @ColumnInfo("created_at_ms") val createdAtMs: Long,
     @ColumnInfo("updated_at_ms") val updatedAtMs: Long,
     @ColumnInfo("last_resumed_at_ms") val lastResumedAtMs: Long? = null,
+    /** Hash of thread/start.dynamicTools; null means no client-hosted tools were attached. */
+    @ColumnInfo("dynamic_tools_fingerprint") val dynamicToolsFingerprint: String? = null,
 )

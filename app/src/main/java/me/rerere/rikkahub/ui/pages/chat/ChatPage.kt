@@ -603,6 +603,9 @@ private fun ChatPageContent(
                 onToolAnswer = { toolCallId, answer ->
                     vm.handleToolAnswer(toolCallId, answer)
                 },
+                onCodexToolAnswer = { toolCallId, answer ->
+                    vm.respondCodexToolAnswer(toolCallId, answer)
+                },
                 onRerunTool = { toolCallId ->
                     vm.rerunTool(toolCallId)
                 },

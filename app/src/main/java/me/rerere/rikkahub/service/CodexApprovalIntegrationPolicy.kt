@@ -37,6 +37,7 @@ internal data class CodexApprovalIntegrationPolicy(
             is CodexAppServerApprovalEvent.FileChangeRequest ->
                 !needsApproval(CODEX_WRITE_FILE_TOOL_NAME) &&
                     !needsApproval(CODEX_EDIT_FILE_TOOL_NAME)
+            is CodexAppServerApprovalEvent.DynamicToolRequest -> false
             else -> false
         }
     }

@@ -146,6 +146,7 @@ fun ChatList(
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
     onCodexToolApproval: ((toolCallId: String, approved: Boolean, reason: String, scope: me.rerere.rikkahub.service.ChatService.ApprovalScope, toolName: String) -> Unit)? = null,
+    onCodexToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
 ) {
     AnimatedContent(
         targetState = previewMode,
@@ -191,6 +192,7 @@ fun ChatList(
                 onToggleFavorite = onToggleFavorite,
                 onConversationSystemPromptChange = onConversationSystemPromptChange,
                 onCodexToolApproval = onCodexToolApproval,
+                onCodexToolAnswer = onCodexToolAnswer,
             )
         }
     }
@@ -224,6 +226,7 @@ private fun ChatListNormal(
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
     onCodexToolApproval: ((toolCallId: String, approved: Boolean, reason: String, scope: me.rerere.rikkahub.service.ChatService.ApprovalScope, toolName: String) -> Unit)?,
+    onCodexToolAnswer: ((toolCallId: String, answer: String) -> Unit)?,
 ) {
     val scope = rememberCoroutineScope()
     val loadingState by rememberUpdatedState(loading)
@@ -393,7 +396,7 @@ private fun ChatListNormal(
                             onTranslate = onTranslate,
                             onClearTranslation = onClearTranslation,
                             onToolApproval = if (isCodexHarnessMessage) onCodexToolApproval else onToolApproval,
-                            onToolAnswer = if (isCodexHarnessMessage) null else onToolAnswer,
+                            onToolAnswer = if (isCodexHarnessMessage) onCodexToolAnswer else onToolAnswer,
                             onRerunTool = if (isCodexHarnessMessage) null else onRerunTool,
                             lastMessage = node.id == lastMessageNodeId,
                         )
