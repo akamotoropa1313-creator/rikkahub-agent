@@ -1,10 +1,8 @@
 package me.rerere.rikkahub.ui.components.codex
 
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -22,6 +20,7 @@ import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.service.threadHistoryRefreshSearchTerm
 import me.rerere.rikkahub.service.threadHistorySubmittedSearchTerm
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelTarget
+import me.rerere.rikkahub.data.codex.appserver.effectiveCodexHarnessModelTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexSkillMetadata
 import me.rerere.rikkahub.data.codex.appserver.CodexMcpAuthStatus
 import me.rerere.rikkahub.data.model.Assistant
@@ -33,6 +32,10 @@ import me.rerere.rikkahub.data.codex.appserver.CodexConfigRequirementsSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerReviewTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerItemSnapshot
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerUserInput
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerStaleBindingReason
+import me.rerere.rikkahub.data.codex.appserver.CODEX_SANDBOX_SERVER_DEFAULT
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSandboxMode
+import me.rerere.rikkahub.data.codex.appserver.effectiveCodexSandboxMode
 import me.rerere.rikkahub.service.CodexReviewUiState
 import me.rerere.rikkahub.service.CodexReviewAction
 
@@ -59,27 +62,62 @@ fun CodexControlSheet(
     onCancelSignIn: () -> Unit,
     onLogout: () -> Unit,
     onSetSkillEnabled: (CodexSkillMetadata, Boolean) -> Unit,
+    selectedSkillPaths: Set<String>,
     onUseSkill: (CodexSkillMetadata) -> Unit,
     onMcpSignIn: (String) -> Unit,
     operationBusy: Boolean,
     onReconnect: () -> Unit,
+    onResetSession: () -> Unit,
 ) {
     var pendingSafety by remember { mutableStateOf<Pair<String?, String?>?>(null) }
+    var confirmSessionReset by remember { mutableStateOf(false) }
     var reviewKind by remember { mutableStateOf("作業ツリー") }
     var branch by remember { mutableStateOf("") }
     var sha by remember { mutableStateOf("") }
     var title by remember { mutableStateOf("") }
     var instructions by remember { mutableStateOf("") }
     var historySearch by remember { mutableStateOf(capabilities.threadHistory.searchTerm) }
-    val usesChatGptCatalog = assistant.codexHarnessModelTarget !is CodexHarnessModelTarget.RikkaHubProvider
-    val selectedModel = if (usesChatGptCatalog) selectedCodexModel(assistant.codexModel, capabilities.models) else null
-    val serviceTierModel = if (usesChatGptCatalog) serviceTierCatalogModel(assistant.codexModel, capabilities.models) else null
+    val chatGptTarget = assistant.effectiveCodexHarnessModelTarget() as? CodexHarnessModelTarget.ChatGptAccount
+    val usesChatGptCatalog = chatGptTarget != null
+    val selectedModel = chatGptTarget?.let { reasoningEffortCatalogModel(it, capabilities.models) }
+    val serviceTierModel = chatGptTarget?.let { serviceTierCatalogModel(it.model, capabilities.models) }
     LazyColumn(
         modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { Text("Codex コントロールセンター", style = MaterialTheme.typography.headlineSmall) }
+        item {
+            Section("接続") {
+                Text(connectionLabel(connection, hasBinding))
+                if (codexReconnectEligible(connection, hasBinding, capabilities.connected, operationBusy)) {
+                    Button(
+                        onClick = onReconnect,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) { Text("Codexに再接続") }
+                }
+                if (codexResetEligible(connection, hasBinding, operationBusy)) {
+                    OutlinedButton(
+                        onClick = { confirmSessionReset = true },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) { Text("Codexセッションをリセット") }
+                }
+            }
+        }
+        item {
+            CodexAccountCard(
+                snapshot = capabilities.account,
+                loginPending = capabilities.pendingLoginId != null,
+                onSignIn = onSignIn,
+                onCancelSignIn = onCancelSignIn,
+                onRefresh = onRefreshAccount,
+                onLogout = onLogout,
+                enabled = capabilities.connected && !capabilities.accountLoading && !operationBusy,
+                submitting = capabilities.accountSubmitting,
+                statusMessage = capabilities.accountError ?: capabilities.accountStatus,
+                statusIsError = capabilities.accountError != null,
+            )
+        }
         item {
             Section("スレッド履歴") {
                 val history = capabilities.threadHistory
@@ -98,7 +136,7 @@ fun CodexControlSheet(
                         thread.turns.forEach { historyTurn ->
                             HorizontalDivider()
                             Text("ターン ${historyTurn.turn.id}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${historyTurn.turn.status.wireValue}${historyTurn.turn.durationMs?.let { " · ${it}ms" }.orEmpty()}")
+                            Text("${historyTurn.turn.status.wireValue}${historyTurn.turn.durationMs?.let { " · ${formatDuration(it)}" }.orEmpty()}")
                             historyTurn.turn.error?.let { Text(it.message, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis) }
                             historyTurn.items.forEach { item -> Text(historyItemText(item), maxLines = 5, overflow = TextOverflow.Ellipsis) }
                         }
@@ -143,7 +181,7 @@ fun CodexControlSheet(
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
                                 enabled = historyControlsEnabled,
                                 onClick = { onLoadThreadHistory(threadHistorySubmittedSearchTerm(historySearch), false) },
-                            ) { Text(if (historySearch.isBlank()) "検索をクリア" else "Search") }
+                            ) { Text(if (historySearch.isBlank()) "検索をクリア" else "検索") }
                         }
                     }
                     if (history.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -270,8 +308,15 @@ fun CodexControlSheet(
         item {
             Section("安全性と権限") {
                 Text("サンドボックス", style = MaterialTheme.typography.titleMedium)
-                Text("「サーバー設定」では上書きを送信しません。既存スレッドでは以前の上書きが残る場合があるため、完全にサーバー設定へ戻すにはリセットが必要です。")
-                listOf(null to "サーバー設定", "read-only" to "読み取り専用", "workspace-write" to "Workspace書き込み", "danger-full-access" to "フルアクセス").forEach { (value, label) ->
+                Text("選択したWorkspaceはCodexの作業領域です。既定では、端末全体を開放せずにWorkspace内へ書き込める設定を各ターンへ送信します。")
+                Text("コマンドの承認確認と書き込み範囲は別設定です。承認確認をオフにしても、読み取り専用ではファイルを作成できません。")
+                listOf(
+                    null to "Workspace書き込み（推奨）",
+                    "read-only" to "読み取り専用",
+                    "workspace-write" to "Workspace書き込み（固定）",
+                    CODEX_SANDBOX_SERVER_DEFAULT to "App Server設定",
+                    "danger-full-access" to "フルアクセス",
+                ).forEach { (value, label) ->
                     TextButton(onClick = {
                         val confirmation = codexSafetyConfirmation(assistant, sandbox = value)
                         if (confirmation == CodexSafetyConfirmation.NONE) onUpdateAssistant { it.copy(codexSandboxMode = value) }
@@ -280,15 +325,18 @@ fun CodexControlSheet(
                 }
                 Text(when (assistant.codexSandboxMode) {
                     "read-only" -> "Codexはプロジェクトファイルを読み取れますが、書き込みは制限されます。"
-                    "workspace-write" -> "CodexはWorkspaceサンドボックスで許可されたファイルを変更できます。"
+                    "workspace-write" -> "Codexは選択したRikkaHub Workspace（PRoot）を実行境界としてファイルを変更します。Android内でbubblewrapは重ねません。"
                     "danger-full-access" -> "App Serverから利用できる環境に対するCodexのサンドボックス制限を解除します。"
-                    else -> "明示的な上書きを選ばない場合はApp Serverの設定を使用します。"
+                    CODEX_SANDBOX_SERVER_DEFAULT -> "上書きを送信せずApp Serverの設定を使用します。以前の上書きを完全に解除するにはセッションのリセットが必要です。"
+                    null -> "Codexは次の送信から選択したRikkaHub Workspace（PRoot）内のファイルを作成・変更できます。Android内でbubblewrapは重ねず、端末全体へのフルアクセスにも切り替えません。"
+                    else -> "未対応の保存値はApp Serverへ送信しません。"
                 })
                 if (!codexSandboxKnown(assistant.codexSandboxMode)) Text("保存済みの未対応サンドボックス設定「${assistant.codexSandboxMode}」は保持しますが、App Serverには送信しません。", color = MaterialTheme.colorScheme.error)
                 managedSandboxWarning(assistant.codexSandboxMode, capabilities.requirementsLoaded, capabilities.requirements)?.let {
                     Text(it, color = MaterialTheme.colorScheme.error)
                 }
                 Text("承認", style = MaterialTheme.typography.titleMedium)
+                Text("確認画面の表示には、既存のWorkspace「ツール承認」設定と全体の自動承認設定が優先して適用されます。ここではCodex側がどの操作で承認を要求するかを指定します。")
                 listOf(null to "サーバー設定", "untrusted" to "未信頼", "on-request" to "要求時", "never" to "確認しない").forEach { (value, label) ->
                     TextButton(onClick = {
                         val confirmation = codexSafetyConfirmation(assistant, approval = value)
@@ -307,7 +355,7 @@ fun CodexControlSheet(
         }
         item {
             Section("モデルと動作") {
-                Text("モデル選択はアシスタント設定の「チャットモデル」から変更します。ここではApp Serverのモデルカタログと、選択したChatGPTモデル固有の動作設定だけを管理します。")
+                Text("モデルと推論強度はチャット入力欄から素早く変更できます。ここではApp Serverのモデルカタログと、選択したChatGPTモデル固有の詳細設定を管理します。")
                 Button(
                     onClick = onRefreshModels,
                     enabled = capabilities.connected && !capabilities.modelsLoading && !operationBusy,
@@ -319,13 +367,13 @@ fun CodexControlSheet(
                 if (!usesChatGptCatalog) {
                     Text("現在はRikkaHubプロバイダーのモデルを使用しています。Codex固有の推論強度・サービスティア・パーソナリティ設定は適用しません。")
                 } else {
-                    if (savedCodexModelMissing(assistant.codexModel, capabilities.models)) {
+                    if (savedCodexModelMissing(chatGptTarget?.model, capabilities.models)) {
                         Text(
-                            "保存済みのCodexモデル「${assistant.codexModel}」は利用できなくなっています。アシスタント設定のチャットモデルから別のモデルを選択してください。",
+                            "保存済みのCodexモデル「${chatGptTarget?.model}」は利用できなくなっています。アシスタント設定のチャットモデルから別のモデルを選択してください。",
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
-                    if (assistant.codexModel == null) {
+                    if (chatGptTarget?.model == null) {
                         Text("現在のChatGPTモデル設定: サーバー既定")
                     }
                 }
@@ -333,97 +381,91 @@ fun CodexControlSheet(
         }
         if (usesChatGptCatalog) {
             item {
-                Text("サービスティア", style = MaterialTheme.typography.titleMedium)
-                Text("「サーバー設定」ではティアの上書きを送信しません。既存スレッドではサーバー側のティアが残る場合があります。「既定」は次のターンで既定ティアを明示的に要求します。")
-                TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = null) } }) {
-                    Text((if (assistant.codexServiceTier == null) "✓ " else "") + "サーバー設定")
-                }
-                TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = "default") } }) {
-                    Text((if (assistant.codexServiceTier == "default") "✓ " else "") + "既定")
-                }
-                serviceTierModel?.let { tierModel ->
-                    codexServiceTierOptions(tierModel).forEach { tier ->
-                        TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = tier.id) } }) {
-                            Text((if (assistant.codexServiceTier == tier.id) "✓ " else "") + tier.name + " · " + tier.description)
+                Section("サービスティア") {
+                    Text("「サーバー設定」ではティアの上書きを送信しません。既存スレッドではサーバー側のティアが残る場合があります。「既定」は次のターンで既定ティアを明示的に要求します。")
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = null) } }) {
+                            Text((if (assistant.codexServiceTier == null) "✓ " else "") + "サーバー設定")
+                        }
+                        TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = "default") } }) {
+                            Text((if (assistant.codexServiceTier == "default") "✓ " else "") + "既定")
+                        }
+                        serviceTierModel?.let { tierModel ->
+                            codexServiceTierOptions(tierModel).forEach { tier ->
+                                TextButton(onClick = { onUpdateAssistant { it.copy(codexServiceTier = tier.id) } }) {
+                                    Text((if (assistant.codexServiceTier == tier.id) "✓ " else "") + tier.name + " · " + tier.description)
+                                }
+                            }
                         }
                     }
-                    tierModel.defaultServiceTier?.let { default ->
-                        val label = codexServiceTierOptions(tierModel).firstOrNull { it.id == default }?.name ?: default
+                    serviceTierModel?.defaultServiceTier?.let { default ->
+                        val label = codexServiceTierOptions(serviceTierModel).firstOrNull { it.id == default }?.name ?: default
                         Text("カタログ既定: $label")
                     }
-                }
-                val savedTier = assistant.codexServiceTier
-                if (savedTier != null && savedTier != "default") {
-                    when {
-                        serviceTierModel == null -> Text("現在のモデル一覧ではティア対応を確認できません")
-                        serviceTierModel.serviceTiers == null && serviceTierModel.additionalSpeedTiers == null ->
-                            Text("このApp Serverはティア対応を報告していません。保存済みのティア値はそのまま保持します")
-                        codexServiceTierOptions(serviceTierModel).none { it.id == savedTier } ->
-                            Text("選択したCodexモデルではこのティアを利用できません", color = MaterialTheme.colorScheme.error)
+                    val savedTier = assistant.codexServiceTier
+                    if (savedTier != null && savedTier != "default") {
+                        when {
+                            serviceTierModel == null -> Text("現在のモデル一覧ではティア対応を確認できません")
+                            serviceTierModel.serviceTiers == null && serviceTierModel.additionalSpeedTiers == null ->
+                                Text("このApp Serverはティア対応を報告していません。保存済みのティア値はそのまま保持します")
+                            codexServiceTierOptions(serviceTierModel).none { it.id == savedTier } ->
+                                Text("選択したCodexモデルではこのティアを利用できません", color = MaterialTheme.colorScheme.error)
+                        }
                     }
                 }
             }
             selectedModel?.let { selected ->
-                items(selected.supportedReasoningEfforts, key = { it.reasoningEffort }) { effort ->
-                    TextButton(onClick = { onUpdateAssistant { it.copy(codexReasoningEffort = effort.reasoningEffort) } }) {
-                        Text(
-                            (if (assistant.codexReasoningEffort == effort.reasoningEffort) "✓ " else "") +
-                                effort.reasoningEffort + " · " + effort.description,
-                        )
-                    }
-                }
                 item {
-                    Text("推論要約")
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        CodexReasoningSummaryPreference.entries.forEach { value ->
-                            TextButton(onClick = { onUpdateAssistant { it.copy(codexReasoningSummary = value) } }) {
-                                Text((if (assistant.codexReasoningSummary == value) "✓ " else "") + value.name.lowercase())
+                    Section("推論とパーソナリティ") {
+                        Text("推論強度", style = MaterialTheme.typography.titleMedium)
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            selected.supportedReasoningEfforts.forEach { effort ->
+                                TextButton(onClick = { onUpdateAssistant { it.copy(codexReasoningEffort = effort.reasoningEffort) } }) {
+                                    Text(
+                                        (if (assistant.codexReasoningEffort == effort.reasoningEffort) "✓ " else "") +
+                                            effort.reasoningEffort + " · " + effort.description,
+                                    )
+                                }
                             }
                         }
-                    }
-                    Text("パーソナリティ")
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        CodexPersonalityPreference.entries.forEach { value ->
-                            TextButton(
-                                enabled = selected.supportsPersonality,
-                                onClick = { onUpdateAssistant { it.copy(codexPersonality = value) } },
-                            ) {
-                                Text((if (assistant.codexPersonality == value) "✓ " else "") + value.name.lowercase())
+                        Text("推論要約", style = MaterialTheme.typography.titleMedium)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            CodexReasoningSummaryPreference.entries.forEach { value ->
+                                TextButton(onClick = { onUpdateAssistant { it.copy(codexReasoningSummary = value) } }) {
+                                    Text((if (assistant.codexReasoningSummary == value) "✓ " else "") + value.name.lowercase())
+                                }
                             }
                         }
-                    }
-                    if (!selected.supportsPersonality) {
-                        Text("このモデルはパーソナリティ対応を報告していません")
+                        Text("パーソナリティ", style = MaterialTheme.typography.titleMedium)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            CodexPersonalityPreference.entries.forEach { value ->
+                                TextButton(
+                                    enabled = selected.supportsPersonality,
+                                    onClick = { onUpdateAssistant { it.copy(codexPersonality = value) } },
+                                ) {
+                                    Text((if (assistant.codexPersonality == value) "✓ " else "") + value.name.lowercase())
+                                }
+                            }
+                        }
+                        if (!selected.supportsPersonality) {
+                            Text("このモデルはパーソナリティ対応を報告していません")
+                        }
                     }
                 }
             }
         }
         item {
-            Section("接続") {
-                Text(connectionLabel(connection, hasBinding))
-                if (codexReconnectEligible(connection, hasBinding, capabilities.connected, operationBusy)) {
-                    Button(onClick = onReconnect) { Text("Codexに再接続") }
-                }
-            }
-        }
-        item {
-            Section("アカウント") {
-                CodexAccountCard(
-                    snapshot = capabilities.account,
-                    loginPending = capabilities.pendingLoginId != null,
-                    onSignIn = onSignIn,
-                    onCancelSignIn = onCancelSignIn,
-                    onRefresh = onRefreshAccount,
-                    onLogout = onLogout,
-                    enabled = capabilities.connected && !capabilities.accountLoading && !operationBusy,
-                    submitting = capabilities.accountSubmitting,
-                    statusMessage = capabilities.accountError ?: capabilities.accountStatus,
-                )
-            }
-        }
-        item {
-            Section("Codexスキル") {
+            Section("Codex / RikkaHubスキル") {
                 Text("${capabilities.skillGroups.sumOf { it.skills.size }}件のスキル")
+                if (selectedSkillPaths.isNotEmpty()) {
+                    Text("${selectedSkillPaths.size}件を次の送信で使用")
+                }
                 Button(
                     onClick = onRefreshSkills,
                     enabled = capabilities.connected && !capabilities.skillsLoading && !operationBusy,
@@ -435,22 +477,45 @@ fun CodexControlSheet(
             item {
                 Text(group.cwd, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            items(group.skills, key = { it.path }) { skill ->
-                ListItem(
-                    headlineContent = { Text(skill.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    supportingContent = { Text(skill.shortDescription ?: skill.description, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                    trailingContent = {
-                        Row {
+            items(
+                items = group.skills.distinctBy { it.path },
+            ) { skill ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(skill.name, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            skill.shortDescription ?: skill.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
                             TextButton(
                                 onClick = { onSetSkillEnabled(skill, !skill.enabled) },
                                 enabled = capabilities.skillUpdatingPath == null && !operationBusy,
                             ) { Text(if (skill.enabled) "無効化" else "有効化") }
-                            TextButton(onClick = { onUseSkill(skill) }, enabled = skill.enabled && !operationBusy) { Text("使用") }
+                            TextButton(onClick = { onUseSkill(skill) }, enabled = skill.enabled && !operationBusy) {
+                                Text(if (skill.path in selectedSkillPaths) "選択解除" else "使用")
+                            }
                         }
-                    },
-                )
+                    }
+                }
             }
-            items(group.errors, key = { it.path }) { Text(it.message, color = MaterialTheme.colorScheme.error) }
+            items(items = group.errors) { error ->
+                Text(error.message, color = MaterialTheme.colorScheme.error)
+            }
         }
         item {
             Section("Codex MCP") {
@@ -467,7 +532,9 @@ fun CodexControlSheet(
                 capabilities.mcpError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
-        items(capabilities.mcpServers, key = { it.name }) { server ->
+        items(
+            items = capabilities.mcpServers.distinctBy { it.name },
+        ) { server ->
             ListItem(
                 headlineContent = { Text(server.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 supportingContent = { Text("${server.authStatus.wireValue} · ツール ${server.tools.size}件 · リソース ${server.resources.size}件") },
@@ -496,6 +563,22 @@ fun CodexControlSheet(
             dismissButton = { TextButton(onClick = { pendingSafety = null }) { Text("キャンセル") } },
         )
     }
+    if (confirmSessionReset) {
+        AlertDialog(
+            onDismissRequest = { confirmSessionReset = false },
+            title = { Text("Codexセッションをリセットしますか？") },
+            text = { Text("RikkaHubの会話履歴は残りますが、現在のCodexスレッドとの継続性は失われます。次回の送信時に新しいスレッドを作成します。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmSessionReset = false
+                    onResetSession()
+                }) { Text("リセット") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmSessionReset = false }) { Text("キャンセル") }
+            },
+        )
+    }
 }
 
 private fun CodexConversationUiState.telemetryOrNull(): CodexTokenUsageTelemetry? = when (this) {
@@ -522,6 +605,8 @@ private fun historyItemText(item: CodexAppServerItemSnapshot): String = when (it
     is CodexAppServerItemSnapshot.Reasoning -> "推論: ${(item.summary + item.content).joinToString("\n")}"
     is CodexAppServerItemSnapshot.CommandExecution -> "コマンド: ${item.command}${item.aggregatedOutput?.let { "\n$it" }.orEmpty()}"
     is CodexAppServerItemSnapshot.FileChange -> "ファイル変更: ${item.changes.size}件"
+    is CodexAppServerItemSnapshot.DynamicToolCall ->
+        "RikkaHubツール: ${item.tool} (${item.status})"
     is CodexAppServerItemSnapshot.EnteredReviewMode -> "レビューモード開始: ${item.review}"
     is CodexAppServerItemSnapshot.ExitedReviewMode -> "レビューモード終了: ${item.review}"
     is CodexAppServerItemSnapshot.Other -> "${item.type} アイテム"
@@ -540,9 +625,19 @@ private fun historyUserInputText(input: CodexAppServerUserInput): String = when 
 
 @Composable
 private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) =
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        content()
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            content()
+        }
     }
 
 private fun connectionLabel(state: CodexConversationUiState, bound: Boolean) = when (state) {
@@ -553,8 +648,19 @@ private fun connectionLabel(state: CodexConversationUiState, bound: Boolean) = w
     is CodexConversationUiState.Running, is CodexConversationUiState.WaitingForApproval -> "実行中"
     is CodexConversationUiState.Terminal -> "接続済み"
     is CodexConversationUiState.Failed -> "失敗: ${state.message}"
-    is CodexConversationUiState.StaleBinding -> "失敗: ${state.reason}"
+    is CodexConversationUiState.StaleBinding -> "要リセット: ${codexStaleBindingMessage(state.reason)}"
     is CodexConversationUiState.WorkspaceMismatch -> "失敗: Workspaceが一致しません"
+}
+
+internal fun codexStaleBindingMessage(reason: CodexAppServerStaleBindingReason): String = when (reason) {
+    CodexAppServerStaleBindingReason.MissingConversation ->
+        "元のRikkaHub会話が見つかりません。セッションをリセットしてください。"
+    CodexAppServerStaleBindingReason.MissingWorkspace ->
+        "紐付け先のWorkspaceが見つかりません。Workspaceを選び直してからリセットしてください。"
+    CodexAppServerStaleBindingReason.ThreadNotLoaded ->
+        "Codex側に保存済みスレッドがありません。セッションをリセットしてください。"
+    is CodexAppServerStaleBindingReason.HarnessRouteChanged ->
+        "選択したモデルの実行先が以前のスレッドと異なります。セッションをリセットしてください。"
 }
 
 @Composable
@@ -571,15 +677,16 @@ internal fun managedSandboxWarning(
     requirementsLoaded: Boolean,
     requirements: CodexConfigRequirementsSnapshot?,
 ): String? {
-    if (!requirementsLoaded || savedMode !in setOf("read-only", "workspace-write", "danger-full-access")) return null
+    if (!requirementsLoaded) return null
+    val effectiveMode = effectiveCodexSandboxMode(savedMode) ?: return null
     val allowed = requirements?.allowedSandboxModes ?: return null
-    if (allowed.any { it.wireValue == savedMode }) return null
-    val label = when (savedMode) {
-        "read-only" -> "読み取り専用"
-        "workspace-write" -> "Workspace書き込み"
-        else -> "フルアクセス"
+    if (allowed.any { effectiveMode.matchesServerValue(it.wireValue) }) return null
+    val label = when (effectiveMode) {
+        CodexAppServerSandboxMode.READ_ONLY -> "読み取り専用"
+        CodexAppServerSandboxMode.WORKSPACE_WRITE -> "Workspace書き込み"
+        CodexAppServerSandboxMode.DANGER_FULL_ACCESS -> "フルアクセス"
     }
-    return "管理ポリシーでは現在「$label」を許可していません。保存済みの設定は変更せず、App Server側のポリシーを優先します。"
+    return "管理ポリシーでは現在「$label」を許可していません。このままでは開始・実行に失敗する場合があるため、許可済みの設定を選択してください。"
 }
 
 internal fun codexReconnectEligible(
@@ -589,5 +696,14 @@ internal fun codexReconnectEligible(
     operationBusy: Boolean,
 ): Boolean = hasBinding && !runtimeConnected && !operationBusy && when (state) {
     CodexConversationUiState.Disconnected, is CodexConversationUiState.Failed -> true
+    else -> false
+}
+
+internal fun codexResetEligible(
+    state: CodexConversationUiState,
+    hasBinding: Boolean,
+    operationBusy: Boolean,
+): Boolean = hasBinding && !operationBusy && when (state) {
+    is CodexConversationUiState.StaleBinding, is CodexConversationUiState.WorkspaceMismatch -> true
     else -> false
 }

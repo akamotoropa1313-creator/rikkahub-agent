@@ -109,6 +109,27 @@ class SkillManager(
         return readCached(target)
     }
 
+    /**
+     * Reads the exact auto-load body declared by [skill]. Resolving from [SkillMetadata.skillDir]
+     * keeps skills whose frontmatter name differs from their directory name reachable, while the
+     * shared cache preserves the O(stat) hot path used by both normal RikkaHub and Codex turns.
+     */
+    fun readAutoLoadBody(skill: SkillMetadata): String? {
+        val relativePath = skill.autoLoadPath
+        val target = if (relativePath.isNullOrBlank()) {
+            skill.skillFile
+        } else {
+            SkillPaths.resolveSkillFile(skill.skillDir, relativePath) ?: return null
+        }
+        if (!target.exists()) return null
+        val content = readCached(target)
+        return if (relativePath.isNullOrBlank()) {
+            SkillFrontmatterParser.extractBody(content)
+        } else {
+            content
+        }
+    }
+
     // ---- mtime-aware in-memory cache for SKILL.md and auto-loaded sidecars ----
 
     private data class CachedFile(val lastModifiedMs: Long, val length: Long, val text: String)
@@ -552,4 +573,3 @@ data class SkillContent(
     val contentMd: String,
     val argsSchema: kotlinx.serialization.json.JsonObject? = null,
 )
-

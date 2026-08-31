@@ -21,6 +21,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -35,10 +38,9 @@ import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
-import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
-import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
 import me.rerere.rikkahub.data.codex.appserver.CodexRuntimeResolver
-import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
+import me.rerere.rikkahub.data.codex.appserver.codexHarnessModelChangeRequiresSessionReset
+import me.rerere.rikkahub.data.codex.appserver.effectiveCodexHarnessModelTarget
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Avatar
 import me.rerere.rikkahub.data.model.Conversation
@@ -52,6 +54,7 @@ import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.service.CodexReviewAction
 import me.rerere.rikkahub.service.CodexReviewServiceOwner
+import me.rerere.rikkahub.service.isRikkaHubCodexSkill
 import me.rerere.rikkahub.ui.hooks.writeStringPreference
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.rikkahub.utils.UiState
@@ -95,16 +98,21 @@ class ChatVM(
     val codexOperationBusy = chatService.getCodexOperationBusyFlow(_conversationId)
     private val _codexPrepareJob = MutableStateFlow<Job?>(null)
     val codexPrepareJob: StateFlow<Job?> = _codexPrepareJob
-    private val _selectedCodexSkill = MutableStateFlow<CodexSkillMetadata?>(null)
-    val selectedCodexSkill: StateFlow<CodexSkillMetadata?> = _selectedCodexSkill
-    fun selectCodexSkill(skill: CodexSkillMetadata?) { _selectedCodexSkill.value = skill }
+    private val _selectedCodexSkills = MutableStateFlow<List<CodexSkillMetadata>>(emptyList())
+    val selectedCodexSkills: StateFlow<List<CodexSkillMetadata>> = _selectedCodexSkills
+    fun toggleCodexSkill(skill: CodexSkillMetadata) {
+        _selectedCodexSkills.value = toggleCodexSkillSelection(_selectedCodexSkills.value, skill)
+    }
+    fun removeCodexSkill(path: String) {
+        _selectedCodexSkills.value = _selectedCodexSkills.value.filterNot { it.path == path }
+    }
     val codexEnabled: StateFlow<Boolean> = kotlinx.coroutines.flow.combine(conversation, settingsStore.settingsFlow) { conversation, settings ->
         (settings.getAssistantById(conversation.assistantId) ?: settings.getCurrentAssistant()).codexAppServerEnabled
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _hasCodexBinding = MutableStateFlow(false)
     val hasCodexBinding: StateFlow<Boolean> = _hasCodexBinding
-    fun resetCodexSession() { _selectedCodexSkill.value = null; viewModelScope.launch {
+    fun resetCodexSession() { _selectedCodexSkills.value = emptyList(); viewModelScope.launch {
         chatService.resetCodexSession(_conversationId)
         _hasCodexBinding.value = false
     } }
@@ -146,6 +154,10 @@ class ChatVM(
                 ensureCodexRuntimeReadyBeforeSession()
                 ensureCodexConversationPersistedBeforeSession()
                 chatService.prepareCodexSession(_conversationId)
+                // The connection bootstrap already selected and installed one provider account.
+                // Read that snapshot without advancing the repository's round-robin selector again.
+                runCatching { chatService.refreshCodexAccount(_conversationId, syncProvider = false) }
+                runCatching { chatService.refreshCodexSkills(_conversationId) }
             }
             _hasCodexBinding.value = chatService.hasCodexBinding(_conversationId)
         }
@@ -166,7 +178,7 @@ class ChatVM(
             }
             if (enabled) launchCodexPreparation() else {
                 cancelCodexSetup()
-                _selectedCodexSkill.value = null
+                _selectedCodexSkills.value = emptyList()
             }
         }
     }
@@ -186,19 +198,47 @@ class ChatVM(
 
     /** Apply only a Codex preference delta against the newest Assistant inside SettingsStore.update. */
     fun updateCodexPreferences(transform: (Assistant) -> Assistant) {
+        viewModelScope.launch { updateCodexPreferencesNow(transform) }
+    }
+
+    /**
+     * A persisted Codex thread cannot safely change between account and gateway model routes.
+     * Release that thread first, then persist the new target so the next send opens the right one.
+     */
+    fun updateCodexModelSelection(transform: (Assistant) -> Assistant) {
         viewModelScope.launch {
-            settingsStore.update { settings ->
-                val activeConversation = conversation.value
-                val latestAssistant = settings.getAssistantById(activeConversation.assistantId)
-                    ?: settings.getCurrentAssistant()
-                val updated = transform(latestAssistant)
-                check(updated.id == latestAssistant.id) { "Codex preference update cannot replace assistant identity" }
-                settings.copy(
-                    assistants = settings.assistants.map { assistant ->
-                        if (assistant.id == latestAssistant.id) updated else assistant
-                    },
-                )
+            val currentSettings = settingsStore.settingsFlow.first()
+            val activeConversation = conversation.value
+            val currentAssistant = currentSettings.getAssistantById(activeConversation.assistantId)
+                ?: currentSettings.getCurrentAssistant()
+            val requestedAssistant = transform(currentAssistant)
+            val requiresReset = codexHarnessModelChangeRequiresSessionReset(
+                currentAssistant.effectiveCodexHarnessModelTarget(),
+                requestedAssistant.effectiveCodexHarnessModelTarget(),
+            )
+            if (requiresReset && chatService.hasCodexBinding(_conversationId)) {
+                chatService.resetCodexSession(_conversationId)
+                _selectedCodexSkills.value = emptyList()
+                _hasCodexBinding.value = false
             }
+            updateCodexPreferencesNow(transform)
+        }
+    }
+
+    private suspend fun updateCodexPreferencesNow(transform: (Assistant) -> Assistant) {
+        settingsStore.update { settings ->
+            val activeConversation = conversation.value
+            val latestAssistant = settings.getAssistantById(activeConversation.assistantId)
+                ?: settings.getCurrentAssistant()
+            val updated = transform(latestAssistant)
+            check(updated.id == latestAssistant.id) {
+                "Codex preference update cannot replace assistant identity"
+            }
+            settings.copy(
+                assistants = settings.assistants.map { assistant ->
+                    if (assistant.id == latestAssistant.id) updated else assistant
+                },
+            )
         }
     }
 
@@ -206,16 +246,63 @@ class ChatVM(
     fun refreshCodexMcp() { viewModelScope.launch { runCatching { chatService.refreshCodexMcp(_conversationId) } } }
     fun reloadCodexMcp() { viewModelScope.launch { runCatching { chatService.reloadCodexMcp(_conversationId) } } }
     private val codexAuthLauncher = CodexAppServerAuthUrlLauncher { url -> context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-    fun setCodexSkillEnabled(skill: CodexSkillMetadata, enabled: Boolean) { viewModelScope.launch { runCatching { chatService.setCodexSkillEnabled(_conversationId, skill, enabled) } } }
-    fun beginCodexAccountLogin() { viewModelScope.launch { runCatching { chatService.beginCodexAccountLogin(_conversationId, codexAuthLauncher) } } }
+    fun setCodexSkillEnabled(skill: CodexSkillMetadata, enabled: Boolean) {
+        if (!enabled) removeCodexSkill(skill.path)
+        viewModelScope.launch {
+            runCatching {
+                if (isRikkaHubCodexSkill(skill)) {
+                    settingsStore.update { settings ->
+                        val activeConversation = conversation.value
+                        val latestAssistant = settings.getAssistantById(activeConversation.assistantId)
+                            ?: settings.getCurrentAssistant()
+                        val enabledSkills = if (enabled) {
+                            latestAssistant.enabledSkills + skill.name
+                        } else {
+                            latestAssistant.enabledSkills - skill.name
+                        }
+                        settings.copy(
+                            assistants = settings.assistants.map { assistant ->
+                                if (assistant.id == latestAssistant.id) {
+                                    assistant.copy(enabledSkills = enabledSkills)
+                                } else {
+                                    assistant
+                                }
+                            }
+                        )
+                    }
+                    // Re-resume the persistent thread with the new per-assistant session config.
+                    chatService.prepareCodexSession(_conversationId)
+                    chatService.refreshCodexSkills(_conversationId)
+                } else {
+                    chatService.setCodexSkillEnabled(_conversationId, skill, enabled)
+                }
+            }
+        }
+    }
+    fun beginCodexAccountLogin() { viewModelScope.launch { runCatching { chatService.beginCodexAccountLogin(_conversationId) } } }
     fun cancelCodexAccountLogin() { viewModelScope.launch { runCatching { chatService.cancelCodexAccountLogin(_conversationId) } } }
     fun logoutCodexAccount() { viewModelScope.launch { runCatching { chatService.logoutCodexAccount(_conversationId) } } }
     fun beginCodexMcpOAuth(name: String) { viewModelScope.launch { runCatching { chatService.beginCodexMcpOAuth(_conversationId, name, codexAuthLauncher) } } }
-    fun respondCodexCommandApproval(id: JsonRpcId, decision: CodexAppServerCommandApprovalDecision) {
-        viewModelScope.launch { chatService.respondCodexCommandApproval(_conversationId, id, decision) }
+    fun respondCodexToolApproval(
+        toolCallId: String,
+        approved: Boolean,
+        reason: String,
+        scope: ChatService.ApprovalScope,
+        toolName: String,
+    ) {
+        viewModelScope.launch {
+            chatService.respondCodexToolApproval(
+                _conversationId,
+                toolCallId,
+                approved,
+                reason,
+                scope,
+                toolName,
+            )
+        }
     }
-    fun respondCodexFileApproval(id: JsonRpcId, decision: CodexAppServerFileChangeApprovalDecision) {
-        viewModelScope.launch { chatService.respondCodexFileApproval(_conversationId, id, decision) }
+    fun respondCodexToolAnswer(toolCallId: String, answer: String) {
+        viewModelScope.launch { chatService.respondCodexToolAnswer(_conversationId, toolCallId, answer) }
     }
 
     val conversationJobs = chatService
@@ -234,7 +321,7 @@ class ChatVM(
                 if (enabled) launchCodexPreparation()
                 else {
                     cancelCodexSetup()
-                    _selectedCodexSkill.value = null
+                    _selectedCodexSkills.value = emptyList()
                 }
             }
         }
@@ -308,15 +395,29 @@ class ChatVM(
         }
     }
 
-    val updateState =
-        updateChecker.checkUpdate().stateIn(viewModelScope, SharingStarted.Eagerly, UiState.Loading)
+    // Update checker
+    val updateState = settingsStore.settingsFlow
+        .map { settings ->
+            !settings.init &&
+                settings.displaySetting.updateCheckDisabledUntilEpochMillis <= System.currentTimeMillis()
+        }
+        .distinctUntilChanged()
+        .flatMapLatest { enabled ->
+            if (enabled) updateChecker.checkUpdate() else flowOf(UiState.Loading)
+        }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
+            UiState.Loading,
+        )
 
     fun handleMessageSend(content: List<UIMessagePart>,answer: Boolean = true) {
-        val skill = _selectedCodexSkill.value
-        if (content.isEmptyInputMessage() && skill == null) return
-        if (skill != null && answer) {
-            val prompt = content.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
-            chatService.sendCodexSkillMessage(_conversationId, skill, prompt) { _selectedCodexSkill.value = null }
+        val skills = _selectedCodexSkills.value
+        if (content.isEmptyInputMessage() && skills.isEmpty()) return
+        if (skills.isNotEmpty() && answer) {
+            chatService.sendCodexSkillsMessage(_conversationId, skills, content) {
+                _selectedCodexSkills.value = emptyList()
+            }
         } else chatService.sendMessage(_conversationId, content, answer)
     }
 
@@ -342,9 +443,26 @@ class ChatVM(
         return chatService.forkConversationAtMessage(_conversationId, message.id)
     }
 
-    fun deleteMessage(message: UIMessage) {
+    fun deleteMessage(
+        message: UIMessage,
+        resetCodexSession: Boolean = false,
+    ) {
         viewModelScope.launch {
-            chatService.deleteMessage(_conversationId, message)
+            deleteChatMessageSafely(
+                resetCodexSession = resetCodexSession,
+                resetSession = { chatService.resetCodexSession(_conversationId) },
+                deleteMessage = { chatService.deleteMessage(_conversationId, message) },
+                onSessionReset = {
+                    _selectedCodexSkills.value = emptyList()
+                    _hasCodexBinding.value = false
+                },
+            ).onFailure { failure ->
+                chatService.addError(
+                    error = failure,
+                    conversationId = _conversationId,
+                    title = context.getString(R.string.error_title_operation),
+                )
+            }
         }
     }
 
@@ -387,6 +505,9 @@ class ChatVM(
     ) {
         chatService.handleToolApproval(_conversationId, toolCallId, approved = true, answer = answer)
     }
+
+    suspend fun rerunTool(toolCallId: String): me.rerere.rikkahub.service.ChatService.RerunToolResult =
+        chatService.rerunTool(_conversationId, toolCallId)
 
     fun stopGeneration() {
         viewModelScope.launch {

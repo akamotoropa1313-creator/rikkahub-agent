@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.components.codex
 
+import me.rerere.rikkahub.data.codex.appserver.CODEX_SANDBOX_SERVER_DEFAULT
 import me.rerere.rikkahub.data.model.Assistant
 
 internal enum class CodexSafetyConfirmation { NONE, FULL_ACCESS, NEVER, CRITICAL }
@@ -16,27 +17,30 @@ internal fun codexSafetyConfirmation(
     else -> CodexSafetyConfirmation.NONE
 }
 
-/**
- * Null means "omit the override", not "the effective bound-thread policy is known safe". Because
- * App Server turn overrides are sticky, keep a compact warning while either preference is at Server
- * setting; Reset/new-thread is the only Stage19 operation that can reliably clear an older sticky
- * override. This intentionally favors a conservative false-positive on fresh threads over hiding a
- * potentially still-effective Full access / Never policy.
- */
+/** Keep server-managed sticky settings visible without warning for the safe Workspace default. */
 internal fun codexSafetyIndicator(assistant: Assistant): String? {
     val explicit = listOfNotNull(
         "フルアクセス".takeIf { assistant.codexSandboxMode == "danger-full-access" },
         "承認確認なし".takeIf { assistant.codexApprovalPolicy == "never" },
     )
     if (explicit.isNotEmpty()) return explicit.joinToString(" · ")
-    if (assistant.codexSandboxMode == null || assistant.codexApprovalPolicy == null) {
-        return "サーバーの安全設定 · リセットすると固定された上書き設定を解除します"
+    val serverManaged = listOfNotNull(
+        "サンドボックス".takeIf { assistant.codexSandboxMode == CODEX_SANDBOX_SERVER_DEFAULT },
+        "承認".takeIf { assistant.codexApprovalPolicy == null },
+    )
+    if (serverManaged.isNotEmpty()) {
+        return serverManaged.joinToString("・") + "はApp Server設定 · 固定された上書きの解除にはリセットが必要です"
     }
     return null
 }
 
 internal fun codexSandboxKnown(value: String?) =
-    value == null || value in setOf("read-only", "workspace-write", "danger-full-access")
+    value == null || value in setOf(
+        CODEX_SANDBOX_SERVER_DEFAULT,
+        "read-only",
+        "workspace-write",
+        "danger-full-access",
+    )
 
 internal fun codexApprovalKnown(value: String?) =
     value == null || value in setOf("untrusted", "on-request", "never")

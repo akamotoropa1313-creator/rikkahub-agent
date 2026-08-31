@@ -12,7 +12,7 @@ class RootfsPatcher {
         if (!etcDir.isDirectory) return
 
         ensureRootfsDns(etcDir, options.nameservers)
-        ensureHosts(etcDir, options.hostname)
+        ensureHosts(etcDir, options.hostname, options.managedHostMappings)
         ensureHostname(etcDir, options.hostname)
         ensureLocale(etcDir, options.locale)
         ensureGroupNames(etcDir, options.groupIds.ifEmpty { currentSupplementaryGroupIds() })
@@ -75,38 +75,87 @@ class RootfsPatcher {
         )
     }
 
-    private fun ensureHosts(etcDir: File, hostname: String) {
+    private fun ensureHosts(
+        etcDir: File,
+        hostname: String,
+        managedHostMappings: Map<String, List<String>>?,
+    ) {
         val hosts = File(etcDir, "hosts")
         val lines = if (hosts.isFile) hosts.readLines() else emptyList()
-        val hasIpv4Localhost = lines.any { line ->
+        val updatedLines = if (managedHostMappings == null) {
+            lines.toMutableList()
+        } else {
+            removeManagedHostBlocks(lines).toMutableList()
+        }
+        val hasIpv4Localhost = updatedLines.any { line ->
             val normalized = line.substringBefore('#').trim().split(WHITESPACE_REGEX)
             normalized.firstOrNull() == "127.0.0.1" && "localhost" in normalized.drop(1)
         }
-        val hasIpv6Localhost = lines.any { line ->
+        val hasIpv6Localhost = updatedLines.any { line ->
             val normalized = line.substringBefore('#').trim().split(WHITESPACE_REGEX)
             normalized.firstOrNull() == "::1" && "localhost" in normalized.drop(1)
         }
-        if (hasIpv4Localhost && hasIpv6Localhost) return
+        if (hasIpv4Localhost && hasIpv6Localhost && managedHostMappings == null) return
 
-        hosts.parentFile?.mkdirs()
-        hosts.appendText(
-            buildString {
-                if (hosts.exists() && hosts.length() > 0 && !hosts.readText().endsWith('\n')) {
-                    appendLine()
-                }
-                if (!hasIpv4Localhost) {
-                    append("127.0.0.1 localhost")
-                    if (hostname.isNotBlank() && hostname != "localhost") {
-                        append(" ")
-                        append(hostname)
-                    }
-                    appendLine()
-                }
-                if (!hasIpv6Localhost) {
-                    appendLine("::1 localhost ip6-localhost ip6-loopback")
+        if (!hasIpv4Localhost) {
+            updatedLines += buildString {
+                append("127.0.0.1 localhost")
+                if (hostname.isNotBlank() && hostname != "localhost") {
+                    append(" ")
+                    append(hostname)
                 }
             }
-        )
+        }
+        if (!hasIpv6Localhost) {
+            updatedLines += "::1 localhost ip6-localhost ip6-loopback"
+        }
+
+        val normalizedMappings = managedHostMappings
+            ?.mapNotNull { (hostname, addresses) ->
+                val normalizedHostname = hostname
+                    .trim()
+                    .lowercase()
+                    .removeSuffix(".")
+                    .takeIf { HOSTNAME_REGEX.matches(it) }
+                    ?: return@mapNotNull null
+                val normalizedAddresses = addresses
+                    .map { it.trim().substringBefore('%') }
+                    .filter { NUMERIC_ADDRESS_REGEX.matches(it) }
+                    .distinct()
+                    .take(MAX_MANAGED_ADDRESSES_PER_HOST)
+                normalizedHostname.takeIf { normalizedAddresses.isNotEmpty() }
+                    ?.let { it to normalizedAddresses }
+            }
+            .orEmpty()
+        if (normalizedMappings.isNotEmpty()) {
+            if (updatedLines.isNotEmpty() && updatedLines.last().isNotBlank()) updatedLines += ""
+            updatedLines += MANAGED_HOSTS_BEGIN
+            normalizedMappings.forEach { (managedHostname, addresses) ->
+                addresses.forEach { address -> updatedLines += "$address $managedHostname" }
+            }
+            updatedLines += MANAGED_HOSTS_END
+        }
+
+        val updatedText = updatedLines.joinToString(separator = "\n", postfix = "\n")
+        if (hosts.isFile && hosts.readText() == updatedText) return
+        hosts.parentFile?.mkdirs()
+        hosts.writeText(updatedText)
+    }
+
+    private fun removeManagedHostBlocks(lines: List<String>): List<String> = buildList {
+        var index = 0
+        while (index < lines.size) {
+            if (lines[index].trim() == MANAGED_HOSTS_BEGIN) {
+                val endIndex = (index + 1 until lines.size)
+                    .firstOrNull { lines[it].trim() == MANAGED_HOSTS_END }
+                if (endIndex != null) {
+                    index = endIndex + 1
+                    continue
+                }
+            }
+            add(lines[index])
+            index++
+        }
     }
 
     private fun ensureHostname(etcDir: File, hostname: String) {
@@ -187,7 +236,12 @@ class RootfsPatcher {
         private const val MAX_DNS_SERVERS = 3
         private const val DEFAULT_HOSTNAME = "localhost"
         private const val GENERATED_DNS_HEADER = "# Generated by RikkaHub workspace."
+        private const val MANAGED_HOSTS_BEGIN = "# BEGIN RikkaHub managed network hosts"
+        private const val MANAGED_HOSTS_END = "# END RikkaHub managed network hosts"
+        private const val MAX_MANAGED_ADDRESSES_PER_HOST = 8
         private val WHITESPACE_REGEX = Regex("\\s+")
+        private val HOSTNAME_REGEX = Regex("[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?")
+        private val NUMERIC_ADDRESS_REGEX = Regex("[0-9A-Fa-f:.]+")
         private val LOCAL_RESOLVERS = setOf(
             "127.0.0.1",
             "127.0.0.53",
@@ -203,6 +257,8 @@ class RootfsPatcher {
 
 data class RootfsPatchOptions(
     val nameservers: List<String> = emptyList(),
+    /** null preserves the existing managed block; an empty map explicitly removes it. */
+    val managedHostMappings: Map<String, List<String>>? = null,
     val hostname: String = "localhost",
     val locale: String = "C.UTF-8",
     val groupIds: List<Long> = emptyList(),

@@ -1,15 +1,40 @@
 package me.rerere.rikkahub.service
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerModel
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSandboxMode
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSandboxPolicy
 import me.rerere.rikkahub.data.codex.appserver.CodexModelCatalogKnowledge
 import me.rerere.rikkahub.data.codex.appserver.CodexModelServiceTier
 import me.rerere.rikkahub.data.codex.appserver.CodexReasoningEffortOption
+import me.rerere.rikkahub.data.codex.appserver.effectiveCodexSandboxMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class CodexStage16ProtocolTypesTest {
+    @Test
+    fun `legacy missing preference keeps thread mode and uses managed PRoot on turns`() {
+        val effective = effectiveCodexSandboxMode(null)
+
+        assertEquals(
+            CodexAppServerSandboxMode.WORKSPACE_WRITE,
+            CodexAppServerThreadStartParams(sandbox = effective).sandbox,
+        )
+        assertEquals(
+            CodexAppServerSandboxPolicy.ExternalWorkspace,
+            CodexAppServerTurnStartParams(sandbox = effective).sandboxPolicy,
+        )
+    }
+
+    @Test
+    fun `new thread passes assistant skill config through the guarded factory`() {
+        val config = mapOf("skills" to JsonPrimitive("assistant-profile"))
+
+        assertEquals(config, CodexAppServerThreadStartParams(config = config).config)
+    }
+
     @Test
     fun `turn personality is omitted until selected model support is confirmed`() {
         CodexModelCatalogKnowledge.clearForTest()

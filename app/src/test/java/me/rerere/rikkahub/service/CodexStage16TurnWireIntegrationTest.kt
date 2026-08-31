@@ -15,6 +15,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexAppServerConnection
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerJsonRpc
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerModel
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerRequestDispatcher
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerSandboxMode
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnApi
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnInput
 import me.rerere.rikkahub.data.codex.appserver.CodexModelCatalogKnowledge
@@ -40,6 +41,7 @@ class CodexStage16TurnWireIntegrationTest {
                 effort = "focused-future",
                 summary = CodexAppServerReasoningSummary.DETAILED,
                 personality = CodexAppServerPersonality.valueOf("FRIENDLY"),
+                sandbox = CodexAppServerSandboxMode.WORKSPACE_WRITE,
             )
             val call = async {
                 f.api.startTurn("thread-1", listOf(CodexAppServerTurnInput.Text("hello")), params)
@@ -51,6 +53,9 @@ class CodexStage16TurnWireIntegrationTest {
             assertEquals("focused-future", (p["effort"] as JsonPrimitive).content)
             assertEquals("detailed", (p["summary"] as JsonPrimitive).content)
             assertEquals("friendly", (p["personality"] as JsonPrimitive).content)
+            val sandbox = p["sandboxPolicy"]!!.jsonObject
+            assertEquals("externalSandbox", (sandbox["type"] as JsonPrimitive).content)
+            assertEquals("restricted", (sandbox["networkAccess"] as JsonPrimitive).content)
             val input = p["input"] as JsonArray
             assertEquals(1, input.size)
             assertEquals("text", (input[0].jsonObject["type"] as JsonPrimitive).content)

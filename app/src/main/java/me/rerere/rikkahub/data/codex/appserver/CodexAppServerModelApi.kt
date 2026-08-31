@@ -70,7 +70,10 @@ class CodexAppServerModelApi(private val connection: CodexAppServerConnection) {
             models += page.data.filterNot { it.hidden }
             val next = page.nextCursor
             if (next == null) {
-                val complete = models.toList()
+                // A changing catalog can overlap adjacent cursor pages. Keep the first occurrence
+                // so Compose callers never receive duplicate stable keys and server order remains
+                // deterministic.
+                val complete = models.distinctBy { it.id }
                 CodexModelCatalogKnowledge.replace(complete)
                 return complete
             }

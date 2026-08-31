@@ -10,6 +10,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.booleanOrNull
 
 sealed interface CodexAppServerCommandExecutionStatus { data object InProgress : CodexAppServerCommandExecutionStatus; data object Completed : CodexAppServerCommandExecutionStatus; data object Failed : CodexAppServerCommandExecutionStatus; data object Declined : CodexAppServerCommandExecutionStatus; data class Unknown(val rawValue: String) : CodexAppServerCommandExecutionStatus }
 sealed interface CodexAppServerCommandExecutionSource { data object Agent : CodexAppServerCommandExecutionSource; data object UserShell : CodexAppServerCommandExecutionSource; data object UnifiedExecStartup : CodexAppServerCommandExecutionSource; data object UnifiedExecInteraction : CodexAppServerCommandExecutionSource; data class Unknown(val rawValue: String) : CodexAppServerCommandExecutionSource }
@@ -21,6 +22,16 @@ sealed interface CodexAppServerCommandAction { val raw: JsonObject
     data class Other(val type: String, override val raw: JsonObject) : CodexAppServerCommandAction
 }
 sealed interface CodexAppServerPatchApplyStatus { data object InProgress : CodexAppServerPatchApplyStatus; data object Completed : CodexAppServerPatchApplyStatus; data object Failed : CodexAppServerPatchApplyStatus; data object Declined : CodexAppServerPatchApplyStatus; data class Unknown(val rawValue: String) : CodexAppServerPatchApplyStatus }
+
+internal const val CODEX_FILE_CHANGE_STATUS_METADATA_KEY = "codexFileChangeStatus"
+
+internal fun CodexAppServerPatchApplyStatus.metadataValue(): String = when (this) {
+    CodexAppServerPatchApplyStatus.InProgress -> "inProgress"
+    CodexAppServerPatchApplyStatus.Completed -> "completed"
+    CodexAppServerPatchApplyStatus.Failed -> "failed"
+    CodexAppServerPatchApplyStatus.Declined -> "declined"
+    is CodexAppServerPatchApplyStatus.Unknown -> "unknown:$rawValue"
+}
 sealed interface CodexAppServerPatchChangeKind { val raw: JsonObject; data class Add(override val raw: JsonObject) : CodexAppServerPatchChangeKind; data class Delete(override val raw: JsonObject) : CodexAppServerPatchChangeKind; data class Update(val movePath: String?, override val raw: JsonObject) : CodexAppServerPatchChangeKind; data class Other(val type: String, override val raw: JsonObject) : CodexAppServerPatchChangeKind }
 data class CodexAppServerFileUpdateChange(val path: String, val kind: CodexAppServerPatchChangeKind, val diff: String, val raw: JsonObject)
 
@@ -65,6 +76,17 @@ sealed interface CodexAppServerItemSnapshot {
 
     data class CommandExecution(override val id: String, val command: String, val cwd: String, val processId: String?, val source: CodexAppServerCommandExecutionSource, val status: CodexAppServerCommandExecutionStatus, val commandActions: List<CodexAppServerCommandAction>, val aggregatedOutput: String?, val exitCode: Int?, val durationMs: Long?, val pluginId: String?, val scriptPath: String?, override val raw: JsonObject) : CodexAppServerItemSnapshot { override val type = "commandExecution" }
     data class FileChange(override val id: String, val changes: List<CodexAppServerFileUpdateChange>, val status: CodexAppServerPatchApplyStatus, override val raw: JsonObject) : CodexAppServerItemSnapshot { override val type = "fileChange" }
+    data class DynamicToolCall(
+        override val id: String,
+        val namespace: String?,
+        val tool: String,
+        val arguments: JsonElement,
+        val status: String,
+        val contentItems: List<CodexAppServerDynamicToolOutputContentItem>?,
+        val success: Boolean?,
+        val durationMs: Long?,
+        override val raw: JsonObject,
+    ) : CodexAppServerItemSnapshot { override val type = "dynamicToolCall" }
     data class EnteredReviewMode(override val id: String, val review: String, override val raw: JsonObject) : CodexAppServerItemSnapshot { override val type = "enteredReviewMode" }
     data class ExitedReviewMode(override val id: String, val review: String, override val raw: JsonObject) : CodexAppServerItemSnapshot { override val type = "exitedReviewMode" }
 
@@ -150,6 +172,17 @@ internal fun decodeItemSnapshot(raw: JsonObject): CodexAppServerItemSnapshot {
         "reasoning" -> CodexAppServerItemSnapshot.Reasoning(id, raw.stringListOrEmpty("summary"), raw.stringListOrEmpty("content"), raw)
         "commandExecution" -> decodeCommandExecution(id, raw)
         "fileChange" -> CodexAppServerItemSnapshot.FileChange(id, decodeChanges(raw["changes"]), decodePatchStatus(raw.requiredString("item.status", "status")), raw)
+        "dynamicToolCall" -> CodexAppServerItemSnapshot.DynamicToolCall(
+            id = id,
+            namespace = raw.optionalString("namespace"),
+            tool = raw.requiredString("item.tool", "tool"),
+            arguments = raw["arguments"] ?: malformed("item.arguments is required"),
+            status = raw.requiredString("item.status", "status"),
+            contentItems = decodeCodexDynamicToolOutputContentItems(raw["contentItems"]),
+            success = raw.optionalBoolean("success"),
+            durationMs = raw.optionalLong("durationMs"),
+            raw = raw,
+        )
         "enteredReviewMode" -> CodexAppServerItemSnapshot.EnteredReviewMode(id, raw.requiredString("item.review", "review"), raw)
         "exitedReviewMode" -> CodexAppServerItemSnapshot.ExitedReviewMode(id, raw.requiredString("item.review", "review"), raw)
         else -> CodexAppServerItemSnapshot.Other(id, type, raw)
@@ -213,6 +246,7 @@ private fun JsonObject.requiredNullableString(label:String,key:String):String? {
 private fun JsonObject.optionalString(key:String):String? { val e=this[key]?:return null; if(e === JsonNull) return null; return (e as? JsonPrimitive)?.takeIf{it.isString}?.contentOrNull ?: malformed("$key must be a string or null") }
 private fun JsonObject.optionalLong(key:String):Long? { val e=this[key]?:return null; if(e === JsonNull) return null; return (e as? JsonPrimitive)?.takeUnless{it.isString}?.longOrNull ?: malformed("$key must be an integer or null") }
 private fun JsonObject.optionalInt(key:String):Int? { val e=this[key]?:return null; if(e === JsonNull) return null; return (e as? JsonPrimitive)?.takeUnless{it.isString}?.intOrNull ?: malformed("$key must be an i32 integer or null") }
+private fun JsonObject.optionalBoolean(key:String):Boolean? { val e=this[key]?:return null; if(e === JsonNull)return null; return (e as? JsonPrimitive)?.takeUnless{it.isString}?.booleanOrNull ?: malformed("$key must be a boolean or null") }
 
 private fun JsonObject.stringListOrEmpty(key: String): List<String> {
     val value = this[key] ?: return emptyList()

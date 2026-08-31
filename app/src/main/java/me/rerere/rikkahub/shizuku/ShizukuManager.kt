@@ -93,8 +93,8 @@ object ShizukuManager {
      * [Shizuku.OnRequestPermissionResultListener], not an Activity callback: callers must
      * register one (see [addRequestPermissionResultListener]) before calling this.
      *
-     * Only ever called from an explicit tap on the Settings -> Shizuku screen, never at app
-     * start or on first chat.
+     * Called from an explicit tap on the Settings -> Shizuku screen, and from the assistant's
+     * Shizuku local-tool toggle when it's switched on, never at app start or on first chat.
      */
     fun requestPermission() {
         if (!isBinderAlive()) return
@@ -204,55 +204,92 @@ object ShizukuManager {
             deferred = bindWaiter!!
         }
         if (needBind) startBind(context, deferred)
-        return withTimeoutOrNull(BIND_TIMEOUT_MS) { deferred.await() }
+        val bound = withTimeoutOrNull(BIND_TIMEOUT_MS) { deferred.await() }
+        if (bound == null && !deferred.isCompleted) {
+            // A bind that never calls back must not poison every later retry with the same
+            // permanently pending waiter. Generation checks in the callbacks keep a late result
+            // from replacing a newer binding.
+            resetBinding(expectedWaiter = deferred)
+        }
+        return bound
     }
 
-    private fun startBind(context: Context, deferred: CompletableDeferred<IShizukuUserService?>) {
-        val conn = object : ServiceConnection {
+    private suspend fun startBind(
+        context: Context,
+        deferred: CompletableDeferred<IShizukuUserService?>,
+    ) {
+        lateinit var conn: ServiceConnection
+        conn = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                 val api = if (binder != null && binder.pingBinder()) {
                     IShizukuUserService.Stub.asInterface(binder)
                 } else null
-                runCatching {
+                val accepted = runCatching {
                     runBlocking {
                         bindLock.withLock {
+                            if (bindWaiter !== deferred || connection !== conn) return@withLock false
                             service = api
                             bindWaiter = null
+                            if (api == null) connection = null
+                            true
                         }
                     }
+                }.getOrDefault(false)
+                if (accepted) deferred.complete(api)
+                if (!accepted || api == null) {
+                    cachedArgs?.let { args ->
+                        runCatching { Shizuku.unbindUserService(args, conn, true) }
+                    }
                 }
-                if (!deferred.isCompleted) deferred.complete(api)
             }
 
             override fun onServiceDisconnected(name: ComponentName?) {
                 Log.w(TAG, "shizuku user service disconnected")
-                runCatching { runBlocking { resetBinding() } }
+                runCatching { runBlocking { resetBinding(expectedConnection = conn) } }
             }
 
             override fun onBindingDied(name: ComponentName?) {
                 Log.w(TAG, "shizuku user service binding died")
-                runCatching { runBlocking { resetBinding() } }
-                if (!deferred.isCompleted) deferred.complete(null)
+                runCatching { runBlocking { resetBinding(expectedConnection = conn) } }
             }
         }
+
+        val (registered, existingService) = bindLock.withLock {
+            if (bindWaiter !== deferred || service != null) false to service
+            else {
+                connection = conn
+                true to null
+            }
+        }
+        if (!registered) {
+            deferred.complete(existingService)
+            return
+        }
+
         val ok = runCatching {
             Shizuku.bindUserService(argsFor(context), conn)
             true
         }.getOrDefault(false)
-        if (ok) {
-            connection = conn
-        } else {
-            runCatching { runBlocking { bindLock.withLock { bindWaiter = null } } }
-            if (!deferred.isCompleted) deferred.complete(null)
+        if (!ok) {
+            resetBinding(expectedConnection = conn, expectedWaiter = deferred)
         }
     }
 
-    private suspend fun resetBinding() = bindLock.withLock {
-        val conn = connection
-        val args = cachedArgs
-        service = null
-        connection = null
-        bindWaiter = null
+    private suspend fun resetBinding(
+        expectedConnection: ServiceConnection? = null,
+        expectedWaiter: CompletableDeferred<IShizukuUserService?>? = null,
+    ) {
+        val cleanup = bindLock.withLock {
+            if (expectedConnection != null && connection !== expectedConnection) return@withLock null
+            if (expectedWaiter != null && bindWaiter !== expectedWaiter) return@withLock null
+            Triple(connection, cachedArgs, bindWaiter).also {
+                service = null
+                connection = null
+                bindWaiter = null
+            }
+        } ?: return
+        val (conn, args, waiter) = cleanup
+        waiter?.complete(null)
         if (conn != null && args != null) {
             runCatching { Shizuku.unbindUserService(args, conn, true) }
         }

@@ -10,18 +10,39 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CodexAppServerSafetyPolicyTest {
-    @Test fun stablePreferencesValidateWithoutUnsafeFallbacks() {
+    @Test fun pinnedRuntimeDialectAndPreferencesValidateWithoutUnsafeFallbacks() {
+        assertEquals("0.146.0", CodexRuntimeManager.VALIDATED_VERSION)
         assertEquals(CodexAppServerSandboxMode.READ_ONLY, CodexAppServerSandboxMode.fromPreference("read-only"))
         assertEquals(CodexAppServerSandboxMode.WORKSPACE_WRITE, CodexAppServerSandboxMode.fromPreference("workspace-write"))
         assertEquals(CodexAppServerSandboxMode.DANGER_FULL_ACCESS, CodexAppServerSandboxMode.fromPreference("danger-full-access"))
+        assertEquals("read-only", CodexAppServerSandboxMode.READ_ONLY.threadWireValue)
+        assertEquals("workspace-write", CodexAppServerSandboxMode.WORKSPACE_WRITE.threadWireValue)
+        assertEquals("danger-full-access", CodexAppServerSandboxMode.DANGER_FULL_ACCESS.threadWireValue)
+        assertEquals("readOnly", CodexAppServerSandboxMode.READ_ONLY.turnPolicyType)
+        assertEquals("workspaceWrite", CodexAppServerSandboxMode.WORKSPACE_WRITE.turnPolicyType)
+        assertEquals("dangerFullAccess", CodexAppServerSandboxMode.DANGER_FULL_ACCESS.turnPolicyType)
         assertNull(CodexAppServerSandboxMode.fromPreference(null))
         assertNull(CodexAppServerSandboxMode.fromPreference("future"))
         assertEquals(CodexAppServerApprovalPolicy.UNTRUSTED, CodexAppServerApprovalPolicy.fromPreference("untrusted"))
         assertEquals(CodexAppServerApprovalPolicy.ON_REQUEST, CodexAppServerApprovalPolicy.fromPreference("on-request"))
         assertEquals(CodexAppServerApprovalPolicy.NEVER, CodexAppServerApprovalPolicy.fromPreference("never"))
+        assertEquals("untrusted", CodexAppServerApprovalPolicy.UNTRUSTED.runtimeWireValue)
+        assertEquals("on-request", CodexAppServerApprovalPolicy.ON_REQUEST.runtimeWireValue)
+        assertTrue(CodexDiagnosticSandboxMode("workspaceWrite").known)
+        assertTrue(CodexDiagnosticSandboxMode("workspace-write").known)
+        assertFalse(CodexDiagnosticSandboxMode("future").known)
         listOf(null, "future", "on-failure", "unlessTrusted", "granular").forEach {
             assertNull(CodexAppServerApprovalPolicy.fromPreference(it))
         }
+    }
+
+    @Test fun missingPreferenceDefaultsToBoundWorkspaceWriteWithoutGrantingFullAccess() {
+        assertEquals(CodexAppServerSandboxMode.WORKSPACE_WRITE, effectiveCodexSandboxMode(null))
+        assertEquals(CodexAppServerSandboxMode.READ_ONLY, effectiveCodexSandboxMode("read-only"))
+        assertEquals(CodexAppServerSandboxMode.WORKSPACE_WRITE, effectiveCodexSandboxMode("workspace-write"))
+        assertEquals(CodexAppServerSandboxMode.DANGER_FULL_ACCESS, effectiveCodexSandboxMode("danger-full-access"))
+        assertNull(effectiveCodexSandboxMode(CODEX_SANDBOX_SERVER_DEFAULT))
+        assertNull(effectiveCodexSandboxMode("future"))
     }
 
     @Test fun publicPresetPoliciesHaveExactStableShape() {
@@ -44,5 +65,21 @@ class CodexAppServerSafetyPolicyTest {
         listOf("networkAccess", "excludeTmpdirEnvVar", "excludeSlashTmp").forEach {
             assertFalse(workspace[it]!!.jsonPrimitive.boolean)
         }
+    }
+
+    @Test fun managedProotWorkspacePolicyUsesStableExternalSandboxWithoutFullAccess() {
+        val workspace = CodexAppServerSandboxMode.WORKSPACE_WRITE.toManagedProotTurnPolicy().toJson()
+        assertEquals(setOf("type", "networkAccess"), workspace.keys)
+        assertEquals("externalSandbox", workspace["type"]!!.jsonPrimitive.content)
+        assertEquals("restricted", workspace["networkAccess"]!!.jsonPrimitive.content)
+
+        assertEquals(
+            CodexAppServerSandboxPolicy.ReadOnly,
+            CodexAppServerSandboxMode.READ_ONLY.toManagedProotTurnPolicy(),
+        )
+        assertEquals(
+            CodexAppServerSandboxPolicy.DangerFullAccess,
+            CodexAppServerSandboxMode.DANGER_FULL_ACCESS.toManagedProotTurnPolicy(),
+        )
     }
 }

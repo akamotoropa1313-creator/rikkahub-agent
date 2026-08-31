@@ -9,6 +9,7 @@ import me.rerere.hugeicons.stroke.ArrowUpDouble
 import me.rerere.hugeicons.stroke.CursorPointer01
 import me.rerere.hugeicons.stroke.Search01
 import me.rerere.hugeicons.stroke.Cancel01
+import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
@@ -70,7 +71,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalScrollCaptureInProgress
 import androidx.compose.ui.res.stringResource
@@ -93,19 +93,15 @@ import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
+import me.rerere.rikkahub.data.harness.AgentHarnessIds
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.CodexConversationUiState
-import me.rerere.rikkahub.service.CodexConversationActivity
+import me.rerere.rikkahub.service.CodexTurnStage
+import me.rerere.rikkahub.ui.components.codex.codexStaleBindingMessage
 import me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent
-import me.rerere.rikkahub.data.codex.appserver.CodexAppServerCommandApprovalDecision
-import me.rerere.rikkahub.data.codex.appserver.CodexAppServerFileChangeApprovalDecision
-import me.rerere.rikkahub.data.codex.appserver.JsonRpcId
-import me.rerere.rikkahub.ui.components.codex.CodexCommandApprovalCard
-import me.rerere.rikkahub.ui.components.codex.CodexFileChangeApprovalCard
-import me.rerere.rikkahub.ui.components.codex.CodexCommandExecutionCard
-import me.rerere.rikkahub.ui.components.codex.CodexFileChangeCard
-import me.rerere.rikkahub.ui.components.codex.CodexTurnDiffCard
+import me.rerere.rikkahub.data.codex.appserver.CodexAppServerTurnStatus
 import me.rerere.rikkahub.ui.components.codex.codexTurnErrorPresentation
+import me.rerere.rikkahub.ui.components.codex.formatElapsedDuration
 import me.rerere.rikkahub.ui.components.message.ChatMessage
 import me.rerere.rikkahub.ui.components.ui.ErrorCardsDisplay
 import me.rerere.rikkahub.ui.components.ui.ListSelectableItem
@@ -146,10 +142,11 @@ fun ChatList(
     onJumpToMessage: (Int) -> Unit = {},
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String, scope: me.rerere.rikkahub.service.ChatService.ApprovalScope, toolName: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
+    onRerunTool: (suspend (toolCallId: String) -> me.rerere.rikkahub.service.ChatService.RerunToolResult)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
-    onCodexCommandApproval: (JsonRpcId, CodexAppServerCommandApprovalDecision) -> Unit = { _, _ -> },
-    onCodexFileApproval: (JsonRpcId, CodexAppServerFileChangeApprovalDecision) -> Unit = { _, _ -> },
+    onCodexToolApproval: ((toolCallId: String, approved: Boolean, reason: String, scope: me.rerere.rikkahub.service.ChatService.ApprovalScope, toolName: String) -> Unit)? = null,
+    onCodexToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
 ) {
     AnimatedContent(
         targetState = previewMode,
@@ -191,10 +188,11 @@ fun ChatList(
                 animatedVisibilityScope = this@AnimatedContent,
                 onToolApproval = onToolApproval,
                 onToolAnswer = onToolAnswer,
+                onRerunTool = onRerunTool,
                 onToggleFavorite = onToggleFavorite,
                 onConversationSystemPromptChange = onConversationSystemPromptChange,
-                onCodexCommandApproval = onCodexCommandApproval,
-                onCodexFileApproval = onCodexFileApproval,
+                onCodexToolApproval = onCodexToolApproval,
+                onCodexToolAnswer = onCodexToolAnswer,
             )
         }
     }
@@ -224,17 +222,18 @@ private fun ChatListNormal(
     animatedVisibilityScope: AnimatedVisibilityScope,
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String, scope: me.rerere.rikkahub.service.ChatService.ApprovalScope, toolName: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
+    onRerunTool: (suspend (toolCallId: String) -> me.rerere.rikkahub.service.ChatService.RerunToolResult)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
-    onCodexCommandApproval: (JsonRpcId, CodexAppServerCommandApprovalDecision) -> Unit,
-    onCodexFileApproval: (JsonRpcId, CodexAppServerFileChangeApprovalDecision) -> Unit,
+    onCodexToolApproval: ((toolCallId: String, approved: Boolean, reason: String, scope: me.rerere.rikkahub.service.ChatService.ApprovalScope, toolName: String) -> Unit)?,
+    onCodexToolAnswer: ((toolCallId: String, answer: String) -> Unit)?,
 ) {
     val scope = rememberCoroutineScope()
     val loadingState by rememberUpdatedState(loading)
     var isRecentScroll by remember { mutableStateOf(false) }
     val conversationUpdated by rememberUpdatedState(conversation)
     val density = LocalDensity.current
-    val activity = LocalContext.current as? me.rerere.rikkahub.RouteActivity
+    val activity = LocalActivity.current as? me.rerere.rikkahub.RouteActivity
 
     DisposableEffect(Unit) {
         val listener: (Boolean) -> Boolean = { isVolumeUp ->
@@ -344,6 +343,7 @@ private fun ChatListNormal(
                 key = { it.id },
             ) { group ->
                 val node = group.terminalNode
+                val isCodexHarnessMessage = group.displayMessage.harness?.id == AgentHarnessIds.CODEX
                 Column {
                     ListSelectableItem(
                         key = group.id,
@@ -363,6 +363,11 @@ private fun ChatListNormal(
                             model = node.currentMessage.modelId?.let(modelById::get),
                             assistant = assistant,
                             loading = loading && node.id == lastMessageNodeId,
+                            // Un-narrowed: whether ANY generation is running in this
+                            // conversation, not just one targeting this message - the
+                            // rerun button in an older message's tool-call sheet must stay
+                            // hidden while a newer message is still streaming.
+                            generationActive = loading,
                             onRegenerate = {
                                 onRegenerate(node.currentMessage)
                             },
@@ -390,8 +395,9 @@ private fun ChatListNormal(
                             },
                             onTranslate = onTranslate,
                             onClearTranslation = onClearTranslation,
-                            onToolApproval = onToolApproval,
-                            onToolAnswer = onToolAnswer,
+                            onToolApproval = if (isCodexHarnessMessage) onCodexToolApproval else onToolApproval,
+                            onToolAnswer = if (isCodexHarnessMessage) onCodexToolAnswer else onToolAnswer,
+                            onRerunTool = if (isCodexHarnessMessage) null else onRerunTool,
                             lastMessage = node.id == lastMessageNodeId,
                         )
                     }
@@ -407,32 +413,18 @@ private fun ChatListNormal(
                 }
             }
 
-            if (codexState !is CodexConversationUiState.Disabled && codexState !is CodexConversationUiState.Disconnected) {
-                item(key = "CodexLiveActivity") {
-                    CodexLiveActivity(codexState, onCodexCommandApproval, onCodexFileApproval)
+            if (codexState.needsInlineStatusCard()) {
+                item(key = "CodexInlineStatus") {
+                    CodexInlineStatus(codexState)
                 }
             }
 
             if (loading) {
                 item(LoadingIndicatorKey) {
-                    Row(
-                        modifier = Modifier.padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        RabbitLoadingIndicator(
-                            modifier = Modifier.size(28.dp)
-                        )
-                        AnimatedVisibility(
-                            visible = processingStatus != null,
-                        ) {
-                            Text(
-                                text = processingStatus ?: "",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
+                    ChatLoadingStatus(
+                        processingStatus = processingStatus,
+                        codexState = codexState,
+                    )
                 }
             }
 
@@ -628,47 +620,126 @@ private fun buildHighlightedText(
     }
 }
 
-@Composable
-private fun CodexActivityContent(activity: CodexConversationActivity) {
-    if (activity.reasoning.isNotBlank()) Text(activity.reasoning, style = MaterialTheme.typography.bodySmall)
-    activity.commands.forEach { CodexCommandExecutionCard(it) }
-    activity.files.forEach { CodexFileChangeCard(it) }
-    activity.diff?.let { CodexTurnDiffCard(it) }
-    activity.terminalInteractions.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+private fun CodexConversationUiState.needsInlineStatusCard(): Boolean = when (this) {
+    CodexConversationUiState.Opening,
+    is CodexConversationUiState.StaleBinding,
+    is CodexConversationUiState.WorkspaceMismatch,
+    is CodexConversationUiState.Failed,
+        -> true
+    is CodexConversationUiState.WaitingForApproval ->
+        event is CodexAppServerApprovalEvent.FileChangeRequest && fileChange?.changes.isNullOrEmpty()
+    is CodexConversationUiState.Terminal -> status != CodexAppServerTurnStatus.Completed
+    else -> false
 }
 
 @Composable
-private fun CodexLiveActivity(
-    state: CodexConversationUiState,
-    onCommand: (JsonRpcId, CodexAppServerCommandApprovalDecision) -> Unit,
-    onFile: (JsonRpcId, CodexAppServerFileChangeApprovalDecision) -> Unit,
+private fun ChatLoadingStatus(
+    processingStatus: String?,
+    codexState: CodexConversationUiState,
 ) {
-    if (state is CodexConversationUiState.WaitingForApproval) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            CodexActivityContent(state.activity)
-            when (val event = state.event) {
-                is CodexAppServerApprovalEvent.CommandExecutionRequest -> CodexCommandApprovalCard(event.request, { onCommand(event.requestId, it) }, submitting = state.submitting)
-                is CodexAppServerApprovalEvent.FileChangeRequest -> CodexFileChangeApprovalCard(event.request, { onFile(event.requestId, it) }, fileChange = state.fileChange, submitting = state.submitting)
-                else -> Text("未対応のCodex承認イベントです", color = MaterialTheme.colorScheme.error)
+    if (codexState is CodexConversationUiState.Disabled) {
+        Row(
+            modifier = Modifier.padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            RabbitLoadingIndicator(modifier = Modifier.size(28.dp))
+            AnimatedVisibility(visible = processingStatus != null) {
+                Text(
+                    text = processingStatus.orEmpty(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
         return
     }
-    val phaseActivity = when (state) {
-        is CodexConversationUiState.Running -> state.activity
-        is CodexConversationUiState.Terminal -> state.activity
+
+    val progress = when (codexState) {
+        is CodexConversationUiState.Running -> codexState.progress
+        is CodexConversationUiState.WaitingForApproval -> codexState.progress
         else -> null
+    }?.takeIf { it.startedAtMs > 0L }
+    val fallbackStartedAtMs = remember { System.currentTimeMillis() }
+    var nowMs by remember { mutableStateOf(fallbackStartedAtMs) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            nowMs = System.currentTimeMillis()
+            delay(1_000L)
+        }
     }
-    if (phaseActivity != null && phaseActivity != CodexConversationActivity()) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Codexの動作", style = MaterialTheme.typography.titleSmall)
-            CodexActivityContent(phaseActivity)
-            if (state is CodexConversationUiState.Terminal) {
-                codexTurnErrorPresentation(state.diagnostics)?.let { presentation ->
-                    Text(presentation.title, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleSmall)
-                    presentation.detail?.takeIf { it.isNotBlank() }?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                }
-            }
+
+    val startedAtMs = progress?.startedAtMs
+        ?.let { minOf(it, fallbackStartedAtMs) }
+        ?: fallbackStartedAtMs
+    val lastActivityAtMs = progress?.lastActivityAtMs ?: fallbackStartedAtMs
+    val elapsedMs = (nowMs - startedAtMs).coerceAtLeast(0L)
+    val idleMs = (nowMs - lastActivityAtMs).coerceAtLeast(0L)
+    val stage = progress?.stage ?: when (codexState) {
+        CodexConversationUiState.Opening -> CodexTurnStage.Preparing
+        is CodexConversationUiState.Terminal -> CodexTurnStage.Finalizing
+        else -> CodexTurnStage.Preparing
+    }
+    val title = when (codexState) {
+        CodexConversationUiState.Opening -> "Codexに接続中"
+        is CodexConversationUiState.WaitingForApproval -> "Codexが承認待ち"
+        is CodexConversationUiState.Terminal -> "Codexの完了処理中"
+        else -> "Codex実行中"
+    }
+    val stageLabel = stage.displayLabel()
+    val detail = when {
+        processingStatus != null && stage == CodexTurnStage.Preparing -> processingStatus
+        idleMs >= 30_000L -> "$stageLabel · 処理は継続中（最終更新 ${formatElapsedDuration(idleMs)}前）"
+        idleMs >= 10_000L -> "$stageLabel · 最終更新 ${formatElapsedDuration(idleMs)}前"
+        else -> stageLabel
+    }
+
+    Row(
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        RabbitLoadingIndicator(modifier = Modifier.size(28.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = "$title · ${formatElapsedDuration(elapsedMs)}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private fun CodexTurnStage.displayLabel(): String = when (this) {
+    CodexTurnStage.Preparing -> "処理を準備中"
+    CodexTurnStage.Thinking -> "思考中"
+    CodexTurnStage.Writing -> "回答を作成中"
+    CodexTurnStage.RunningCommand -> "コマンドを実行中"
+    CodexTurnStage.ApplyingChanges -> "ファイルを更新中"
+    CodexTurnStage.WaitingForApproval -> "操作の承認を待っています"
+    CodexTurnStage.Finalizing -> "結果を保存中"
+}
+
+@Composable
+private fun CodexInlineStatus(state: CodexConversationUiState) {
+    if (state is CodexConversationUiState.WaitingForApproval) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Text(
+                "Codexがファイル変更のプレビューを準備しています…",
+                modifier = Modifier.padding(12.dp),
+                style = MaterialTheme.typography.labelMedium,
+            )
         }
         return
     }
@@ -680,9 +751,14 @@ private fun CodexLiveActivity(
         is CodexConversationUiState.Running -> "Codex実行中 · ${state.turnId}"
         is CodexConversationUiState.Terminal -> codexTurnErrorPresentation(state.diagnostics)?.let { presentation ->
             presentation.detail?.takeIf { it.isNotBlank() }?.let { "${presentation.title}: $it" } ?: presentation.title
-        } ?: "Codex ${state.status.wireValue}"
+        }?.let { message ->
+            state.durationMs?.let { "$message · ${formatElapsedDuration(it)}" } ?: message
+        } ?: buildString {
+            append("Codex ${state.status.wireValue}")
+            state.durationMs?.let { append(" · ${formatElapsedDuration(it)}") }
+        }
         is CodexConversationUiState.WaitingForApproval -> "Codexが承認を待っています"
-        is CodexConversationUiState.StaleBinding -> "Codexのスレッド紐付けが古くなっています: ${state.reason}"
+        is CodexConversationUiState.StaleBinding -> "Codexのスレッド紐付けをリセットしてください: ${codexStaleBindingMessage(state.reason)}"
         is CodexConversationUiState.WorkspaceMismatch -> "CodexのWorkspaceが一致しません"
         is CodexConversationUiState.Failed -> "Codexで失敗しました: ${state.message}"
     }

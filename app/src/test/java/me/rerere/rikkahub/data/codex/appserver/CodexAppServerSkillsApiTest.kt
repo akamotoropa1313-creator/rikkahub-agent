@@ -55,10 +55,25 @@ class CodexAppServerSkillsApiTest {
         }
     }
 
+    @Test fun `RikkaHub skill root is registered with the process-local extra roots RPC`(): Unit = runBlocking {
+        fixture().use { f ->
+            val call = async { f.api.replaceExtraRoots(listOf("/skills", "/skills")) }
+            val request = f.request()
+            assertEquals("skills/extraRoots/set", request.method)
+            assertEquals(
+                buildJsonObject { putJsonArray("extraRoots") { add("/skills") } },
+                request.params,
+            )
+            f.respond(request, buildJsonObject {})
+            call.await()
+        }
+    }
+
     @Test fun `invalid input and malformed responses fail safely`(): Unit = runBlocking {
         fixture().use { f ->
             val writes = f.transport.successfulWriteCount()
             assertFails<IllegalArgumentException> { f.api.list(listOf(" ")) }
+            assertFails<IllegalArgumentException> { f.api.replaceExtraRoots(listOf("skills")) }
             assertFails<IllegalArgumentException> { f.api.writeConfig(true) }
             assertEquals(writes, f.transport.successfulWriteCount())
             supervisorScope {
@@ -75,7 +90,9 @@ class CodexAppServerSkillsApiTest {
 
     @Test fun `every operation is Ready gated`(): Unit = runBlocking {
         val t = FakeCodexAppServerTransport(); val c = CodexAppServerConnection(CodexAppServerRequestDispatcher(t), CodexAppServerClientInfo(name = "test", version = "1")); val api = CodexAppServerSkillsApi(c)
-        assertFails<CodexAppServerNotReadyException> { api.list() }; assertFails<CodexAppServerNotReadyException> { api.writeConfig(true, name = "x") }
+        assertFails<CodexAppServerNotReadyException> { api.list() }
+        assertFails<CodexAppServerNotReadyException> { api.replaceExtraRoots(listOf("/skills")) }
+        assertFails<CodexAppServerNotReadyException> { api.writeConfig(true, name = "x") }
         assertEquals(0, t.successfulWriteCount()); c.close()
     }
 

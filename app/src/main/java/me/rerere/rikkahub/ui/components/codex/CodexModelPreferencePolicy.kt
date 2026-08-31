@@ -40,6 +40,33 @@ internal fun serviceTierCatalogModel(
     models.firstOrNull { it.isDefault }
 }
 
+/**
+ * Resolve the model whose open-string effort catalog is safe to show. The server-default target
+ * uses only a model explicitly marked as default; an external provider has no App Server effort
+ * contract and therefore returns null instead of borrowing a ChatGPT model's options.
+ */
+internal fun reasoningEffortCatalogModel(
+    target: CodexHarnessModelTarget,
+    models: List<CodexAppServerModel>,
+): CodexAppServerModel? = when (target) {
+    is CodexHarnessModelTarget.ChatGptAccount -> serviceTierCatalogModel(target.model, models)
+    is CodexHarnessModelTarget.RikkaHubProvider -> null
+}
+
+/** Japanese labels for known values; future server-defined strings remain visible verbatim. */
+internal fun codexReasoningEffortLabel(effort: String?): String = when (effort?.lowercase()) {
+    null -> "サーバー設定"
+    "none", "off" -> "なし"
+    "minimal" -> "最小"
+    "low" -> "低"
+    "medium" -> "中"
+    "high" -> "高"
+    "xhigh" -> "超高"
+    "max" -> "最大"
+    "default" -> "既定"
+    else -> effort.orEmpty()
+}
+
 internal fun savedCodexModelMissing(
     savedModel: String?,
     models: List<CodexAppServerModel>,
@@ -97,7 +124,7 @@ internal fun codexComposerLabel(
     val selected = selectedCodexModel(target.model, models)
     val tierModel = serviceTierCatalogModel(target.model, models)
     val modelLabel = selected?.displayName ?: target.model ?: "サーバー既定"
-    val effort = assistant.codexReasoningEffort?.let { " · $it" }.orEmpty()
+    val effort = assistant.codexReasoningEffort?.let { " · ${codexReasoningEffortLabel(it)}" }.orEmpty()
     val tier = assistant.codexServiceTier?.let { saved ->
         val label = if (saved == "default") "既定" else tierModel?.let { model ->
             codexServiceTierOptions(model).firstOrNull { it.id == saved }?.name

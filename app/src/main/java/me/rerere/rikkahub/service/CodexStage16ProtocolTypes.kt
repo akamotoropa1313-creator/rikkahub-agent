@@ -1,7 +1,7 @@
 package me.rerere.rikkahub.service
 
 import me.rerere.rikkahub.data.codex.appserver.CodexModelCatalogKnowledge
-import me.rerere.rikkahub.data.codex.appserver.toTurnPolicy
+import me.rerere.rikkahub.data.codex.appserver.toManagedProotTurnPolicy
 
 /**
  * A saved personality request is intentionally distinct from the protocol enum. The request can
@@ -43,7 +43,7 @@ internal fun CodexAppServerTurnStartParams(
         summary = summary,
         personality = personality?.value?.takeIf { CodexModelCatalogKnowledge.personalitySupported(model) },
         serviceTier = serviceTier,
-        sandboxPolicy = sandbox?.toTurnPolicy(),
+        sandboxPolicy = sandbox?.toManagedProotTurnPolicy(),
         approvalPolicy = approvalPolicy,
     )
 
@@ -57,14 +57,17 @@ internal fun CodexAppServerTurnStartParams(
  */
 internal fun CodexAppServerThreadStartParams(
     model: String? = null,
+    config: Map<String, kotlinx.serialization.json.JsonElement>? = null,
     developerInstructions: String? = null,
     personality: RequestedCodexPersonality? = null,
     serviceTier: String? = null,
     sandbox: me.rerere.rikkahub.data.codex.appserver.CodexAppServerSandboxMode? = null,
     approvalPolicy: me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalPolicy? = null,
+    dynamicTools: List<me.rerere.rikkahub.data.codex.appserver.CodexAppServerDynamicToolSpec>? = null,
 ): me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams =
     me.rerere.rikkahub.data.codex.appserver.CodexAppServerThreadStartParams(
         model = model,
+        config = config,
         developerInstructions = developerInstructions,
         personality = null,
         serviceTier = when (serviceTier) {
@@ -74,4 +77,5 @@ internal fun CodexAppServerThreadStartParams(
         },
         sandbox = sandbox,
         approvalPolicy = approvalPolicy,
+        dynamicTools = dynamicTools,
     )

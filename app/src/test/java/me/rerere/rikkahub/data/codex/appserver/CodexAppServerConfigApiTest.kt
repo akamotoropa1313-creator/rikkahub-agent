@@ -126,14 +126,14 @@ class CodexAppServerConfigApiTest {
         fixture().use { f ->
             val call = async { f.api.readRequirements() }; val request = f.request()
             f.respond(request, buildJsonObject { putJsonObject("requirements") {
-                putJsonArray("allowedSandboxModes") { add("read-only"); add("future-mode") }
+                putJsonArray("allowedSandboxModes") { add("readOnly"); add("future-mode") }
                 putJsonArray("allowedWebSearchModes") { add("disabled"); add("future-search") }
                 putJsonObject("featureRequirements") { put("future_feature", true) }
                 putJsonObject("models") { putJsonObject("newThread") { put("model", "managed"); put("modelReasoningEffort", "high"); put("serviceTier", "flex") } }
                 putJsonArray("allowedApprovalPolicies") { add("never") }; put("hooks", "SECRET"); put("network", "SECRET"); put("allowedPermissionProfiles", "SECRET")
             } })
             val value = call.await()!!
-            assertEquals(listOf("read-only", "future-mode"), value.allowedSandboxModes!!.map { it.wireValue })
+            assertEquals(listOf("readOnly", "future-mode"), value.allowedSandboxModes!!.map { it.wireValue })
             assertEquals(true, value.featureRequirements!!["future_feature"])
             assertEquals("managed", value.newThread!!.model)
             assertFalse(value.toString().contains("SECRET")); assertFalse(value.toString().contains("never"))

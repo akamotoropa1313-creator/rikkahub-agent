@@ -9,6 +9,7 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import androidx.paging.map
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,6 +56,18 @@ private fun GenMediaEntity.toGeneratedImage(filesManager: FilesManager): Generat
     )
 }
 
+/**
+ * Pure selection logic backing the gallery orphan purge (#39): given every persisted
+ * gen-media row and the images directory, returns the entities whose backing file no
+ * longer exists on disk. Resolves each entity's file exactly like [toGeneratedImage] does.
+ * Extracted as a top-level function so it's unit-testable without constructing the VM.
+ */
+internal fun selectOrphanedGenMedia(
+    entities: List<GenMediaEntity>,
+    imagesDir: File,
+): List<GenMediaEntity> =
+    entities.filter { entity -> !File(imagesDir, entity.path.removePrefix("images/")).exists() }
+
 class ImgGenVM(
     context: Application,
     val settingsStore: SettingsStore,
@@ -93,6 +106,28 @@ class ImgGenVM(
             pagingData.map { entity -> entity.toGeneratedImage(filesManager) }
         }
         .cachedIn(viewModelScope)
+
+    init {
+        purgeOrphanedGenMedia()
+    }
+
+    // One-shot purge of gallery entries whose backing file is missing (#39). Room
+    // invalidation refreshes the paging flow automatically, so this needs no extra wiring.
+    private fun purgeOrphanedGenMedia() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val entities = genMediaRepository.getAllMediaList()
+                val orphans = selectOrphanedGenMedia(entities, filesManager.getImagesDir())
+                orphans.forEach { genMediaRepository.deleteMedia(it.id) }
+                if (orphans.isNotEmpty()) {
+                    Log.i(TAG, "Purged ${orphans.size} orphaned gallery entries")
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) return@launch
+                Log.e(TAG, "Failed to purge orphaned gallery entries", e)
+            }
+        }
+    }
 
     fun updatePrompt(prompt: String) {
         _prompt.value = prompt
@@ -149,9 +184,6 @@ class ImgGenVM(
                 val provider = model.findProvider(settings.providers)
                     ?: throw IllegalStateException("Provider not found")
 
-                val providerSetting = settings.providers.find { it.id == provider.id }
-                    ?: throw IllegalStateException("Provider setting not found")
-
                 val requestPrompt = _prompt.value
                 val params = ImageGenerationParams(
                     model = model,
@@ -163,7 +195,7 @@ class ImgGenVM(
                 )
 
                 val images = providerManager.getProviderByType(provider)
-                    .generateImage(providerSetting, params)
+                    .generateImage(provider, params)
 
                 collectImageGeneration(
                     images = images,
@@ -196,9 +228,6 @@ class ImgGenVM(
                 val provider = model.findProvider(settings.providers)
                     ?: throw IllegalStateException("Provider not found")
 
-                val providerSetting = settings.providers.find { it.id == provider.id }
-                    ?: throw IllegalStateException("Provider setting not found")
-
                 val requestPrompt = _prompt.value
                 val sourceImages = _referenceImages.value
                 val params = ImageEditParams(
@@ -212,7 +241,7 @@ class ImgGenVM(
                 )
 
                 val images = providerManager.getProviderByType(provider)
-                    .editImage(providerSetting, params)
+                    .editImage(provider, params)
 
                 collectImageGeneration(
                     images = images,

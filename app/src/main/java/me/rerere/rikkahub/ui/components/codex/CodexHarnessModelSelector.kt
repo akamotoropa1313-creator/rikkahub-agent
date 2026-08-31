@@ -2,6 +2,7 @@ package me.rerere.rikkahub.ui.components.codex
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -14,8 +15,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -31,6 +34,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderSetting
@@ -41,6 +46,7 @@ import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelPresentationReso
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessModelTarget
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessPickerCatalogBuilder
 import me.rerere.rikkahub.data.codex.appserver.CodexHarnessSelectionPolicy
+import me.rerere.rikkahub.data.codex.appserver.codexHarnessModelChangeRequiresSessionReset
 import me.rerere.rikkahub.data.codex.appserver.CodexModelCatalogKnowledge
 import me.rerere.rikkahub.data.codex.appserver.effectiveCodexHarnessModelTarget
 import me.rerere.rikkahub.data.model.Assistant
@@ -61,44 +67,115 @@ fun CodexHarnessModelSelector(
     providers: List<ProviderSetting>,
     onUpdateAssistant: ((Assistant) -> Assistant) -> Unit,
     modifier: Modifier = Modifier,
+    hasBoundSession: Boolean = false,
+    enabled: Boolean = true,
 ) {
     val accountModels by CodexModelCatalogKnowledge.modelsFlow.collectAsStateWithLifecycle()
     val target = assistant.effectiveCodexHarnessModelTarget()
     var visible by remember { mutableStateOf(false) }
+    var pendingSelection by remember { mutableStateOf<PendingCodexModelSelection?>(null) }
 
-    val selectedLabel = CodexHarnessModelPresentationResolver.resolve(
+    val presentation = CodexHarnessModelPresentationResolver.resolve(
         target = target,
         providers = providers,
         chatGptModels = accountModels,
-    ).compactLabel
-
-    TextButton(
-        onClick = { visible = true },
-        modifier = modifier,
-    ) {
-        Text(selectedLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    )
+    val selectedLabel = presentation.compactLabel
+    val iconName = when (target) {
+        is CodexHarnessModelTarget.ChatGptAccount -> target.model ?: "ChatGPT"
+        is CodexHarnessModelTarget.RikkaHubProvider ->
+            presentation.model?.modelId ?: presentation.providerName
     }
 
-    if (!visible) return
+    IconButton(
+        onClick = { visible = true },
+        modifier = modifier.semantics {
+            stateDescription = "選択中のモデル: $selectedLabel"
+        },
+        enabled = enabled,
+    ) {
+        AutoAIIcon(
+            name = iconName,
+            modifier = Modifier.size(36.dp),
+            color = Color.Transparent,
+        )
+    }
 
-    CodexHarnessModelSheet(
-        target = target,
-        providers = providers,
-        accountModels = accountModels,
-        onDismiss = { visible = false },
-        onSelectAccountDefault = {
-            onUpdateAssistant { latest -> CodexHarnessSelectionPolicy.selectChatGptServerDefault(latest) }
+    fun applySelection(selection: PendingCodexModelSelection) {
+        onUpdateAssistant { latest ->
+            when (selection) {
+                PendingCodexModelSelection.AccountDefault ->
+                    CodexHarnessSelectionPolicy.selectChatGptServerDefault(latest)
+                is PendingCodexModelSelection.AccountModel ->
+                    applyCodexModelSelection(latest, selection.model)
+                is PendingCodexModelSelection.ProviderModel ->
+                    CodexHarnessSelectionPolicy.selectRikkaHubProviderModel(latest, selection.model.id)
+            }
+        }
+        pendingSelection = null
+        visible = false
+    }
+
+    fun requestSelection(selection: PendingCodexModelSelection) {
+        if (selection.target == target) {
             visible = false
-        },
-        onSelectAccountModel = { model ->
-            onUpdateAssistant { latest -> applyCodexModelSelection(latest, model) }
+        } else if (hasBoundSession && codexHarnessModelChangeRequiresSessionReset(target, selection.target)) {
             visible = false
-        },
-        onSelectProviderModel = { model ->
-            onUpdateAssistant { latest -> CodexHarnessSelectionPolicy.selectRikkaHubProviderModel(latest, model.id) }
-            visible = false
-        },
-    )
+            pendingSelection = selection
+        } else {
+            applySelection(selection)
+        }
+    }
+
+    if (visible) {
+        CodexHarnessModelSheet(
+            target = target,
+            providers = providers,
+            accountModels = accountModels,
+            onDismiss = { visible = false },
+            onSelectAccountDefault = {
+                requestSelection(PendingCodexModelSelection.AccountDefault)
+            },
+            onSelectAccountModel = { model ->
+                requestSelection(PendingCodexModelSelection.AccountModel(model))
+            },
+            onSelectProviderModel = { model ->
+                requestSelection(PendingCodexModelSelection.ProviderModel(model))
+            },
+        )
+    }
+
+    pendingSelection?.let { selection ->
+        AlertDialog(
+            onDismissRequest = { pendingSelection = null },
+            title = { Text("モデルを変更しますか？") },
+            text = {
+                Text("Codexの実行先を安全に切り替えるため、現在のCodexスレッドをリセットします。RikkaHubの会話履歴は残りますが、Codex側のスレッド継続性は失われます。")
+            },
+            confirmButton = {
+                TextButton(onClick = { applySelection(selection) }) { Text("変更してリセット") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingSelection = null }) { Text("キャンセル") }
+            },
+        )
+    }
+}
+
+private sealed interface PendingCodexModelSelection {
+    val target: CodexHarnessModelTarget
+
+    data object AccountDefault : PendingCodexModelSelection {
+        override val target = CodexHarnessModelTarget.ChatGptAccount(model = null)
+    }
+
+    data class AccountModel(val model: CodexAppServerModel) : PendingCodexModelSelection {
+        override val target = CodexHarnessModelTarget.ChatGptAccount(model.model)
+    }
+
+    data class ProviderModel(val model: Model) : PendingCodexModelSelection {
+        override val target = CodexHarnessModelTarget.RikkaHubProvider(model.id)
+    }
 }
 
 @Composable
@@ -115,8 +192,11 @@ private fun CodexHarnessModelSheet(
     val catalog = remember(providers, accountModels) {
         CodexHarnessPickerCatalogBuilder.build(providers, accountModels)
     }
-    val accountMatches = remember(accountModels, query) {
-        accountModels.filter { CodexHarnessPickerCatalogBuilder.matchesSearch(it, query) }
+    val accountMatches = remember(catalog.chatGptModels, query) {
+        catalog.chatGptModels.filter { CodexHarnessPickerCatalogBuilder.matchesSearch(it, query) }
+    }
+    val showAccountDefault = remember(query) {
+        CodexHarnessPickerCatalogBuilder.matchesAccountDefaultSearch(query)
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -157,17 +237,18 @@ private fun CodexHarnessModelSheet(
                 stickyHeader(key = "chatgpt-header") {
                     ProviderHeader("ChatGPTアカウント")
                 }
-                if (query.isBlank() || "サーバー既定".contains(query, ignoreCase = true) || "default".contains(query, ignoreCase = true)) {
+                if (showAccountDefault) {
                     item(key = "chatgpt-default") {
                         AccountModelRow(
                             title = "サーバー既定",
                             description = "Codex App Serverが選ぶ既定モデルを使用",
+                            iconName = "ChatGPT",
                             selected = target == CodexHarnessModelTarget.ChatGptAccount(null),
                             onClick = onSelectAccountDefault,
                         )
                     }
                 }
-                if (accountModels.isEmpty()) {
+                if (catalog.chatGptModels.isEmpty() && query.isBlank()) {
                     item(key = "chatgpt-empty") {
                         Text(
                             "個別のChatGPTモデルは、Codexで最初の接続が完了すると自動的に表示されます。それまでは「サーバー既定」または下のRikkaHubプロバイダーモデルを選択できます。",
@@ -180,8 +261,23 @@ private fun CodexHarnessModelSheet(
                         AccountModelRow(
                             title = model.displayName + if (model.isDefault) " · 既定" else "",
                             description = model.description,
+                            iconName = model.model,
                             selected = target is CodexHarnessModelTarget.ChatGptAccount && target.model == model.model,
                             onClick = { onSelectAccountModel(model) },
+                        )
+                    }
+                }
+
+                if (query.isNotBlank() && !showAccountDefault && accountMatches.isEmpty() && catalog.providerGroups.none { group ->
+                        group.models.any { CodexHarnessPickerCatalogBuilder.matchesSearch(it, query) }
+                    }
+                ) {
+                    item(key = "no-search-results") {
+                        Text(
+                            "該当するモデルがありません",
+                            modifier = Modifier.padding(12.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
@@ -222,6 +318,7 @@ private fun ProviderHeader(name: String) {
 private fun AccountModelRow(
     title: String,
     description: String,
+    iconName: String,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
@@ -238,7 +335,7 @@ private fun AccountModelRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            AutoAIIcon(name = title, modifier = Modifier.size(40.dp), color = Color.Transparent)
+            AutoAIIcon(name = iconName, modifier = Modifier.size(40.dp), color = Color.Transparent)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (description.isNotBlank()) {
@@ -272,7 +369,10 @@ private fun ProviderModelRow(
             AutoAIIcon(name = model.modelId, modifier = Modifier.size(40.dp), color = Color.Transparent)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(model.displayName, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
                     ModelTypeTag(model)
                     ModelModalityTag(model)
                     ModelAbilityTag(model)

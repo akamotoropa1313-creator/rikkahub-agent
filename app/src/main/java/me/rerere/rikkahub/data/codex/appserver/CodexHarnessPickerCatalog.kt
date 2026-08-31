@@ -24,7 +24,7 @@ object CodexHarnessPickerCatalogBuilder {
         providers: List<ProviderSetting>,
         chatGptModels: List<CodexAppServerModel> = CodexModelCatalogKnowledge.modelsSnapshot(),
     ): CodexHarnessPickerCatalog = CodexHarnessPickerCatalog(
-        chatGptModels = chatGptModels.filterNot { it.hidden },
+        chatGptModels = chatGptModels.filterNot { it.hidden }.distinctBy { it.id },
         providerGroups = providers.mapNotNull { provider ->
             if (!provider.enabled) return@mapNotNull null
             val chatModels = provider.models.filter { it.type == ModelType.CHAT }
@@ -48,4 +48,8 @@ object CodexHarnessPickerCatalogBuilder {
     fun matchesSearch(model: Model, query: String): Boolean =
         query.isBlank() || model.displayName.contains(query, ignoreCase = true) ||
             model.modelId.contains(query, ignoreCase = true)
+
+    fun matchesAccountDefaultSearch(query: String): Boolean =
+        query.isBlank() || "サーバー既定".contains(query, ignoreCase = true) ||
+            "default".contains(query, ignoreCase = true)
 }

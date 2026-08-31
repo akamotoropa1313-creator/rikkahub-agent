@@ -1,12 +1,14 @@
-# Codex App Server integration — Stage25 release audit
+# Codex App Server integration — Stage26 release audit
 
-Audit date: 2026-08-16
+Audit date: 2026-08-31
 
 ## Baseline
 
-RikkaHub's Codex integration is audited against the official `openai/codex` App Server contract with `rust-v0.147.0` as the stable release baseline and current `main` as the forward-compatibility reference.
+RikkaHub's managed executable is pinned to `rust-v0.146.0`; its generated protocol schema is authoritative for every request sent by the released app. `rust-v0.147.0` and current `main` are forward-compatibility review references only and must not replace pinned-runtime enum spellings without upgrading the executable and its verified asset digests together.
 
-The integration deliberately remains on the stable surfaces used by Stages 1–24. Experimental APIs are not enabled merely because a newer schema exposes them.
+In particular, the pinned runtime expects kebab-case strings for `thread/start.sandbox`, `thread/resume.sandbox`, and approval overrides, while the tagged `turn/start.sandboxPolicy.type` value remains camelCase.
+
+The integration remains on the stable Stage1–25 surfaces except for pinned runtime 0.146's client-hosted `thread/start.dynamicTools` / `item/tool/call` pair. Its exact wire is regression-tested.
 
 ## Transport and initialization invariants
 
@@ -39,7 +41,7 @@ RikkaHub follows these rules at the protocol boundary:
 
 ## Lifecycle and ownership invariants
 
-Stage25 does not change the established ownership model:
+Stage26 keeps the established ownership model and adds these invariants:
 
 - one conversation owns one Codex App Server runtime/session;
 - no provider fallback is introduced;
@@ -48,12 +50,17 @@ Stage25 does not change the established ownership model:
 - durable conversation/thread binding is not rewritten by read-only diagnostics or history browsing;
 - navigation does not create a second App Server process;
 - normal transport/coroutine cancellation must propagate rather than be converted into protocol success.
+- the conversation-owned Assistant supplies all enabled Skills, local tools, and MCP selections;
+- dynamic tools execute in the Android/RikkaHub layer, including Termux-backed tools;
+- Unicode and long MCP labels become stable valid model-facing names;
+- interactive `ask_user` answers return to the pending App Server request;
+- the RikkaHub Codex provider owns authentication through the external-token bridge.
 
 ## Explicitly excluded from this release gate
 
-The audit does not opt RikkaHub into experimental App Server features such as paginated thread history modes, thread settings mutation, permission profiles, memory APIs, thread sections, thread fork/archive/rollback controls, direct steering, or experimental transports. Those require separate product and protocol stages if adopted later.
+Apart from the pinned dynamic-tool bridge, the audit does not opt RikkaHub into other experimental App Server features such as paginated history modes, thread settings mutation, permission profiles, memory APIs, thread fork/archive/rollback, direct steering, or experimental transports.
 
-## Stage25 release regressions
+## Stage26 release regressions
 
 `CodexAppServerReleaseHardeningTest` locks the following release-level compatibility guarantees:
 
@@ -64,15 +71,17 @@ The audit does not opt RikkaHub into experimental App Server features such as pa
 
 These tests complement the existing connection, dispatcher, protocol, session, recovery, runtime, approval, capability, review, token-usage, configuration, model, multimodal, and thread-history regression suites.
 
+Stage26 adds coverage for dynamic-tool decoding/execution/approval, interactive answers, multiple Assistant tools, execution-identity refresh, MCP name sanitization, and durable-thread replacement when its tool fingerprint changes.
+
 ## Release gate
 
-Stage25 is ready to merge only when the exact PR head passes all existing GitHub Actions gates without weakening filters or ignoring failures:
+Stage26 is ready to merge only when the exact PR head passes all existing GitHub Actions gates without weakening filters or ignoring failures:
 
 - Android production Kotlin compilation / Room schema generation;
 - committed Room schema cleanliness;
-- Codex App Server protocol, UI-policy, service/runtime and Stage25 release tests;
+- Codex App Server protocol, UI-policy, service/runtime and Stage26 release tests;
 - workspace interactive-process tests;
 - PR review has no unresolved blocking findings;
-- base-to-head audit contains only intentional Stage25 changes.
+- base-to-head audit contains only intentional Stage26 changes.
 
-No Room database version or schema change is required by Stage25.
+Stage26 requires Room database version 32. Schema 32 adds nullable `dynamic_tools_fingerprint` so a resumed thread cannot silently retain a stale Assistant tool surface.

@@ -4,7 +4,9 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.CodexPersonalityPreference
 import me.rerere.rikkahub.data.model.CodexReasoningSummaryPreference
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.uuid.Uuid
 
@@ -45,5 +47,19 @@ class CodexHarnessSelectionPolicyTest {
         assertEquals(CodexHarnessModelTarget.ChatGptAccount(null), updated.codexHarnessModelTarget)
         assertNull(updated.codexModel)
         assertNull(updated.codexServiceTier)
+    }
+
+    @Test
+    fun `only gateway route changes require a bound thread reset`() {
+        val firstProvider = CodexHarnessModelTarget.RikkaHubProvider(Uuid.random())
+        val secondProvider = CodexHarnessModelTarget.RikkaHubProvider(Uuid.random())
+        val firstAccount = CodexHarnessModelTarget.ChatGptAccount("model-a")
+        val secondAccount = CodexHarnessModelTarget.ChatGptAccount("model-b")
+
+        assertFalse(codexHarnessModelChangeRequiresSessionReset(firstAccount, secondAccount))
+        assertFalse(codexHarnessModelChangeRequiresSessionReset(firstProvider, firstProvider))
+        assertTrue(codexHarnessModelChangeRequiresSessionReset(firstAccount, firstProvider))
+        assertTrue(codexHarnessModelChangeRequiresSessionReset(firstProvider, secondAccount))
+        assertTrue(codexHarnessModelChangeRequiresSessionReset(firstProvider, secondProvider))
     }
 }

@@ -16,7 +16,9 @@ class WorkspaceCodexAppServerConnectionFactory(
     workspaceManager: WorkspaceManager,
     private val runtimeResolver: CodexRuntimeResolver,
     private val appVersion: String,
+    private val networkEnvironmentPreparer: CodexNetworkEnvironmentPreparer? = null,
     private val initializeTimeout: Duration = 30.seconds,
+    private val enableExperimentalApi: Boolean = false,
 ) : CodexAppServerConnectionCreator {
     private val launcher = WorkspaceCodexAppServerLauncher(workspaceManager)
 
@@ -24,11 +26,17 @@ class WorkspaceCodexAppServerConnectionFactory(
 
     override suspend fun create(root: String, cwd: String): CodexAppServerConnection {
         val runtime = runtimeResolver.ensureReady(root)
+        networkEnvironmentPreparer?.prepare(root)
         val transport = launcher.launch(root, cwd, runtime)
         return try {
             CodexAppServerConnection(
                 dispatcher = CodexAppServerRequestDispatcher(transport),
                 clientInfo = CodexAppServerClientInfo(version = appVersion),
+                capabilities = if (enableExperimentalApi) {
+                    CodexAppServerInitializeCapabilities(experimentalApi = true)
+                } else {
+                    null
+                },
                 initializeTimeout = initializeTimeout,
             )
         } catch (error: Throwable) {

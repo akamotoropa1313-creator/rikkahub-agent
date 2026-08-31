@@ -118,11 +118,18 @@ class CodexAccountRepository internal constructor(
         )
     }
 
-    suspend fun refreshAccount(accountId: String): CodexAccount = mutex.withLock {
+    suspend fun refreshAccount(accountId: String, force: Boolean = false): CodexAccount = mutex.withLock {
         val account = state.accounts.firstOrNull { it.id == accountId }
             ?: error("Codex account not found")
-        val fresh = ensureFreshLocked(account)
+        val fresh = ensureFreshLocked(account, force = force)
         fetchUsageLocked(fresh)
+    }
+
+    /** Refresh only the OAuth credentials, for App Server's roughly 10-second 401 callback. */
+    suspend fun refreshCredentials(accountId: String, force: Boolean = false): CodexAccount = mutex.withLock {
+        val account = state.accounts.firstOrNull { it.id == accountId }
+            ?: error("Codex account not found")
+        ensureFreshLocked(account, force = force)
     }
 
     suspend fun refreshAll() {

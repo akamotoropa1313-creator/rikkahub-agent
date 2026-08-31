@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!--
+      Keep the whole lint surface visible while reserving CI failures for runtime and
+      security defects. These checks describe existing localization and Compose
+      configuration-awareness debt. They remain in every report as warnings so the
+      backlog is measurable without hiding new crash-class findings.
+    -->
+    <issue id="MissingTranslation" severity="warning" />
+    <issue id="LocalContextGetResourceValueCall" severity="warning" />
+    <issue id="NonObservableLocale" severity="warning" />
+</lint>

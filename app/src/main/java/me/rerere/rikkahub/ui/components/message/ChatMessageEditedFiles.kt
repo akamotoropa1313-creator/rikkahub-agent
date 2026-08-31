@@ -24,6 +24,7 @@ import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -35,9 +36,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.File02
@@ -46,12 +44,10 @@ import me.rerere.hugeicons.stroke.Share08
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
-import me.rerere.workspace.WorkspaceStorageArea
 import org.koin.compose.koinInject
 import java.io.File
 
 private const val DEFAULT_VISIBLE_COUNT = 3
-private val WORKSPACE_FILE_TOOL_NAMES = setOf("workspace_write_file", "workspace_edit_file")
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -60,19 +56,21 @@ internal fun EditedFilesList(
     assistant: Assistant?,
 ) {
     val workspaceId = assistant?.workspaceId?.toString() ?: return
-    val editedFiles = remember(parts) {
-        parts.filterIsInstance<UIMessagePart.Tool>()
-            .filter { it.toolName in WORKSPACE_FILE_TOOL_NAMES && it.isExecuted }
-            .mapNotNull { tool ->
-                tool.inputAsJson().jsonObject["path"]?.jsonPrimitive?.contentOrNull
-            }
-            .distinct()
+    val workspaceRepository: WorkspaceRepository = koinInject()
+    val candidates = remember(parts) { editedFileCandidates(parts) }
+    val editedFiles by produceState(
+        initialValue = emptyList(),
+        workspaceId,
+        candidates,
+    ) {
+        value = candidates.filter { path ->
+            runCatching { workspaceRepository.rootfsFileSize(workspaceId, path) }.isSuccess
+        }
     }
     if (editedFiles.isEmpty()) return
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val workspaceRepository: WorkspaceRepository = koinInject()
 
     var selectedPath by remember { mutableStateOf<String?>(null) }
     var expanded by remember { mutableStateOf(false) }
@@ -87,9 +85,8 @@ internal fun EditedFilesList(
         val outputStream = context.contentResolver.openOutputStream(uri) ?: return@rememberLauncherForActivityResult
         scope.launch {
             runCatching {
-                val (area, relativePath) = resolveWorkspacePath(path)
                 outputStream.use { output ->
-                    workspaceRepository.exportFile(workspaceId, area, relativePath, output)
+                    workspaceRepository.exportRootfsFile(workspaceId, path, output)
                 }
             }
         }
@@ -100,7 +97,7 @@ internal fun EditedFilesList(
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         visibleFiles.forEach { path ->
-            val fileName = remember(path) { path.substringAfterLast('/') }
+            val fileName = remember(path, editedFiles) { editedFileDisplayLabel(path, editedFiles) }
             Surface(
                 onClick = { selectedPath = path },
                 shape = RoundedCornerShape(50),
@@ -143,7 +140,7 @@ internal fun EditedFilesList(
 
     if (selectedPath != null) {
         val path = selectedPath!!
-        val fileName = remember(path) { path.substringAfterLast('/') }
+        val fileName = remember(path, editedFiles) { editedFileDisplayLabel(path, editedFiles) }
         ModalBottomSheet(
             onDismissRequest = { selectedPath = null },
             sheetState = rememberBottomSheetState(
@@ -194,11 +191,10 @@ internal fun EditedFilesList(
                         selectedPath = null
                         scope.launch {
                             runCatching {
-                                val (area, relativePath) = resolveWorkspacePath(p)
                                 val dir = File(context.cacheDir, "workspace_share").apply { mkdirs() }
                                 val file = File(dir, p.substringAfterLast('/'))
                                 file.outputStream().use { output ->
-                                    workspaceRepository.exportFile(workspaceId, area, relativePath, output)
+                                    workspaceRepository.exportRootfsFile(workspaceId, p, output)
                                 }
                                 val uri = FileProvider.getUriForFile(
                                     context,
@@ -236,14 +232,5 @@ internal fun EditedFilesList(
                 }
             }
         }
-    }
-}
-
-private fun resolveWorkspacePath(path: String): Pair<WorkspaceStorageArea, String> {
-    val trimmed = path.trimEnd('/')
-    return if (trimmed == "/workspace" || trimmed.startsWith("/workspace/")) {
-        WorkspaceStorageArea.FILES to trimmed.removePrefix("/workspace").trimStart('/')
-    } else {
-        WorkspaceStorageArea.LINUX to trimmed.trimStart('/')
     }
 }

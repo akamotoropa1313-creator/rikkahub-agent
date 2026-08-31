@@ -67,7 +67,7 @@ import me.rerere.rikkahub.workflow.db.WorkflowRunEntity
         FolderEntity::class,
         CodexAppServerSessionBindingEntity::class,
     ],
-    version = 31,
+    version = 32,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
@@ -115,6 +115,7 @@ import me.rerere.rikkahub.workflow.db.WorkflowRunEntity
         // no foreign keys: WorkspaceDAO uses SQLite REPLACE, whose delete/reinsert behavior must
         // not cascade-delete a binding during an ordinary workspace upsert.
         AutoMigration(from = 30, to = 31),
+        AutoMigration(from = 31, to = 32),
     ]
 )
 @TypeConverters(TokenUsageConverter::class)

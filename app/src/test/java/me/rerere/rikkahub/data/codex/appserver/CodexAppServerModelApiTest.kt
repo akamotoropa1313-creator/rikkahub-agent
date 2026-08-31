@@ -122,6 +122,17 @@ class CodexAppServerModelApiTest {
     }
 
     @Test
+    fun `visible pagination removes overlapping model ids`() = runBlocking<Unit> {
+        fixture().use { f ->
+            val call = async { f.api.listAllVisible() }
+            f.respond(f.request(), page("next", model = "model-a"))
+            f.respond(f.request(), page(null, model = "model-a"))
+
+            assertEquals(listOf("model-a"), call.await().map { it.model })
+        }
+    }
+
+    @Test
     fun `pagination detects repeated cursor and page cap`() = runBlocking<Unit> {
         supervisorScope {
             fixture().use { f ->

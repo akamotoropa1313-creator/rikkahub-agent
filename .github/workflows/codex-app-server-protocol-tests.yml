@@ -81,43 +81,43 @@ jobs:
             exit 1
           fi
 
-      - name: Run Codex App Server protocol unit tests
-        run: >-
-          ./gradlew :app:testDebugUnitTest
-          --tests 'me.rerere.rikkahub.data.codex.appserver.*Test'
-          --tests 'me.rerere.rikkahub.ui.components.codex.*Test'
-          --tests 'me.rerere.rikkahub.service.Codex*Test'
-          --tests 'me.rerere.rikkahub.di.CodexRepositoryModuleTest'
-          --tests 'me.rerere.rikkahub.utils.CrashHandlerTest'
+      - name: Upload generated Room schemas on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-room-schemas
+          path: app/schemas/me.rerere.rikkahub.data.db.AppDatabase
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Run workspace interactive process unit tests
-        run: >-
-          ./gradlew :workspace:testDebugUnitTest
-          --tests 'me.rerere.workspace.*Interactive*Test'
+      - name: Run all JVM unit tests
+        run: ./gradlew testDebugUnitTest --continue
 
-      - name: Print Codex App Server JUnit failure details
+      - name: Run Android lint
+        if: always()
+        run: ./gradlew lintDebug --continue
+
+      - name: Print JUnit failure details
         if: failure()
         shell: bash
         run: |
-          find app/build/test-results/testDebugUnitTest \
-            \( -name 'TEST-me.rerere.rikkahub.data.codex.appserver.*Test.xml' \
-            -o -name 'TEST-me.rerere.rikkahub.ui.components.codex.*Test.xml' \
-            -o -name 'TEST-me.rerere.rikkahub.service.Codex*Test.xml' \
-            -o -name 'TEST-me.rerere.rikkahub.di.CodexRepositoryModuleTest.xml' \
-            -o -name 'TEST-me.rerere.rikkahub.utils.CrashHandlerTest.xml' \) \
+          find . -path '*/build/test-results/testDebugUnitTest/TEST-*.xml' \
             -print -exec cat {} \; 2>/dev/null || true
 
-      - name: Upload app JUnit results
+      - name: Upload JUnit results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: codex-app-junit-results
-          path: app/build/test-results/testDebugUnitTest/*.xml
+          name: all-jvm-junit-results
+          path: "**/build/test-results/testDebugUnitTest/*.xml"
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Print workspace interactive process JUnit failure details
-        if: failure()
-        shell: bash
-        run: |
-          find workspace/build/test-results/testDebugUnitTest -name '*Interactive*Test.xml' -print -exec cat {} \; 2>/dev/null || true
+      - name: Upload Android lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-lint-reports
+          path: "**/build/reports/lint-results-debug.*"
+          if-no-files-found: warn
+          retention-days: 7

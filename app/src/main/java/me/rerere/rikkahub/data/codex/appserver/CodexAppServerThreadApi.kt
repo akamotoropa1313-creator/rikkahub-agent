@@ -25,6 +25,8 @@ data class CodexAppServerThreadStartParams(
     val serviceTier: String? = null,
     val sandbox: CodexAppServerSandboxMode? = null,
     val approvalPolicy: CodexAppServerApprovalPolicy? = null,
+    /** Experimental 0.146+ client-hosted tools. App Server persists these with the thread. */
+    val dynamicTools: List<CodexAppServerDynamicToolSpec>? = null,
 )
 
 /** Stable overrides shared by v2 `thread/resume`; the thread id is supplied separately. */
@@ -224,8 +226,11 @@ private fun CodexAppServerThreadStartParams.toJson() = buildMap<String, JsonElem
     personality?.let { put("personality", JsonPrimitive(it.wireValue)) }
     ephemeral?.let { put("ephemeral", JsonPrimitive(it)) }
     putOptional("serviceTier", serviceTier)
-    sandbox?.let { put("sandbox", JsonPrimitive(it.wireValue)) }
-    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.wireValue)) }
+    sandbox?.let { put("sandbox", JsonPrimitive(it.threadWireValue)) }
+    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.runtimeWireValue)) }
+    dynamicTools?.takeIf { it.isNotEmpty() }?.let { tools ->
+        put("dynamicTools", JsonArray(tools.map(CodexAppServerDynamicToolSpec::toJson)))
+    }
 }.let(::JsonObject)
 
 private fun CodexAppServerThreadResumeParams.toJson(threadId: String) = buildMap<String, JsonElement> {
@@ -234,8 +239,8 @@ private fun CodexAppServerThreadResumeParams.toJson(threadId: String) = buildMap
     config?.let { put("config", JsonObject(it)) }; putOptional("baseInstructions", baseInstructions)
     putOptional("developerInstructions", developerInstructions)
     personality?.let { put("personality", JsonPrimitive(it.wireValue)) }
-    sandbox?.let { put("sandbox", JsonPrimitive(it.wireValue)) }
-    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.wireValue)) }
+    sandbox?.let { put("sandbox", JsonPrimitive(it.threadWireValue)) }
+    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.runtimeWireValue)) }
 }.let(::JsonObject)
 
 private fun MutableMap<String, JsonElement>.putOptional(name: String, value: String?) {

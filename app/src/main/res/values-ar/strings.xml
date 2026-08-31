@@ -336,6 +336,8 @@
   <string name="setting_page_tool_approvals_yolo_dialog_cancel">إبقاء الموافقات مُفعَّلة</string>
   <string name="chat_message_tool_edit_memory">تم تحديث ذاكرة</string>
   <string name="chat_message_tool_get_time">الحصول على معلومات الوقت</string>
+  <string name="chat_message_tool_rerun">إعادة التشغيل</string>
+  <string name="chat_message_tool_rerun_failed">فشلت إعادة تشغيل الأداة: %1$s</string>
   <string name="chat_message_tool_scrape_prefix">كشط الموقع: %1$s</string>
   <string name="chat_message_tool_scrape_web">كشط صفحة ويب</string>
   <string name="chat_message_tool_search_prefix">بحث: %1$s</string>
@@ -377,6 +379,7 @@
   <string name="chat_page_nickname_placeholder">من فضلك أدخل الكنية</string>
   <string name="chat_page_no_conversations">لا توجد محادثات</string>
   <string name="chat_page_regenerate_title">إعادة توليد العنوان</string>
+  <string name="chat_page_rename_chat">إعادة تسمية</string>
   <string name="chat_page_save">حفظ</string>
   <string name="chat_page_scroll_to_bottom">التمرير إلى الأسفل</string>
   <string name="chat_page_search_chats">البحث في الدردشات</string>
@@ -384,6 +387,7 @@
   <string name="chat_page_yesterday">أمس</string>
   <string name="chat_size_dialog_content">عدد الرسائل الحالي: %1$d. قد يتسبب هذا في تعطل التطبيق أو بطئه، أو حتى فقدان بيانات هذه المحادثة. من فضلك أنشئ محادثة جديدة في أقرب وقت ممكن لمتابعة الدردشة.</string>
   <string name="chat_size_dialog_title">بيانات هذه المحادثة كبيرة جدًا</string>
+  <string name="chat_suggestion_continue">متابعة</string>
   <string name="citations_count">%1$d استشهادات</string>
   <string name="code_block_collapse">طي</string>
   <string name="code_block_copy">نسخ الشيفرة</string>
@@ -975,6 +979,9 @@
   <string name="setting_tts_page_voice_name_description">اسم الصوت</string>
   <string name="setting_tts_page_voice_name_placeholder">Kore</string>
   <string name="settings">الإعدادات</string>
+  <string name="settings_search_no_results">لا توجد نتائج</string>
+  <string name="settings_search_page_title">البحث في الإعدادات</string>
+  <string name="settings_search_placeholder">ابحث في الإعدادات…</string>
   <string name="share">مشاركة</string>
   <string name="share_handler_page_title">اختيار مساعد</string>
   <string name="shortcut_take_picture">التقاط صورة والسؤال</string>
@@ -1088,6 +1095,7 @@
   <string name="web_search_enabled">البحث في الويب مُمكَّن</string>
   <string name="setting_provider_page_import_service_account_json">استيراد JSON لحساب الخدمة</string>
   <string name="reasoning_xhigh">عالٍ جدًا</string>
+  <string name="reasoning_max">الأقصى</string>
   <string name="reasoning_picker_title">ضبط عمق تفكير النموذج</string>
   <string name="reasoning_picker_hint">لا تدعم جميع النماذج ضبط العمق. راجع وثائق النموذج والمزوّد.</string>
   <string name="assistant_page_local_tools_section_personal_data">البيانات الشخصية</string>
@@ -1147,7 +1155,7 @@
   <string name="assistant_page_local_tools_sub_agents_title">الوكلاء الفرعيون</string>
   <string name="assistant_page_local_tools_sub_agents_desc">السماح للمساعد بإرسال مهام فرعية مركّزة (بحث، عمل متعدد الخطوات) كعمليات تشغيل مستقلة للنموذج اللغوي في الخلفية. كل تشغيل يخضع للموافقة، ومحدود (افتراضيًا 3 متزامنة لكل مساعد، 16 عالميًا)، وتظل HARDLINE سارية بداخله.</string>
   <string name="assistant_page_local_tools_cost_guards_title">حُرّاس التكلفة</string>
-  <string name="assistant_page_local_tools_cost_guards_desc">السماح للمساعد بفحص إجمالي رموزه الجارية مقابل الحدود الناعمة / الصارمة لكل مساعد والتحكم الذاتي. للقراءة فقط — سيأتي تكامل الإيقاف التلقائي مع خط أنابيب البث في تحديث لاحق.</string>
+  <string name="assistant_page_local_tools_cost_guards_desc">السماح للمساعد بفحص إجمالي الرموز (Tokens) المستهلكة مقابل الحدود المرنة / الصارمة الخاصة بكل مساعد والتحكم الذاتي في السرعة. للقراءة فقط — سيتم توفير الإيقاف التلقائي للبث في تحديث لاحق.</string>
   <string name="setting_page_accessibility">إمكانية الوصول</string>
   <string name="setting_page_accessibility_desc">الحالة والإجراءات الأخيرة وتشخيصات لقطات الشاشة لخدمة أتمتة الشاشة.</string>
   <string name="setting_page_accessibility_status_section">الحالة</string>
@@ -1300,10 +1308,10 @@
   <string name="relative_time_hours_ago">قبل %1$d س</string>
   <string name="relative_time_days_ago">قبل %1$d ي</string>
   <string name="setting_page_browser">المتصفح</string>
-  <string name="setting_page_browser_desc">متصفح ويب مدفوع بالذكاء الاصطناعي وعارض مهارات.</string>
+  <string name="setting_page_browser_desc">متصفح ويب مدعوم بالذكاء الاصطناعي وعارض مهارات.</string>
   <string name="assistant_page_local_tools_section_browser">المتصفح</string>
   <string name="assistant_page_local_tools_browser_title">المتصفح</string>
-  <string name="assistant_page_local_tools_browser_desc">متصفح ويب مدفوع بالذكاء الاصطناعي. 17 أداة قابلة للتفعيل بشكل فردي — كوّن وصول القراءة/الكتابة في الإعدادات → المتصفح.</string>
+  <string name="assistant_page_local_tools_browser_desc">متصفح ويب مدعوم بالذكاء الاصطناعي. 17 أداة قابلة للتفعيل بشكل فردي — كوّن وصول القراءة/الكتابة في الإعدادات ← المتصفح.</string>
   <string name="setting_browser_title">المتصفح</string>
   <string name="setting_browser_section_browser">المتصفح</string>
   <string name="setting_browser_open">فتح المتصفح</string>
@@ -1475,6 +1483,7 @@
   <string name="chat_select_model_first">من فضلك اختر نموذجًا أولًا</string>
   <string name="image_preview_saving">جارٍ الحفظ…</string>
   <string name="image_preview_saved">تم حفظ الصورة</string>
+  <string name="attachment_open_failed">يتعذر فتح هذا الملف</string>
   <string name="chat_drawer_statistics">الإحصائيات</string>
   <string name="translator_error_generic">خطأ</string>
   <string name="translator_paste_text">لصق نص</string>
@@ -1681,7 +1690,7 @@
   <string name="assistant_page_local_tools_keyboard_status_installed">تم تثبيت agent-keyboard — عيّنه كلوحة المفاتيح النشطة لاستخدام هذه الأدوات</string>
   <string name="setting_browser_per_tool_timeout_desc">الحد الأقصى لزمن انتظار استجابة أداة المتصفح الواحدة بالثواني</string>
   <string name="setting_browser_per_tool_timeout_unit">ثواني</string>
-  <string name="setting_browser_single_task_timeout_desc">الحد الأقصى لزمن مهمة المتصفح المستمرة بالدقائق</string>
+  <string name="setting_browser_single_task_timeout_desc">حد أقصى صارم لزمن مهمة المتصفح المدعومة بالذكاء الاصطناعي لمنع الحلقات غير المنتهية. النطاق من 1 إلى 60 دقيقة.</string>
   <string name="setting_browser_single_task_timeout_unit">دقائق</string>
   <string name="setting_page_termux">بيئة Termux</string>
   <string name="setting_page_termux_desc">أوامر سطر الأوامر (Shell)، المهلات، والتكامل مع Termux.</string>
@@ -1699,7 +1708,7 @@
   <string name="setting_termux_toast_permission_granted">الإذن ممنوح</string>
   <string name="setting_termux_status_permission_missing">غير ممنوح — انقر للطلب</string>
   <string name="setting_termux_status_verify">التحقق من الاتصال</string>
-  <string name="setting_termux_status_verify_ok">تم التحقق بنجاح في هذه الجلسة</string>
+  <string name="setting_termux_status_verify_ok">تم التحقق بنجاح</string>
   <string name="setting_termux_status_verify_unknown">لم يتم التحقق بعد — انقر لتشغيل الاختبار</string>
   <string name="setting_termux_verify_ok">تم التحقق من Termux بنجاح.</string>
   <string name="setting_termux_verify_not_installed">التحقق فشل: تطبيق Termux غير مثبت</string>
@@ -1804,6 +1813,7 @@
   <string name="workspace_detail_tool_read_file">قراءة الملفات</string>
   <string name="workspace_detail_tool_write_file">كتابة الملفات</string>
   <string name="workspace_detail_tool_edit_file">تعديل الملفات</string>
+  <string name="workspace_detail_tool_create_folder">إنشاء المجلدات</string>
   <string name="workspace_detail_tool_delete_file">حذف الملفات</string>
   <string name="workspace_detail_tool_move_file">نقل الملفات</string>
   <string name="workspace_detail_tool_shell">تشغيل الأوامر</string>
@@ -1815,6 +1825,8 @@
   <string name="workspace_detail_area_files">دليل الملفات</string>
   <string name="workspace_detail_area_rootfs">بيئة Rootfs</string>
   <string name="workspace_detail_empty_directory">الدليل فارغ</string>
+  <string name="workspace_detail_folder_export_success">تم تصدير %1$s</string>
+  <string name="workspace_detail_folder_export_partial">تم تصدير %1$s مع %2$d حالة فشل</string>
   <string name="workspace_detail_shell_disabled">معطّل</string>
   <string name="workspace_detail_shell_installing">جارٍ تثبيت Rootfs...</string>
   <string name="workspace_detail_shell_ready">جاهز ومفعّل</string>
@@ -1903,9 +1915,9 @@
   <string name="codex_monthly_limit">الحد الشهري</string>
   <string name="codex_oauth_ports_unavailable">تعذر بدء تسجيل الدخول لـ Codex لأن منافذ الاستدعاء المحلي قيد الاستخدام. أغلق التطبيق الذي يستخدمها وحاول مجددًا.</string>
   <string name="gemini_provider_description">يستخدم تدفق Google OAuth الخاص بـ Antigravity لـ Gemini Code Assist.</string>
-  <string name="gemini_provider_short_description">مزوّد Google OAuth المباشر</string>
-  <string name="gemini_ban_warning_title">إخلاء مسؤولية مخاطر الحظر</string>
-  <string name="gemini_ban_warning_body">يسجل هذا المزوّد الدخول باستخدام اعتماديات Antigravity الخاصة بـ OAuth ويستدعي نقطة نهاية Google خاصة من تطبيق لم تنشره Google. تسمح شروط Google لهم بتعليق الحسابات أو إنهائها للوصول إلى خدماتهم عبر عملاء غير معتمدين، ولا توجد آلية استئناف إذا تم حظر حسابك. استخدم هذا المزوّد بحذر وعلى مسؤوليتك الخاصة.</string>
+  <string name="gemini_provider_short_description">تسجيل الدخول بحساب Google - اقرأ تحذير الحظر أولاً</string>
+  <string name="gemini_ban_warning_title">هذا الإجراء قد يؤدي إلى حظر حسابك في Google</string>
+  <string name="gemini_ban_warning_body">يسجل هذا المزوّد الدخول باستخدام اعتماديات Antigravity الخاصة بـ OAuth ويستدعي نقطة نهاية خاصة من تطبيق لم تنشره Google. تسمح شروط Google بتعليق أو إنهاء الحسابات التي تصل إلى خدماتها عبر عملاء غير معتمدين، ولا يوجد مسار لتقديم التماس. استخدم حساب Google بديل/وهمي يمكنك تحمل فقدانه، ولا تستخدم أبداً حسابك المرتبط ببريدك الإلكتروني، أو صورك، أو مشترياتك، أو عملك.</string>
   <string name="gemini_sign_in">تسجيل الدخول عبر Google OAuth</string>
   <string name="gemini_enable">تمكين Gemini (Antigravity)</string>
   <string name="gemini_round_robin_description">استخدام الحسابات الممكنة بالتناوب (Round-Robin).</string>
@@ -1983,7 +1995,7 @@
   <string name="assistant_page_context_message_limit_desc">يحدد الحد الأقصى لعدد الرسائل الأخيرة المرسلة للنموذج. عند تجاوز الحد، يتم تقليص السياق إلى النصف تقريباً في خطوة واحدة بدلاً من حذف رسالة واحدة بكل دور.</string>
   <string name="assistant_page_context_message_limit_count">حد رسائل السياق: %d</string>
   <string name="assistant_page_context_message_limit_unlimited">رسائل سياق غير محدودة</string>
-  <string name="assistant_page_context_message_limit_warning">تقييد السياق يلغي الذاكرة المؤقتة للتوجيهات (Prompt Cache) في كل مرة يقتطع فيها السياق.</string>
+  <string name="assistant_page_context_message_limit_warning">تقييد السياق يُبطل الذاكرة المؤقتة للتوجيهات (Prompt Cache) في كل مرة يُقتطع فيها السياق. الحد الأكبر يقلل من مرات الاقتطاع؛ بينما خيار "بلا حد" يمنع الاقتطاع تماماً ويحافظ على الذاكرة المؤقتة سليمة بالكامل.</string>
   <string name="accessibility_hide_password">إخفاء كلمة المرور</string>
   <string name="accessibility_show_password">إظهار كلمة المرور</string>
   <string name="accessibility_remove_attachment">إزالة المرفق</string>
@@ -1995,6 +2007,8 @@
   <string name="accessibility_navigate_up_directory">الانتقال للمستوى الأعلى</string>
   <string name="accessibility_refresh_workspace">تحديث مساحة العمل</string>
   <string name="accessibility_open_terminal">فتح المحطة الطرفية</string>
+  <string name="accessibility_expand_folder">توسيع المجلد</string>
+  <string name="accessibility_collapse_folder">طَي المجلد</string>
   <string name="accessibility_more_options">خيارات إضافية</string>
   <string name="accessibility_clear_text">مسح النص</string>
   <string name="accessibility_toggle_token_visibility">تبديل إظهار الرمز</string>
@@ -2064,4 +2078,22 @@
   <string name="setting_sub_agents_page_delete">حذف</string>
   <string name="setting_sub_agents_page_cancel">إلغاء</string>
   <string name="setting_sub_agents_page_confirm">حفظ</string>
+
+  <!-- BrowserAiStripe redesign: outcome-aware, localized action trail -->
+  <string name="browser_ai_stripe_stop">إيقاف</string>
+  <string name="browser_ai_action_open">فتح %1$s</string>
+  <string name="browser_ai_action_click">تم النقر على %1$s</string>
+  <string name="browser_ai_action_type">الكتابة في %1$s</string>
+  <string name="browser_ai_action_scroll">تم التمرير %1$s</string>
+  <string name="browser_ai_action_submit">تم إرسال %1$s</string>
+  <string name="browser_ai_action_select">تم اختيار خيار في %1$s</string>
+  <string name="browser_ai_action_key">تم الضغط على %1$s</string>
+  <string name="browser_ai_action_js">تم تشغيل جافاسكريبت</string>
+  <string name="browser_ai_action_screenshot">تم أخذ لقطة شاشة</string>
+  <string name="browser_ai_action_read">تمت قراءة %1$s</string>
+  <string name="browser_ai_action_back">تم الرجوع</string>
+  <string name="browser_ai_action_forward">تم التقدم للأمام</string>
+  <string name="browser_ai_action_done">انتهى: %1$s</string>
+  <string name="browser_ai_action_stopped">تم الإيقاف بواسطة المستخدم</string>
+  <string name="browser_ai_action_failed">فشل: %1$s</string>
 </resources>

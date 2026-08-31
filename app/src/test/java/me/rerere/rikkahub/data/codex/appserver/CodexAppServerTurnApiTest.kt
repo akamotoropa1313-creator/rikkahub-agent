@@ -285,6 +285,29 @@ class CodexAppServerTurnApiTest {
     }
 
     @Test
+    fun `turn keeps tagged sandbox camel case while approval follows the pinned runtime`() = runBlocking {
+        fixture().use { f ->
+            val call = async {
+                f.api.startTurn(
+                    "t",
+                    listOf(CodexAppServerTurnInput.Text("write")),
+                    CodexAppServerTurnStartParams(
+                        approvalPolicy = CodexAppServerApprovalPolicy.ON_REQUEST,
+                        sandboxPolicy = CodexAppServerSandboxMode.WORKSPACE_WRITE.toTurnPolicy(),
+                    ),
+                )
+            }
+            val request = decodeRequest(f.transport.takeClientLine())
+            val params = request.params!!.jsonObject
+            assertEquals("on-request", params["approvalPolicy"]!!.jsonPrimitive.content)
+            assertEquals("workspaceWrite", params["sandboxPolicy"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+            f.respond(request, turnResult("id", "completed"))
+            call.await()
+        }
+        Unit
+    }
+
+    @Test
     fun `blank thread id rejects before write and ready gate is required`() {
         runBlocking {
             fixture().use { f ->

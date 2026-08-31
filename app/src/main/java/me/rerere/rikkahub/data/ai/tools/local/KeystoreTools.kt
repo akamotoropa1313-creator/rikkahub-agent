@@ -4,6 +4,8 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
+import android.os.Build
+import androidx.annotation.RequiresApi
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -45,6 +47,34 @@ private fun b64encode(bytes: ByteArray): String = Base64.getEncoder().encodeToSt
 private fun b64decode(s: String): ByteArray = Base64.getDecoder().decode(s)
 
 private fun loadKeyStore(): KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+
+@RequiresApi(Build.VERSION_CODES.P)
+private fun generateStrongBoxRsaOrFallback(
+    generator: KeyPairGenerator,
+    spec: KeyGenParameterSpec.Builder,
+) {
+    try {
+        generator.initialize(spec.setIsStrongBoxBacked(true).build())
+        generator.generateKeyPair()
+    } catch (_: StrongBoxUnavailableException) {
+        generator.initialize(spec.setIsStrongBoxBacked(false).build())
+        generator.generateKeyPair()
+    }
+}
+
+@RequiresApi(Build.VERSION_CODES.P)
+private fun generateStrongBoxAesOrFallback(
+    generator: KeyGenerator,
+    spec: KeyGenParameterSpec.Builder,
+) {
+    try {
+        generator.init(spec.setIsStrongBoxBacked(true).build())
+        generator.generateKey()
+    } catch (_: StrongBoxUnavailableException) {
+        generator.init(spec.setIsStrongBoxBacked(false).build())
+        generator.generateKey()
+    }
+}
 
 /** Validates a keystore alias. Shared with the unit test. Returns null when ok. */
 internal fun validateKeystoreAlias(alias: String?): String? = when {
@@ -148,11 +178,12 @@ fun keystoreGenerateKeyTool(): Tool = Tool(
                     val gen = KeyPairGenerator.getInstance(
                         KeyProperties.KEY_ALGORITHM_RSA, ANDROID_KEYSTORE
                     )
-                    try {
-                        gen.initialize(spec.setIsStrongBoxBacked(true).build())
-                        gen.generateKeyPair()
-                    } catch (_: StrongBoxUnavailableException) {
-                        gen.initialize(spec.setIsStrongBoxBacked(false).build())
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        generateStrongBoxRsaOrFallback(gen, spec)
+                    } else {
+                        // StrongBox was added in API 28. API 26/27 can still generate a
+                        // normal AndroidKeyStore key backed by the device's available TEE.
+                        gen.initialize(spec.build())
                         gen.generateKeyPair()
                     }
                 }
@@ -167,11 +198,10 @@ fun keystoreGenerateKeyTool(): Tool = Tool(
                     val gen = KeyGenerator.getInstance(
                         KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE
                     )
-                    try {
-                        gen.init(spec.setIsStrongBoxBacked(true).build())
-                        gen.generateKey()
-                    } catch (_: StrongBoxUnavailableException) {
-                        gen.init(spec.setIsStrongBoxBacked(false).build())
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        generateStrongBoxAesOrFallback(gen, spec)
+                    } else {
+                        gen.init(spec.build())
                         gen.generateKey()
                     }
                 }

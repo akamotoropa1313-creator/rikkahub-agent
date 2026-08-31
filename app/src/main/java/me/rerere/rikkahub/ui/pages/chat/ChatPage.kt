@@ -5,12 +5,16 @@ import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
@@ -55,7 +59,9 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.Model
+import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.common.android.appTempFolder
 import me.rerere.hugeicons.HugeIcons
@@ -77,7 +83,10 @@ import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.CodexConversationUiState
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
+import me.rerere.rikkahub.ui.components.ai.SearchMode
 import me.rerere.rikkahub.ui.components.codex.CodexControlSheet
+import me.rerere.rikkahub.ui.components.codex.CodexHarnessModelSelector
+import me.rerere.rikkahub.ui.components.codex.CodexReasoningEffortButton
 import me.rerere.rikkahub.ui.components.codex.codexComposerLabel
 import me.rerere.rikkahub.ui.components.codex.compactContextText
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
@@ -294,11 +303,12 @@ private fun ChatPageContent(
     val assistant = setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
     var showFilesSheet by remember { mutableStateOf(false) }
     var showCodexControls by remember { mutableStateOf(false) }
+    var pendingCodexMessageDelete by remember { mutableStateOf<UIMessage?>(null) }
     val codexCapabilities by vm.codexCapabilities.collectAsStateWithLifecycle()
     val codexReview by vm.codexReview.collectAsStateWithLifecycle()
     val codexOperationBusy by vm.codexOperationBusy.collectAsStateWithLifecycle()
     val codexPrepareJob by vm.codexPrepareJob.collectAsStateWithLifecycle()
-    val selectedCodexSkill by vm.selectedCodexSkill.collectAsStateWithLifecycle()
+    val selectedCodexSkills by vm.selectedCodexSkills.collectAsStateWithLifecycle()
 
     val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
         assistant.workspaceId?.let { workspaceId ->
@@ -340,9 +350,23 @@ private fun ChatPageContent(
             },
             bottomBar = {
                 Column {
-                    selectedCodexSkill?.let { skill ->
-                        TextButton(onClick = { vm.selectCodexSkill(null) }) {
-                            Text("${skill.name}  ×", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (selectedCodexSkills.isNotEmpty()) {
+                        FlowRow(
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            selectedCodexSkills.forEach { skill ->
+                                AssistChip(
+                                    onClick = { vm.removeCodexSkill(skill.path) },
+                                    label = {
+                                        Text(
+                                            "${skill.name}  ×",
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                )
+                            }
                         }
                     }
                     if (assistant.codexAppServerEnabled) {
@@ -353,23 +377,28 @@ private fun ChatPageContent(
                             is CodexConversationUiState.Terminal -> state.telemetry
                             else -> null
                         }?.latest?.tokenUsage
-                        TextButton(
-                            onClick = { showCodexControls = true },
+                        Surface(
                             modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.background,
                         ) {
-                            Column {
-                                Text(
-                                    text = codexComposerLabel(assistant, codexCapabilities.models, setting.providers),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                currentUsage?.let { usage ->
+                            TextButton(
+                                onClick = { showCodexControls = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column {
                                     Text(
-                                        text = compactContextText(usage),
+                                        text = codexComposerLabel(assistant, codexCapabilities.models, setting.providers),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
-                                        style = MaterialTheme.typography.labelSmall,
                                     )
+                                    currentUsage?.let { usage ->
+                                        Text(
+                                            text = compactContextText(usage),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.labelSmall,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -380,21 +409,60 @@ private fun ChatPageContent(
                         settings = setting,
                         hazeState = hazeState,
                         completionProviders = completionProviders,
+                        modelSelectorContent = if (assistant.codexAppServerEnabled) {
+                            {
+                                CodexHarnessModelSelector(
+                                    assistant = assistant,
+                                    providers = setting.providers,
+                                    onUpdateAssistant = vm::updateCodexModelSelection,
+                                    hasBoundSession = hasCodexBinding,
+                                    enabled = !codexOperationBusy && loadingJob == null,
+                                )
+                                CodexReasoningEffortButton(
+                                    assistant = assistant,
+                                    models = codexCapabilities.models,
+                                    onUpdateAssistant = vm::updateCodexModelSelection,
+                                    onRefreshModels = vm::refreshCodexModels,
+                                    connected = codexCapabilities.connected,
+                                    modelsLoading = codexCapabilities.modelsLoading,
+                                    enabled = !codexOperationBusy && loadingJob == null,
+                                )
+                            }
+                        } else {
+                            null
+                        },
+                        showStandardGenerationControls = !assistant.codexAppServerEnabled,
                         onCancelClick = {
                             vm.stopGeneration()
                         },
                         enableSearch = enableWebSearch,
-                        onToggleSearch = {
+                        onUpdateSearchMode = { mode ->
                             val current = setting.getCurrentAssistant()
+                            val model = setting.getCurrentChatModel()
                             vm.updateSettings(
                                 setting.copy(
                                     assistants = setting.assistants.map { assistant ->
                                         if (assistant.id == current.id) {
-                                            assistant.copy(enableWebSearch = !enableWebSearch)
+                                            assistant.copy(enableWebSearch = mode == SearchMode.LOCAL)
                                         } else {
                                             assistant
                                         }
-                                    }
+                                    },
+                                    providers = if (model == null) {
+                                        setting.providers
+                                    } else {
+                                        setting.providers.map { provider ->
+                                            provider.editModel(
+                                                model.copy(
+                                                    tools = if (mode == SearchMode.BUILT_IN) {
+                                                        model.tools + BuiltInTools.Search
+                                                    } else {
+                                                        model.tools - BuiltInTools.Search
+                                                    }
+                                                )
+                                            )
+                                        }
+                                    },
                                 )
                             )
                         },
@@ -477,8 +545,7 @@ private fun ChatPageContent(
                 errors = errors,
                 onDismissError = onDismissError,
                 onClearAllErrors = onClearAllErrors,
-                onCodexCommandApproval = vm::respondCodexCommandApproval,
-                onCodexFileApproval = vm::respondCodexFileApproval,
+                onCodexToolApproval = vm::respondCodexToolApproval,
                 onRegenerate = {
                     vm.regenerateAtMessage(it)
                 },
@@ -495,6 +562,8 @@ private fun ChatPageContent(
                 onDelete = {
                     if (loadingJob != null) {
                         vm.showDeleteBlockedWhileGeneratingError()
+                    } else if (hasCodexBinding) {
+                        pendingCodexMessageDelete = it
                     } else {
                         vm.deleteMessage(it)
                     }
@@ -533,6 +602,12 @@ private fun ChatPageContent(
                 },
                 onToolAnswer = { toolCallId, answer ->
                     vm.handleToolAnswer(toolCallId, answer)
+                },
+                onCodexToolAnswer = { toolCallId, answer ->
+                    vm.respondCodexToolAnswer(toolCallId, answer)
+                },
+                onRerunTool = { toolCallId ->
+                    vm.rerunTool(toolCallId)
                 },
                 onToggleFavorite = { node ->
                     vm.toggleMessageFavorite(node)
@@ -581,12 +656,36 @@ private fun ChatPageContent(
                     onCancelSignIn = vm::cancelCodexAccountLogin,
                     onLogout = vm::logoutCodexAccount,
                     onSetSkillEnabled = vm::setCodexSkillEnabled,
-                    onUseSkill = { vm.selectCodexSkill(it); showCodexControls = false },
+                    selectedSkillPaths = selectedCodexSkills.mapTo(linkedSetOf()) { it.path },
+                    onUseSkill = vm::toggleCodexSkill,
                     onMcpSignIn = vm::beginCodexMcpOAuth,
                     operationBusy = codexOperationBusy,
                     onReconnect = vm::reconnectCodexSession,
+                    onResetSession = vm::resetCodexSession,
                 )
             }
+        }
+        pendingCodexMessageDelete?.let { message ->
+            AlertDialog(
+                onDismissRequest = { pendingCodexMessageDelete = null },
+                title = { Text(stringResource(R.string.chat_codex_delete_reset_title)) },
+                text = { Text(stringResource(R.string.chat_codex_delete_reset_message)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            pendingCodexMessageDelete = null
+                            vm.deleteMessage(message, resetCodexSession = true)
+                        },
+                    ) {
+                        Text(stringResource(R.string.chat_codex_delete_reset_confirm))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingCodexMessageDelete = null }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+            )
         }
     }
 }

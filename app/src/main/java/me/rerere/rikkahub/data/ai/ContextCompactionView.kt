@@ -1,9 +1,12 @@
 package me.rerere.rikkahub.data.ai
 
 import me.rerere.ai.ui.UIMessage
+import me.rerere.rikkahub.data.harness.withoutAgentHarnessPresentationParts
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.ConversationCompaction
+import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.toMessageNode
+import kotlin.uuid.Uuid
 
 data class CompactedMessageView(
     val messages: List<UIMessage>,
@@ -23,9 +26,13 @@ object ContextCompactionView {
         val sourceEndIndex = conversation.messageNodes.indexOfFirst {
             it.id == compaction.sourceEndNodeId
         }
-        val tailStartIndex = compaction.tailStartNodeId?.let { tailStartNodeId ->
+        val resolvedTailStartIndex = compaction.tailStartNodeId?.let { tailStartNodeId ->
             conversation.messageNodes.indexOfFirst { it.id == tailStartNodeId }
-        } ?: (sourceEndIndex + 1)
+        }
+        // A non-null tailStartNodeId that no longer resolves (its node was deleted) falls back
+        // to sourceEndIndex + 1, same as a null tailStartNodeId: the next node simply becomes
+        // the tail start rather than invalidating the whole compaction.
+        val tailStartIndex = resolvedTailStartIndex?.takeIf { it >= 0 } ?: (sourceEndIndex + 1)
         if (
             sourceEndIndex < 0 ||
             tailStartIndex != sourceEndIndex + 1 ||
@@ -38,7 +45,7 @@ object ContextCompactionView {
             messages = ContextCompactionPresentation.stripDisplayTools(
                 listOf(UIMessage.user(compaction.summary)) +
                     conversation.currentMessages.drop(tailStartIndex),
-            ),
+            ).withoutAgentHarnessPresentationParts(),
             compaction = compaction,
             rawTailStartIndex = tailStartIndex,
         )
@@ -84,8 +91,29 @@ object ContextCompactionView {
     }
 
     private fun rawView(conversation: Conversation) = CompactedMessageView(
-        messages = ContextCompactionPresentation.stripDisplayTools(conversation.currentMessages),
+        messages = ContextCompactionPresentation.stripDisplayTools(conversation.currentMessages)
+            .withoutAgentHarnessPresentationParts(),
         compaction = null,
         rawTailStartIndex = 0,
     )
+
+    /** (node id, selected message id) for every node up to and including the compaction's source-end node, or null if that node is absent. */
+    fun compactedPrefixSignature(
+        nodes: List<MessageNode>,
+        compaction: ConversationCompaction,
+    ): List<Pair<Uuid, Uuid>>? {
+        val end = nodes.indexOfFirst { it.id == compaction.sourceEndNodeId }
+        if (end < 0) return null
+        return nodes.take(end + 1).map { it.id to it.currentMessage.id }
+    }
+
+    /** True when [after] still carries the exact compacted prefix that [before] had. */
+    fun compactedPrefixUnchanged(
+        compaction: ConversationCompaction,
+        before: List<MessageNode>,
+        after: List<MessageNode>,
+    ): Boolean {
+        val expected = compactedPrefixSignature(before, compaction) ?: return false
+        return compactedPrefixSignature(after, compaction) == expected
+    }
 }

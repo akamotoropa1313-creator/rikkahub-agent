@@ -23,7 +23,9 @@ data class UIMessage(
     val finishedAt: LocalDateTime? = null,
     val modelId: Uuid? = null,
     val usage: TokenUsage? = null,
-    val translation: String? = null
+    val translation: String? = null,
+    /** Null for normal provider chat; populated by agent-harness integrations. */
+    val harness: HarnessMetadata? = null,
 ) {
     fun summaryAsText(maxLength: Int = Int.MAX_VALUE): String {
         val text = "[${role.name}]: " + parts.joinToString(separator = "\n") { part ->

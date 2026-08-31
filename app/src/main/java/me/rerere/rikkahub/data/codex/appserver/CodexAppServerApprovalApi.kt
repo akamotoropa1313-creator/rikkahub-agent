@@ -56,6 +56,11 @@ data class CodexAppServerFileChangeApprovalRequest(
 sealed interface CodexAppServerApprovalEvent {
     data class CommandExecutionRequest(val requestId: JsonRpcId, val request: CodexAppServerCommandApprovalRequest) : CodexAppServerApprovalEvent
     data class FileChangeRequest(val requestId: JsonRpcId, val request: CodexAppServerFileChangeApprovalRequest) : CodexAppServerApprovalEvent
+    /** Client-hosted dynamic tool approval, synthesized by CodexChatRuntime. */
+    data class DynamicToolRequest(
+        val requestId: JsonRpcId,
+        val request: CodexAppServerDynamicToolCallRequest,
+    ) : CodexAppServerApprovalEvent
     data class Resolved(val threadId: String, val requestId: JsonRpcId, val rawParams: JsonObject) : CodexAppServerApprovalEvent
     data class MalformedRequest(val requestId: JsonRpcId, val method: String, val rawParams: JsonElement?, val cause: CodexAppServerApprovalProtocolException) : CodexAppServerApprovalEvent
     data class MalformedNotification(val method: String, val rawParams: JsonElement?, val cause: CodexAppServerApprovalProtocolException) : CodexAppServerApprovalEvent

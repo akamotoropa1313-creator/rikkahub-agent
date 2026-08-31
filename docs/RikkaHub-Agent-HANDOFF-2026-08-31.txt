@@ -1,0 +1,115 @@
+RikkaHub Agent / Codex App Server — handoff report
+Updated: 2026-08-31
+Branch: codex/app-quality-ui-audit
+PR: #36 (keep Draft; do not merge before Redmi physical-device verification)
+
+1. Repository state
+
+Base before this repair pass:
+  4758540787cc3c27c63afee58a377befee4a50f4
+
+New local commits:
+  4b826747 feat(codex): bridge assistant tools into app server
+  2262f4d4 test(codex): cover assistant dynamic tool bridge
+
+Push is pending because the restarted Work environment has no GitHub credential helper or GH token.
+The first push attempt failed before any remote mutation with:
+  fatal: could not read Username for 'https://github.com'
+
+2. Implemented behavior
+
+- Codex App Server 0.146 thread/start now receives the conversation-owned RikkaHub Assistant's
+  client-hosted dynamic tool specifications.
+- item/tool/call server requests retain string/numeric JSON-RPC IDs, validate thread/turn/tool/
+  namespace/argument context, apply the hardline safety floor, use existing approval scopes, obey
+  the per-turn runtime budget, execute through the Android RikkaHub Tool implementation, and return
+  inputText/inputImage/inputAudio content items to App Server.
+- The selected Assistant's local tools are exposed. This includes termux_run_command when Termux is
+  enabled for that Assistant. The Codex process does not need openclaw, clawhub, node, npm, npx, or
+  a Termux binary inside /workspace; the RikkaHub/Android bridge performs the invocation.
+- Every Assistant-enabled Skill remains enabled together. Codex owns use_skill; RikkaHub also
+  exposes its non-conflicting read-only Skill accessor where selected.
+- Only MCP servers/tools selected by the conversation-owned Assistant are exposed. Unicode,
+  punctuation, and overlong MCP labels are converted to stable unique ASCII names within Codex's
+  64-character function-name limit instead of rejecting the server.
+- ask_user remains interactive. The Codex-generated question card sends the user's answer directly
+  to the pending item/tool/call response and never executes ask_user's headless fallback in the
+  visible chat path.
+- Runtime profile refresh compares the Assistant Skill profile, tool schema fingerprint, Assistant/
+  headless execution identity, and generated developer instructions. Changing the Assistant,
+  prompts, Skills, tools, MCP surface, or headless context therefore cannot keep stale closures.
+- Room database version is 32. codex_app_server_session_bindings stores dynamic_tools_fingerprint.
+  App Server 0.146 cannot override dynamicTools on thread/resume, so a changed fingerprint replaces
+  the durable thread before the next turn instead of silently retaining a stale tool surface.
+- Codex App Server account synchronization uses the existing RikkaHub Codex provider's login/token
+  through the external-token bridge. The control center does not own a second independent browser
+  login.
+
+3. Assistant setting boundary
+
+Mapped to the App Server session when the setting has a real Codex equivalent:
+  - conversation-owned Assistant and conversation system instructions
+  - model, reasoning/summary/personality, service tier, sandbox, approval policy
+  - all enabled Skills
+  - enabled local Android/Termux tools
+  - Assistant-selected MCP servers and tools
+
+Not fabricated as Codex settings:
+  - provider-only temperature/topP/arbitrary request headers/body/max-token fields
+  - UI identity/background presentation
+  - unrelated memory presentation settings
+
+4. Regression coverage added
+
+  CodexAppServerDynamicToolApiTest
+    - exact dynamic-call context and request-ID decoding
+    - malformed call becomes a diagnostic event
+
+  CodexAssistantToolsTest
+    - multiple selected tools and JSON object schema
+    - execution-identity refresh without changing the durable schema fingerprint
+
+  McpModelToolNameTest
+    - legacy valid-name compatibility
+    - stable unique sanitization for Unicode/long names
+
+  CodexChatRuntimeIntegrationTest
+    - Android-side Termux dynamic execution
+    - approval-gated dynamic execution
+    - interactive ask_user answer without headless fallback
+
+  CodexAppServerSessionRecoveryTest
+    - durable-thread replacement when the dynamic-tool fingerprint changes
+
+5. Verification status at this checkpoint
+
+Passed:
+  - git diff --check before each commit
+  - source and test changes persisted in local Git commits
+
+Pending:
+  - targeted Gradle unit tests
+  - production Kotlin / Room schema generation
+  - committing generated Room schema 32 JSON
+  - debug APK build, ABI inspection, file size, and SHA-256
+  - push of the three local commits
+  - Redmi Note 13 Pro+ / Android 16 physical-device checks
+
+Local verification is currently blocked by a transient official Android SDK download failure. The
+restarted Work environment lost its temporary SDK/cache; dl.google.com repeatedly stalled at 0 B/s
+or closed the HTTP/2 stream. No test failure has been observed from the source itself in this pass.
+
+6. Physical-device release gate
+
+Keep PR #36 Draft until all of these pass on the Redmi device:
+  1. Codex provider token sync shows the same RikkaHub provider account without a second login.
+  2. Two or more Assistant Skills can remain enabled and Codex can invoke each.
+  3. A RikkaHub local tool is visible and executes through Android.
+  4. termux_run_command reaches the configured Termux integration rather than searching /workspace.
+  5. Assistant-selected MCP tools appear; disabled Assistant MCP tools do not.
+  6. ask_user shows an answer card and the turn continues after submission.
+  7. Switching Assistant/tool/Skill selections refreshes the session without stale tools.
+  8. Existing chats survive Room 31 -> 32 migration.
+
+Do not merge solely from local/unit results. APK installation and the above device checks remain the
+final release gate.

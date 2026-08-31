@@ -18,6 +18,14 @@ internal fun formatDuration(durationMs: Long): String = when {
     durationMs < 60_000 -> "%.1f 秒".format(Locale.US, durationMs / 1_000.0).replace(".0 秒", " 秒")
     else -> "${durationMs / 60_000}分 ${(durationMs % 60_000) / 1_000}秒"
 }
+internal fun formatElapsedDuration(durationMs: Long): String {
+    val totalSeconds = durationMs.coerceAtLeast(0L) / 1_000L
+    return if (totalSeconds < 60L) {
+        "${totalSeconds}秒"
+    } else {
+        "${totalSeconds / 60L}分${totalSeconds % 60L}秒"
+    }
+}
 internal fun currentContextText(usage: CodexThreadTokenUsage): String = usage.modelContextWindow?.let {
     "${formatTokenCount(usage.last.totalTokens)} / ${formatTokenCount(it)} トークン"
 } ?: "${formatTokenCount(usage.last.totalTokens)} トークン"

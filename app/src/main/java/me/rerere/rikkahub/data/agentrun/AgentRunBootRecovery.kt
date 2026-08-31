@@ -1,11 +1,15 @@
 package me.rerere.rikkahub.data.agentrun
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 
 private const val TAG = "AgentRunBootRecovery"
 
@@ -103,6 +107,15 @@ class AgentRunBootRecovery(
                     .setStyle(NotificationCompat.BigTextStyle().bigText(text))
                     .setSmallIcon(android.R.drawable.ic_dialog_info)
                     .setAutoCancel(true)
+                if (
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.POST_NOTIFICATIONS,
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    return@runCatching
+                }
                 NotificationManagerCompat.from(context).notify(AGGREGATE_NOTIF_ID, builder.build())
             }.onFailure {
                 // POST_NOTIFICATIONS not granted, or notifications restricted — non-fatal.

@@ -40,6 +40,7 @@ open class CodexAppServerConversationSession internal constructor(
     val turnApi = CodexAppServerTurnApi(connection)
     val reviewApi = CodexAppServerReviewApi(connection)
     val approvalApi = CodexAppServerApprovalApi(connection)
+    val dynamicToolApi = CodexAppServerDynamicToolApi(connection)
     val skillsApi = CodexAppServerSkillsApi(connection)
     val mcpApi = CodexAppServerMcpApi(connection)
     val accountApi = CodexAppServerAccountApi(connection)
@@ -194,6 +195,7 @@ class CodexAppServerConversationSessionOpener(
     private val recovery: CodexAppServerSessionRecovery,
     private val harnessProjectionResolver: CodexHarnessConversationProjectionResolver? = null,
     private val autoRefreshModelCatalog: Boolean = false,
+    private val connectionBootstrapper: CodexAppServerConnectionBootstrapper? = null,
 ) {
     /** Recovery entry point. Replaces only a server-missing binding that has never observed a turn. */
     suspend fun recoverBound(
@@ -212,7 +214,7 @@ class CodexAppServerConversationSessionOpener(
                 CodexAppServerConversationSessionOpenResult.Recovered(recovered.session)
             is CodexAppServerSessionRecoveryResult.StaleBinding -> {
                 if (recovered.canSafelyReplaceUnmaterializedThread()) {
-                    return replaceUnmaterializedThread(
+                    return replaceThread(
                         recovered.binding,
                         effectiveOverrides.toStartParams(),
                         projection,
@@ -243,7 +245,17 @@ class CodexAppServerConversationSessionOpener(
         val effectiveOverrides = overrides.withHarnessProjection(projection)
         val effectiveGuard = routeGuard ?: projection?.let { CodexHarnessExistingThreadRouteGuard.from(it) }
 
-        if (repository.getBinding(conversationId) != null) {
+        val existingBinding = repository.getBinding(conversationId)
+        val requestedToolFingerprint = codexDynamicToolsFingerprint(effectiveOverrides.dynamicTools)
+        if (existingBinding != null &&
+            existingBinding.dynamicToolsFingerprint != requestedToolFingerprint
+        ) {
+            // App Server 0.146 persists dynamicTools at thread/start and has no resume override.
+            // Rebind rather than silently recovering a thread with a stale Assistant tool surface.
+            return replaceThread(existingBinding, effectiveOverrides, projection)
+        }
+
+        if (existingBinding != null) {
             val resumeOverrides = CodexAppServerThreadResumeParams(
                 model = effectiveOverrides.model,
                 modelProvider = effectiveOverrides.modelProvider,
@@ -261,7 +273,7 @@ class CodexAppServerConversationSessionOpener(
                     CodexAppServerConversationSessionOpenResult.Recovered(recovered.session)
                 is CodexAppServerSessionRecoveryResult.StaleBinding -> {
                     if (recovered.canSafelyReplaceUnmaterializedThread()) {
-                        return replaceUnmaterializedThread(
+                        return replaceThread(
                             recovered.binding,
                             effectiveOverrides,
                             projection,
@@ -287,7 +299,7 @@ class CodexAppServerConversationSessionOpener(
         )
     }
 
-    private suspend fun replaceUnmaterializedThread(
+    private suspend fun replaceThread(
         binding: CodexAppServerSessionBindingEntity,
         overrides: CodexAppServerThreadStartParams,
         projection: CodexHarnessThreadProjection?,
@@ -296,7 +308,7 @@ class CodexAppServerConversationSessionOpener(
             if (projection?.isGatewayBacked == true) {
                 harnessProjectionResolver?.release(binding.conversationId)
             }
-            error("Binding changed while replacing an unmaterialized Codex thread")
+            error("Binding changed while replacing a Codex thread")
         }
         return startNewThread(
             binding.conversationId,
@@ -325,11 +337,13 @@ class CodexAppServerConversationSessionOpener(
         var transferred = false
         try {
             connection.initialize()
+            connectionBootstrapper?.bootstrap(connection)
             val started = CodexAppServerThreadApi(connection).startThread(
                 overrides.copy(ephemeral = false),
             )
             val binding = repository.createPersistentThreadBinding(
                 conversationId, workspaceId, workspaceCwd, started.thread,
+                dynamicToolsFingerprint = codexDynamicToolsFingerprint(overrides.dynamicTools),
             )
             val session = CodexAppServerConversationSession(
                 binding,

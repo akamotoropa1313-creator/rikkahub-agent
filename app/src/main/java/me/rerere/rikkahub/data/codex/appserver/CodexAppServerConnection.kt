@@ -156,6 +156,14 @@ class CodexAppServerConnection(
         dispatcher.respondSuccess(id, result)
     }
 
+    internal suspend fun respondServerRequestErrorAfterReady(id: JsonRpcId, error: JsonRpcError) {
+        val current = mutableState.value
+        if (current !is CodexAppServerConnectionState.Ready) {
+            throw CodexAppServerNotReadyException(current)
+        }
+        dispatcher.respondError(id, error)
+    }
+
     /** Returns a transition only for the first, still-current handshake failure. */
     private fun failHandshake(current: Handshake, cause: Throwable): FailureTransition? {
         if (handshake !== current) return null

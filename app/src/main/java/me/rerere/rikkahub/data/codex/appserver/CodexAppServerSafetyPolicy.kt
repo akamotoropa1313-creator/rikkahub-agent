@@ -4,18 +4,58 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/** Stable App Server approval values. Experimental granular and deprecated aliases are excluded. */
-enum class CodexAppServerApprovalPolicy(val wireValue: String) {
-    UNTRUSTED("untrusted"), ON_REQUEST("on-request"), NEVER("never");
+/**
+ * Approval values for the pinned Codex 0.146 App Server runtime.
+ *
+ * That runtime uses the CLI/kebab spelling in both thread and turn requests. Keep this protocol
+ * value separate from any newer App Server documentation when the pinned runtime is upgraded.
+ */
+enum class CodexAppServerApprovalPolicy(val preferenceValue: String, val runtimeWireValue: String) {
+    UNTRUSTED("untrusted", "untrusted"),
+    ON_REQUEST("on-request", "on-request"),
+    NEVER("never", "never");
 
-    companion object { fun fromPreference(value: String?) = entries.firstOrNull { it.wireValue == value } }
+    companion object { fun fromPreference(value: String?) = entries.firstOrNull { it.preferenceValue == value } }
 }
 
-/** Stable public sandbox presets accepted by thread/start and thread/resume. */
-enum class CodexAppServerSandboxMode(val wireValue: String) {
-    READ_ONLY("read-only"), WORKSPACE_WRITE("workspace-write"), DANGER_FULL_ACCESS("danger-full-access");
+/**
+ * Sandbox presets have two different wire shapes in the pinned runtime.
+ *
+ * `thread/start` and `thread/resume` accept kebab-case mode strings, while the tagged
+ * `turn/start.sandboxPolicy.type` object uses camelCase. Naming both prevents one endpoint's
+ * spelling from leaking into the other.
+ */
+enum class CodexAppServerSandboxMode(
+    val preferenceValue: String,
+    val threadWireValue: String,
+    val turnPolicyType: String,
+) {
+    READ_ONLY("read-only", "read-only", "readOnly"),
+    WORKSPACE_WRITE("workspace-write", "workspace-write", "workspaceWrite"),
+    DANGER_FULL_ACCESS("danger-full-access", "danger-full-access", "dangerFullAccess");
 
-    companion object { fun fromPreference(value: String?) = entries.firstOrNull { it.wireValue == value } }
+    fun matchesServerValue(value: String) =
+        value == preferenceValue || value == threadWireValue || value == turnPolicyType
+
+    companion object { fun fromPreference(value: String?) = entries.firstOrNull { it.preferenceValue == value } }
+}
+
+/** Local preference sentinel that deliberately leaves the App Server sandbox override unset. */
+const val CODEX_SANDBOX_SERVER_DEFAULT = "server-default"
+
+/**
+ * Resolve the saved UI preference into the policy sent to App Server.
+ *
+ * A missing preference comes from assistants created before the Codex controls existed. RikkaHub
+ * binds Codex to an isolated Workspace whose purpose is file work, so that compatibility default
+ * must be Workspace write rather than silently inheriting a read-only App Server default. Users
+ * who deliberately want no override can still select [CODEX_SANDBOX_SERVER_DEFAULT]. Unknown
+ * future values remain omitted rather than being guessed.
+ */
+fun effectiveCodexSandboxMode(value: String?): CodexAppServerSandboxMode? = when (value) {
+    null -> CodexAppServerSandboxMode.WORKSPACE_WRITE
+    CODEX_SANDBOX_SERVER_DEFAULT -> null
+    else -> CodexAppServerSandboxMode.fromPreference(value)
 }
 
 /** Exact stable SandboxPolicy object used by turn/start. No custom fields are exposed. */
@@ -25,7 +65,7 @@ sealed interface CodexAppServerSandboxPolicy {
     data object ReadOnly : CodexAppServerSandboxPolicy {
         override fun toJson() = JsonObject(
             mapOf(
-                "type" to JsonPrimitive("readOnly"),
+                "type" to JsonPrimitive(CodexAppServerSandboxMode.READ_ONLY.turnPolicyType),
                 "networkAccess" to JsonPrimitive(false),
             ),
         )
@@ -34,7 +74,7 @@ sealed interface CodexAppServerSandboxPolicy {
     data object WorkspaceWrite : CodexAppServerSandboxPolicy {
         override fun toJson() = JsonObject(
             mapOf(
-                "type" to JsonPrimitive("workspaceWrite"),
+                "type" to JsonPrimitive(CodexAppServerSandboxMode.WORKSPACE_WRITE.turnPolicyType),
                 "writableRoots" to JsonArray(emptyList()),
                 "networkAccess" to JsonPrimitive(false),
                 "excludeTmpdirEnvVar" to JsonPrimitive(false),
@@ -43,8 +83,24 @@ sealed interface CodexAppServerSandboxPolicy {
         )
     }
 
+    /**
+     * The Codex process is already contained by RikkaHub's selected Android PRoot Workspace.
+     * Asking Codex to create another Linux sandbox would require bubblewrap/user namespaces,
+     * which are not available on supported unrooted Android devices.
+     */
+    data object ExternalWorkspace : CodexAppServerSandboxPolicy {
+        override fun toJson() = JsonObject(
+            mapOf(
+                "type" to JsonPrimitive("externalSandbox"),
+                "networkAccess" to JsonPrimitive("restricted"),
+            ),
+        )
+    }
+
     data object DangerFullAccess : CodexAppServerSandboxPolicy {
-        override fun toJson() = JsonObject(mapOf("type" to JsonPrimitive("dangerFullAccess")))
+        override fun toJson() = JsonObject(
+            mapOf("type" to JsonPrimitive(CodexAppServerSandboxMode.DANGER_FULL_ACCESS.turnPolicyType)),
+        )
     }
 }
 
@@ -52,4 +108,17 @@ fun CodexAppServerSandboxMode.toTurnPolicy(): CodexAppServerSandboxPolicy = when
     CodexAppServerSandboxMode.READ_ONLY -> CodexAppServerSandboxPolicy.ReadOnly
     CodexAppServerSandboxMode.WORKSPACE_WRITE -> CodexAppServerSandboxPolicy.WorkspaceWrite
     CodexAppServerSandboxMode.DANGER_FULL_ACCESS -> CodexAppServerSandboxPolicy.DangerFullAccess
+}
+
+/**
+ * Turn policy for the App Server process launched inside RikkaHub's managed PRoot Workspace.
+ *
+ * Keep [toTurnPolicy] as the exact native Codex preset mapping for protocol-level callers and
+ * tests. Production turns use this mapping so normal Workspace writes do not try to nest
+ * bubblewrap inside PRoot. This is not a full-access fallback: the outer Workspace remains the
+ * execution boundary and Codex network access stays restricted.
+ */
+fun CodexAppServerSandboxMode.toManagedProotTurnPolicy(): CodexAppServerSandboxPolicy = when (this) {
+    CodexAppServerSandboxMode.WORKSPACE_WRITE -> CodexAppServerSandboxPolicy.ExternalWorkspace
+    else -> toTurnPolicy()
 }

@@ -3,6 +3,7 @@ package me.rerere.workspace
 import com.sun.net.httpserver.HttpServer
 import org.junit.Assert.*
 import org.junit.Test
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.InetSocketAddress
@@ -38,6 +39,26 @@ class ExampleUnitTest {
             rejected = true
         }
         assertTrue(rejected)
+    }
+
+    @Test
+    fun managerUsesImportCapInsteadOfTextWriteCap() {
+        val baseDir = Files.createTempDirectory("workspace-import-test").toFile()
+        val manager = WorkspaceManager(
+            baseDir = baseDir,
+            config = WorkspaceConfig(maxWriteBytes = 4, maxImportBytes = 8),
+        )
+        val root = "test-workspace"
+        manager.ensureWorkspace(root)
+
+        val entry = manager.importFile(
+            root = root,
+            destinationPath = "",
+            fileName = "upload.bin",
+            inputStream = ByteArrayInputStream(ByteArray(8)),
+        )
+
+        assertEquals(8L, entry.sizeBytes)
     }
 
     @Test
@@ -229,6 +250,58 @@ class ExampleUnitTest {
         assertTrue(File(linuxDir, "tmp").canWrite())
         assertTrue(File(linuxDir, "var/tmp").canWrite())
         assertTrue(File(linuxDir, "root").isDirectory)
+    }
+
+    @Test
+    fun rootfsPatcherRefreshesOnlyItsManagedNetworkHosts() {
+        val linuxDir = Files.createTempDirectory("rootfs-hosts-patch-test").toFile()
+        val etcDir = File(linuxDir, "etc").apply { mkdirs() }
+        val hosts = File(etcDir, "hosts").apply {
+            writeText(
+                """
+                127.0.0.1 localhost
+                ::1 localhost ip6-localhost ip6-loopback
+                192.0.2.10 user-managed.example
+
+                # BEGIN RikkaHub managed network hosts
+                198.51.100.1 auth.openai.com
+                # END RikkaHub managed network hosts
+                """.trimIndent() + "\n",
+            )
+        }
+
+        RootfsPatcher().patch(
+            linuxDir,
+            RootfsPatchOptions(
+                managedHostMappings = linkedMapOf(
+                    "AUTH.OPENAI.COM." to listOf("203.0.113.7", "2001:db8::7%wlan0"),
+                    "bad host" to listOf("203.0.113.8"),
+                ),
+            ),
+        )
+
+        val refreshed = hosts.readText()
+        assertTrue(refreshed.contains("192.0.2.10 user-managed.example"))
+        assertTrue(refreshed.contains("203.0.113.7 auth.openai.com"))
+        assertTrue(refreshed.contains("2001:db8::7 auth.openai.com"))
+        assertTrue(!refreshed.contains("198.51.100.1 auth.openai.com"))
+        assertTrue(!refreshed.contains("bad host"))
+
+        RootfsPatcher().patch(
+            linuxDir,
+            RootfsPatchOptions(nameservers = listOf("9.9.9.9")),
+        )
+        assertTrue(hosts.readText().contains("203.0.113.7 auth.openai.com"))
+
+        RootfsPatcher().patch(
+            linuxDir,
+            RootfsPatchOptions(managedHostMappings = emptyMap()),
+        )
+
+        val cleared = hosts.readText()
+        assertTrue(cleared.contains("192.0.2.10 user-managed.example"))
+        assertTrue(!cleared.contains("RikkaHub managed network hosts"))
+        assertTrue(!cleared.contains("auth.openai.com"))
     }
 
     private fun tarGz(vararg entries: TarTestEntry): ByteArray {

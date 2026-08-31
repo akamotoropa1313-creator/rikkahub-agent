@@ -288,6 +288,7 @@ class CodexReviewRuntimeTest {
     private fun me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent.turnIdForTest(): String? = when (this) {
         is me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent.CommandExecutionRequest -> request.turnId
         is me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent.FileChangeRequest -> request.turnId
+        is me.rerere.rikkahub.data.codex.appserver.CodexAppServerApprovalEvent.DynamicToolRequest -> request.turnId
         else -> null
     }
 }

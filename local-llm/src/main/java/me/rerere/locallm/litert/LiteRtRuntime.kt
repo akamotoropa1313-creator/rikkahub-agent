@@ -1023,7 +1023,13 @@ class LiteRtRuntime(private val context: Context) {
                 }
             }
         } } finally {
-            runCatching { hintSession?.close() }
+            // PerformanceHintManager.Session exists from API 31. The session is only
+            // created on API 33+, but keep the close call in the same explicit guard so
+            // lint (and future refactors) cannot move an API-only invocation onto older
+            // devices.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                runCatching { hintSession?.close() }
+            }
             runCatching { Process.setThreadPriority(callerTid, originalPriority) }
             // Arm (or re-arm) the idle teardown. A new turn cancels the prior schedule and
             // starts a fresh window from now; no turn keeps the existing one ticking.

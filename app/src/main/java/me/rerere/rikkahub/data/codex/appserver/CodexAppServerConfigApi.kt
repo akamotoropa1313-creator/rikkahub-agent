@@ -29,7 +29,7 @@ data class CodexEffectiveConfigSnapshot(
 )
 
 data class CodexDiagnosticSandboxMode(val wireValue: String) {
-    val known: Boolean get() = wireValue in setOf("read-only", "workspace-write", "danger-full-access")
+    val known: Boolean get() = CodexAppServerSandboxMode.entries.any { it.matchesServerValue(wireValue) }
 }
 
 data class CodexSandboxWorkspaceWriteSnapshot(

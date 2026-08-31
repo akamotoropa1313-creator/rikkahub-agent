@@ -27,6 +27,7 @@ import me.rerere.hugeicons.stroke.Download04
 import me.rerere.hugeicons.stroke.Upload02
 import me.rerere.hugeicons.stroke.Zap
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.ui.components.codex.formatDuration
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.utils.formatNumber
 import me.rerere.rikkahub.utils.toFixed
@@ -111,40 +112,50 @@ fun ChatMessageNerdLine(
                             }
                         )
                     }
-                    // TPS
-                    if (message.finishedAt != null) {
-                        val duration = Duration.between(
-                            message.createdAt.toJavaLocalDateTime(),
-                            message.finishedAt!!.toJavaLocalDateTime()
-                        )
-                        val tps = usage.completionTokens.toFloat() / duration.toMillis() * 1000
-                        val seconds = (duration.toMillis() / 1000f).toFixed(1)
+                }
+
+                val harnessDurationMs = message.harness?.executionDurationMs
+                val durationMs = harnessDurationMs ?: message.finishedAt?.let { finishedAt ->
+                    Duration.between(
+                        message.createdAt.toJavaLocalDateTime(),
+                        finishedAt.toJavaLocalDateTime(),
+                    ).toMillis().coerceAtLeast(0L)
+                }
+                val showDuration = durationMs != null &&
+                    (harnessDurationMs != null || settings.showTokenUsage && usage != null)
+                if (showDuration) {
+                    val safeDurationMs = checkNotNull(durationMs).coerceAtLeast(0L)
+                    if (settings.showTokenUsage && usage != null && safeDurationMs > 0L) {
+                        val tps = usage.completionTokens.toFloat() / safeDurationMs * 1_000f
                         StatsItem(
                             icon = {
                                 Icon(
                                     imageVector = HugeIcons.Zap,
                                     contentDescription = stringResource(R.string.accessibility_speed),
-                                    modifier = Modifier.size(12.dp)
+                                    modifier = Modifier.size(12.dp),
                                 )
                             },
-                            content = {
-                                Text(text = "${tps.toFixed(1)} tok/s")
-                            }
-                        )
-
-                        StatsItem(
-                            icon = {
-                                Icon(
-                                    imageVector = HugeIcons.Clock02,
-                                    contentDescription = stringResource(R.string.accessibility_duration),
-                                    modifier = Modifier.size(12.dp)
-                                )
-                            },
-                            content = {
-                                Text(text = "${seconds}s")
-                            }
+                            content = { Text(text = "${tps.toFixed(1)} tok/s") },
                         )
                     }
+                    StatsItem(
+                        icon = {
+                            Icon(
+                                imageVector = HugeIcons.Clock02,
+                                contentDescription = stringResource(R.string.accessibility_duration),
+                                modifier = Modifier.size(12.dp),
+                            )
+                        },
+                        content = {
+                            Text(
+                                text = if (harnessDurationMs != null) {
+                                    formatDuration(safeDurationMs)
+                                } else {
+                                    "${(safeDurationMs / 1_000f).toFixed(1)}s"
+                                },
+                            )
+                        },
+                    )
                 }
             }
         }

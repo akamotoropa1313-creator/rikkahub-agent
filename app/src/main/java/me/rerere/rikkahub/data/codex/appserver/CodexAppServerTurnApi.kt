@@ -30,18 +30,37 @@ data class CodexAppServerExplicitSkillInvocation(
     val input: List<CodexAppServerTurnInput>,
 )
 
-/** Builds the two official explicit-invocation signals without sending or rewriting a turn. */
-fun explicitSkillInvocation(name: String, path: String, prompt: String = ""): CodexAppServerExplicitSkillInvocation {
-    require(name.isNotBlank()) { "skill name must not be blank" }
-    require(path.isNotBlank()) { "skill path must not be blank" }
+/** Builds the official text marker plus one typed input item for every selected skill. */
+fun explicitSkillsInvocation(
+    skills: List<Pair<String, String>>,
+    prompt: String = "",
+): CodexAppServerExplicitSkillInvocation {
+    require(skills.isNotEmpty()) { "at least one skill is required" }
+    skills.forEach { (name, path) ->
+        require(name.isNotBlank()) { "skill name must not be blank" }
+        require(path.isNotBlank()) { "skill path must not be blank" }
+    }
+    val distinctSkills = skills.distinctBy { it.second }
     val text = buildString {
-        append('$').append(name)
+        distinctSkills.forEachIndexed { index, (name, _) ->
+            if (index > 0) append(' ')
+            append('$').append(name)
+        }
         if (prompt.isNotBlank()) append(' ').append(prompt)
     }
     return CodexAppServerExplicitSkillInvocation(
-        listOf(CodexAppServerTurnInput.Text(text), CodexAppServerTurnInput.Skill(name, path)),
+        buildList {
+            add(CodexAppServerTurnInput.Text(text))
+            distinctSkills.forEach { (name, path) ->
+                add(CodexAppServerTurnInput.Skill(name, path))
+            }
+        },
     )
 }
+
+/** Backward-compatible one-skill convenience wrapper. */
+fun explicitSkillInvocation(name: String, path: String, prompt: String = ""): CodexAppServerExplicitSkillInvocation =
+    explicitSkillsInvocation(listOf(name to path), prompt)
 
 enum class CodexAppServerReasoningSummary(val wireValue: String) {
     AUTO("auto"),
@@ -290,7 +309,7 @@ private fun CodexAppServerTurnStartParams.toJson(
     personality?.let { put("personality", JsonPrimitive(it.wireValue)) }
     outputSchema?.let { put("outputSchema", it) }
     serviceTier?.let { put("serviceTier", JsonPrimitive(it)) }
-    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.wireValue)) }
+    approvalPolicy?.let { put("approvalPolicy", JsonPrimitive(it.runtimeWireValue)) }
     sandboxPolicy?.let { put("sandboxPolicy", it.toJson()) }
 }.let(::JsonObject)
 

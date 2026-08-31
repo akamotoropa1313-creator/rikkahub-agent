@@ -52,21 +52,20 @@ fun createSkillTools(
                     // never bothered to discover the SOUL via use_skill now see it on turn 1.
                     val autoLoaded = available.filter { it.autoLoad }
                     autoLoaded.forEach { skill ->
-                        val path = skill.autoLoadPath
                         // Both branches go through SkillManager's mtime-aware cache so
                         // the per-turn auto-load reads are O(stat) on cache hit rather
                         // than O(file I/O) — N auto-load skills × every turn used to
                         // re-read SOUL/HEARTBEAT/etc from disk every time.
                         val body = runCatching {
-                            if (path.isNullOrBlank()) {
-                                skillManager?.readSkillBody(skill.name)
-                                    ?: SkillFrontmatterParser
-                                        .extractBody(skill.skillFile.readText())
-                            } else {
-                                skillManager?.readSkillFileCached(skill.name, path)
-                                    ?: SkillPaths.resolveSkillFile(skill.skillDir, path)
+                            skillManager?.readAutoLoadBody(skill) ?: run {
+                                val path = skill.autoLoadPath
+                                if (path.isNullOrBlank()) {
+                                    SkillFrontmatterParser.extractBody(skill.skillFile.readText())
+                                } else {
+                                    SkillPaths.resolveSkillFile(skill.skillDir, path)
                                         ?.takeIf { file -> file.exists() }
                                         ?.readText()
+                                }
                             }
                         }.getOrNull()
                         if (!body.isNullOrBlank()) {

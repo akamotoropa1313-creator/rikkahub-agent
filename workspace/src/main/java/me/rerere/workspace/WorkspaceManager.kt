@@ -49,6 +49,12 @@ class WorkspaceManager(
 
     fun hasRootfs(root: String): Boolean = File(linuxDir(root), "bin/sh").isFile
 
+    /** Refreshes host-managed Rootfs files without starting a PRoot process. */
+    fun patchRootfs(root: String, options: RootfsPatchOptions) = synchronized(processLifecycleLock) {
+        requireValidRoot(root)
+        RootfsPatcher().patch(linuxDir(root), options)
+    }
+
     fun deleteWorkspace(root: String): Boolean = synchronized(processLifecycleLock) {
         // 先杀掉该 workspace 所有后台进程, 再删目录, 避免进程仍持有已删除目录下的 fd
         killAllBackground(root)
@@ -85,7 +91,7 @@ class WorkspaceManager(
         area: WorkspaceStorageArea = WorkspaceStorageArea.FILES,
         fileName: String,
         inputStream: InputStream,
-        maxBytes: Long = config.maxWriteBytes,
+        maxBytes: Long = config.maxImportBytes,
     ): WorkspaceFileEntry {
         val areaRoot = areaDir(root, area)
         val targetPath = if (destinationPath.isBlank()) fileName else "$destinationPath/$fileName"
@@ -156,6 +162,12 @@ class WorkspaceManager(
         val file = resolveRootfsFile(root, path)
         file.requireReadableFile(path)
         outputStream.use { out -> file.inputStream().use { it.copyTo(out) } }
+    }
+
+    /** 按 Rootfs 内绝对路径递归列出目录树, 支持 /workspace、bind mount 与 Rootfs 内部路径 */
+    fun rootfsTree(root: String, path: String, maxDepth: Int = 10): WorkspaceTreeResult {
+        val location = resolveRootfsPath(root, path)
+        return fileSystem.tree(location.rootDir, location.relativePath, maxDepth)
     }
 
     private fun resolveRootfsFile(root: String, path: String): File {
