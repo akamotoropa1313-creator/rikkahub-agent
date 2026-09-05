@@ -31,7 +31,9 @@ class ArchiveToolsTest {
             repeat(10) { zip.write(block) }
             zip.closeEntry()
             zip.putNextEntry(ZipEntry("after-limit.txt"))
-            zip.write(1)
+            // Keep the compressed tail larger than the input buffer's read-ahead.
+            // A full probe consumes it; a budgeted probe must stop before it.
+            zip.write(kotlin.random.Random(0).nextBytes(128 * 1024))
             zip.closeEntry()
         }
         val bytes = out.toByteArray()

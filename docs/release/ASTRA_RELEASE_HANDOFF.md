@@ -33,12 +33,12 @@ Compare the printed HEAD with GitHub PR #37's current head. Stop on an unexpecte
 ## Applied ordering, files and protected contracts
 
 1. Room `app/schemas/me.rerere.rikkahub.data.db.AppDatabase/32.json`; existing migration 31→32 only adds nullable `dynamic_tools_fingerprint` and is preserved.
-2. `TermuxIntentDispatcher` + tests from `1ea13e5b79ff7f344b769c5aa73beebbeb2c3d6f`: recognize actual completion rather than the populated startup ACK.
-3. `workspace/WorkspaceShellRunner` + tests from **only the EOF portion** of `b62d29d16124a4f9a3b2c5ac72178e2cdc58e9a6`: close stdin for non-interactive no-input commands; keep App Server interactive stdin and fork PRoot DNS/CA/runtime mounts.
+2. `app/.../data/ai/tools/local/TermuxTool.kt` + tests from `1ea13e5b79ff7f344b769c5aa73beebbeb2c3d6f`: recognize actual completion rather than the populated startup ACK.
+3. `workspace/src/main/java/me/rerere/workspace/WorkspaceShellRunner.kt` + tests from **only the EOF portion** of `b62d29d16124a4f9a3b2c5ac72178e2cdc58e9a6`: close stdin for non-interactive no-input commands; keep App Server interactive stdin and fork PRoot DNS/CA/runtime mounts.
 4. `ArchiveTools`, `SkillZipImporter` + tests from `9cf98e7f9ae6783fa7a495cf42411d7f23a0724a`: GBK names, plus local 8 MiB charset-probe and 24 MiB compressed Skill-input bounds, cleanup and failure logging. Existing expanded/path/entry limits remain.
-5. `SkillManager`, `SkillState`, `SettingStore`, `PreferencesStore`, Skills view model/UI from `1eb873abb8c5e76f790c3f9349b68091ef857ae8` paired with `dda4a55214d4472d6df0923df353fd0b74022dbc`: persisted deletion tombstones, await initialized settings, explicit bundled reinstall. Preserve multiple-Skill selection and `/skills` propagation.
-6. `OpenAIProvider` + test from `e8293d358592dc074b91b52341b4f7b19fc5b9a6`: absent function parameters serialize to an empty object schema. Raw Responses path unchanged.
-7. `UIMessage` + test from `321443d87b16dfddb379c06e748fdf11fadc2957`: tool-only rows remain visible. Streaming metadata/serialization and harness ownership unchanged.
+5. `app/.../data/files/SkillManager.kt`, `app/.../data/datastore/PreferencesStore.kt`, `app/.../ui/pages/extensions/skills/SkillsVM.kt` from `1eb873abb8c5e76f790c3f9349b68091ef857ae8` paired with `dda4a55214d4472d6df0923df353fd0b74022dbc`: persisted deletion tombstones, await initialized settings, explicit bundled reinstall. Preserve multiple-Skill selection and `/skills` propagation.
+6. `ai/.../openai/ChatCompletionsAPI.kt` + test from `e8293d358592dc074b91b52341b4f7b19fc5b9a6`: absent function parameters serialize to an empty object schema. Raw Responses path unchanged.
+7. `ai/src/main/java/me/rerere/ai/ui/Message.kt` + test from `321443d87b16dfddb379c06e748fdf11fadc2957`: tool-only rows remain visible. Streaming metadata/serialization and harness ownership unchanged.
 8. Luau aliases in highlight language detection from `0a463acc3e16c979678d073169d94a6a962146f4`.
 9. Alpha metadata/signing inputs, build/publish workflows and fail-closed verifier, repository policy/audit.
 
@@ -54,8 +54,9 @@ python3 -m unittest discover -s .github/scripts -p 'test_release_tools.py' -v
 git status --porcelain -- app/schemas
 ./gradlew testDebugUnitTest --continue
 ./gradlew lintDebug --continue
-./gradlew :app:assembleBenchmark
 ```
+
+The benchmark variant is injected by the existing **Build optimized benchmark APK** workflow; it is not a checked-in Gradle build type. Use that workflow on the exact candidate ref for the optimized APK.
 
 Require an empty schema status, all JVM tests (including Codex App Server and Workspace), successful lint, and an optimized benchmark artifact at the final candidate head. The protocol workflow already runs these full JVM/lint gates on PR events. New Python verifier tests simulate tool output; they are tests of gate rejection logic, not evidence of an actually signed release APK. Do not weaken tests, ignore schema changes or substitute an old-head APK. New source changes require a fresh exact-head gate.
 
@@ -76,7 +77,7 @@ Local Work compilation was blocked before source compilation by the unavailable 
 
 ## Build, validate and publish the identical bytes
 
-`build-signed-alpha.yml` builds three ABI variants, verifies app ID/name/code/non-debuggable manifest, checks the certificate and v2 signature with Android build tools, and emits APK SHA256SUMS plus provenance (source SHA/tree, ABI, size, certificate). Only the temporary signing file is written under RUNNER_TEMP and removed; it is never uploaded. No debug-signing fallback is permitted by the release gate.
+`build-signed-alpha.yml` builds three ABI variants, verifies app ID/name/code/non-debuggable manifest, checks the certificate and v2 signature with Android build tools, and emits APK SHA256SUMS plus provenance (source SHA/tree, ABI, size, certificate). Only the temporary signing file is written under RUNNER_TEMP and removed; it is never uploaded. No debug-signing fallback is permitted by the release gate. Signing uses `--no-configuration-cache` so passwords are not serialized into the Gradle configuration cache. The verifier also rejects tracked source modifications.
 
 `publish-validated-alpha.yml` accepts only an exact successful signed-build workflow run in this repository, verifies device attestation for that run's arm64 hash, downloads and re-verifies the original APKs, and creates an alpha prerelease without rebuilding. Existing tags are refused; never move or replace them.
 
