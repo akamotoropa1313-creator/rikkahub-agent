@@ -198,12 +198,14 @@ Screen readers are supported throughout: icon-only buttons, attachment chips, an
 Requires [bun](https://bun.sh) and [pnpm](https://pnpm.io) on your PATH — bun installs the web-ui dependencies, pnpm builds the bundle.
 
 ```bash
-git clone https://github.com/ExTV/rikkahub-agent.git
+git clone https://github.com/akamotoropa1313-creator/rikkahub-agent.git
 cd rikkahub-agent
 ./gradlew :app:installDebug
 ```
 
 ---
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for validation and branch rules; documentation starts at [docs/README.md](docs/README.md).
 
 ## Credits
 

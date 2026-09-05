@@ -10,6 +10,7 @@ import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.charset.Charset
 import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -20,6 +21,51 @@ import java.util.zip.ZipOutputStream
  * No Robolectric / no Android runtime dependency — these run on the host JVM.
  */
 class SkillZipImporterTest {
+
+    @Test
+    fun `failed input closes source and removes temporary archive`() {
+        val parent = Files.createTempDirectory("skill-spool-failure").toFile()
+        val target = File(parent, "destination").apply { mkdir() }
+        var closed = false
+        val input = object : java.io.InputStream() {
+            override fun read(): Int = throw java.io.IOException("synthetic input failure")
+            override fun close() { closed = true }
+        }
+        try {
+            assertTrue(SkillZipImporter.extractZipToDir(input, target).isFailure)
+            assertTrue(closed)
+            assertFalse(target.exists())
+            assertTrue(parent.listFiles().orEmpty().isEmpty())
+        } finally {
+            parent.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `unbounded compressed input is rejected and cleaned up`() {
+        val parent = Files.createTempDirectory("skill-spool-limit").toFile()
+        val target = File(parent, "destination").apply { mkdir() }
+        var closed = false
+        var consumed = 0L
+        val input = object : java.io.InputStream() {
+            override fun read(): Int { consumed++; return 0 }
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                java.util.Arrays.fill(b, off, off + len, 0.toByte())
+                consumed += len
+                return len
+            }
+            override fun close() { closed = true }
+        }
+        try {
+            assertTrue(SkillZipImporter.extractZipToDir(input, target).isFailure)
+            assertTrue(consumed <= 24L * 1024 * 1024 + 8192)
+            assertTrue(closed)
+            assertFalse(target.exists())
+            assertTrue(parent.listFiles().orEmpty().isEmpty())
+        } finally {
+            parent.deleteRecursively()
+        }
+    }
 
     private lateinit var destDir: File
 
@@ -33,9 +79,12 @@ class SkillZipImporterTest {
         runCatching { destDir.deleteRecursively() }
     }
 
-    private fun buildZip(entries: List<Pair<String, ByteArray>>): ByteArray {
+    private fun buildZip(
+        entries: List<Pair<String, ByteArray>>,
+        charset: Charset = Charsets.UTF_8,
+    ): ByteArray {
         val bos = ByteArrayOutputStream()
-        ZipOutputStream(bos).use { zos ->
+        ZipOutputStream(bos, charset).use { zos ->
             for ((name, bytes) in entries) {
                 zos.putNextEntry(ZipEntry(name))
                 zos.write(bytes)
@@ -229,5 +278,28 @@ class SkillZipImporterTest {
         val skillDir = result.getOrNull()!!
         assertTrue(skillDir.resolve("SKILL.md").exists())
         assertTrue(skillDir.resolve("notes file.txt").exists())
+    }
+
+    // #66: a skill zip produced on Chinese Windows has entry names written as raw GBK bytes,
+    // with no UTF-8 general-purpose flag set -- exactly what ZipOutputStream(out, GBK) below
+    // reproduces. See ArchiveToolsTest for the equivalent unzip_file / list_zip_contents
+    // fixture tests.
+    @Test fun `GBK-encoded entry name round-trips through the skill zip importer`() {
+        val chineseName = "笔记.txt"
+        val zip = buildZip(
+            listOf(
+                "SKILL.md" to sampleSkillMd.toByteArray(Charsets.UTF_8),
+                chineseName to "note content".toByteArray(Charsets.UTF_8),
+            ),
+            charset = Charset.forName("GBK"),
+        )
+        val result = SkillZipImporter.extractZipToDir(ByteArrayInputStream(zip), destDir)
+        assertTrue("expected success, got $result", result.isSuccess)
+        val skillDir = result.getOrNull()!!
+        assertTrue(skillDir.resolve("SKILL.md").exists())
+        assertTrue(
+            "expected an entry named $chineseName under $skillDir, found: ${skillDir.list()?.toList()}",
+            skillDir.resolve(chineseName).exists(),
+        )
     }
 }

@@ -19,8 +19,8 @@ android {
         applicationId = "excp.rikkahub"
         minSdk = 26
         targetSdk = 37
-        versionCode = 177
-        versionName = "2.4.10"
+        versionCode = 184
+        versionName = "2.4.10-akaro.1-alpha.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -47,12 +47,15 @@ android {
             val localPropertiesFile = rootProject.file("local.properties")
 
             if (localPropertiesFile.exists()) {
-                localProperties.load(FileInputStream(localPropertiesFile))
+                FileInputStream(localPropertiesFile).use(localProperties::load)
+            }
 
-                val storeFilePath = localProperties.getProperty("storeFile")
-                val storePasswordValue = localProperties.getProperty("storePassword")
-                val keyAliasValue = localProperties.getProperty("keyAlias")
-                val keyPasswordValue = localProperties.getProperty("keyPassword")
+                // CI uses the existing permanent identity through ephemeral environment values.
+                // Never generate a replacement key or fall back to debug signing for a release.
+                val storeFilePath = System.getenv("RIKKA_RELEASE_STORE_FILE") ?: localProperties.getProperty("storeFile")
+                val storePasswordValue = System.getenv("RIKKA_RELEASE_STORE_PASSWORD") ?: localProperties.getProperty("storePassword")
+                val keyAliasValue = System.getenv("RIKKA_RELEASE_KEY_ALIAS") ?: localProperties.getProperty("keyAlias")
+                val keyPasswordValue = System.getenv("RIKKA_RELEASE_KEY_PASSWORD") ?: localProperties.getProperty("keyPassword")
 
                 if (storeFilePath != null && storePasswordValue != null &&
                     keyAliasValue != null && keyPasswordValue != null
@@ -70,9 +73,6 @@ android {
                     }
                     logger.warn("Signing config: local.properties is missing $missing, release build will be unsigned")
                 }
-            } else {
-                logger.warn("Signing config: local.properties not found, release build will be unsigned")
-            }
         }
     }
 
