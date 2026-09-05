@@ -41,3 +41,7 @@ app/google-services.json
 
 # bun.lock is generated from the tracked pnpm-lock.yaml on clean checkouts
 /web-ui/bun.lock
+# Local release tooling output; never commit APKs or Python bytecode.
+__pycache__/
+release-output/
+release-input/

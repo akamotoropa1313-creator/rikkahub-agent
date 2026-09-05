@@ -1,0 +1,94 @@
+name: Publish validated alpha
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_commit:
+        description: Full SHA, identical to the signed build and dispatch ref
+        required: true
+        type: string
+      build_run_id:
+        description: Successful Build signed alpha candidate run ID
+        required: true
+        type: string
+      arm64_apk_sha256:
+        description: SHA-256 of the signed arm64 APK validated on the Redmi
+        required: true
+        type: string
+      device_validated:
+        description: All release device checks, including update continuity, passed
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-alpha
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+      BUILD_RUN_ID: ${{ inputs.build_run_id }}
+      DEVICE_APK_SHA256: ${{ inputs.arm64_apk_sha256 }}
+      DEVICE_VALIDATED: ${{ inputs.device_validated }}
+      RELEASE_CERT_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
+      LAST_RELEASE_VERSION_CODE: ${{ vars.LAST_RELEASE_VERSION_CODE }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.expected_commit }}
+      - name: Verify immutable source and successful build provenance
+        run: |
+          python3 .github/scripts/release_tools.py source
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          run_id = os.environ['BUILD_RUN_ID']
+          if not re.fullmatch(r'[0-9]+', run_id):
+              raise SystemExit('Invalid build run ID')
+          repo = os.environ['GITHUB_REPOSITORY']
+          run = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/actions/runs/{run_id}']))
+          if not (run['head_sha'] == os.environ['EXPECTED_COMMIT'] and
+                  run['conclusion'] == 'success' and run['event'] == 'workflow_dispatch' and
+                  run['path'].split('@')[0] == '.github/workflows/build-signed-alpha.yml' and
+                  run['head_repository']['full_name'] == repo):
+              raise SystemExit('Signed build provenance mismatch')
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-alpha-${{ inputs.expected_commit }}
+          path: release-input
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify physical-device attestation and original artifact hashes
+        run: python3 .github/scripts/release_tools.py device release-input
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --channel=3 'build-tools;37.0.0'
+      - name: Independently verify the APKs that will be published
+        run: python3 .github/scripts/release_tools.py apk release-input release-output
+      - name: Publish the verified bytes as an alpha prerelease
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          b = json.loads(Path('release/baseline.json').read_text())
+          tag = b['tag']
+          repo = os.environ['GITHUB_REPOSITORY']
+          # Refuse any existing tag; never replace, move or force-push a release identity.
+          existing = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/git/matching-refs/tags/{tag}']))
+          if any(ref['ref'] == 'refs/tags/' + tag for ref in existing):
+              raise SystemExit('Release tag already exists; stop without changing it')
+          assets = sorted(str(p) for p in Path('release-output').iterdir() if p.is_file())
+          subprocess.run(['gh', 'release', 'create', tag, *assets, '--repo', repo,
+                          '--target', os.environ['EXPECTED_COMMIT'], '--title', tag,
+                          '--notes-file', 'release/NOTES.md', '--prerelease'], check=True)
+          PY

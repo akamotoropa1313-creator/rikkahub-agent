@@ -1,0 +1,14 @@
+{
+  "application_id": "excp.rikkahub",
+  "version_code": 184,
+  "version_name": "2.4.10-akaro.1-alpha.1",
+  "tag": "v2.4.10-akaro.1-alpha.1",
+  "fork_source": "9d8ecd643aafca3f27e218ddfeecd67a90930884",
+  "upstream_base": "e8f10b70cc915a7c879b0c078051e557236a8c2c",
+  "upstream_comparison_tag": "v2.4.16-agent.0",
+  "upstream_comparison_commit": "0a463acc3e16c979678d073169d94a6a962146f4",
+  "upstream_policy": "selective ports; not a complete 2.4.16 merge",
+  "room_version": 32,
+  "codex_runtime": "0.146.0",
+  "prerelease": true
+}
