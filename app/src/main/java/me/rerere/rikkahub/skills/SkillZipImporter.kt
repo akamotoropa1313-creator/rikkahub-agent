@@ -70,7 +70,7 @@ object SkillZipImporter {
         val spooledZip = try {
             File.createTempFile("skill-import-", ".zip", destDir.parentFile ?: destDir)
         } catch (e: IOException) {
-            input.close()
+            runCatching { input.close() }
             cleanup(destDir)
             return Result.failure(SkillZipError.IoError(e.message ?: "failed to read zip"))
         }
@@ -161,8 +161,10 @@ object SkillZipImporter {
                 }
             }
         } catch (e: Throwable) {
-            Log.w(TAG, "extractZipToDir: failed for ${destDir.absolutePath}", e)
             cleanup(destDir)
+            // Diagnostics must not replace the extraction failure or prevent cleanup
+            // when the Android logger is unavailable (including the host JVM).
+            runCatching { Log.w(TAG, "extractZipToDir: failed for ${destDir.absolutePath}", e) }
             return Result.failure(SkillZipError.IoError(e.message ?: "zip read failed"))
         } finally {
             spooledZip.delete()

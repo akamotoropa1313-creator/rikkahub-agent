@@ -50,29 +50,29 @@ android {
                 FileInputStream(localPropertiesFile).use(localProperties::load)
             }
 
-                // CI uses the existing permanent identity through ephemeral environment values.
-                // Never generate a replacement key or fall back to debug signing for a release.
-                val storeFilePath = System.getenv("RIKKA_RELEASE_STORE_FILE") ?: localProperties.getProperty("storeFile")
-                val storePasswordValue = System.getenv("RIKKA_RELEASE_STORE_PASSWORD") ?: localProperties.getProperty("storePassword")
-                val keyAliasValue = System.getenv("RIKKA_RELEASE_KEY_ALIAS") ?: localProperties.getProperty("keyAlias")
-                val keyPasswordValue = System.getenv("RIKKA_RELEASE_KEY_PASSWORD") ?: localProperties.getProperty("keyPassword")
+            // CI uses the existing permanent identity through ephemeral environment values.
+            // Never generate a replacement key or fall back to debug signing for a release.
+            val storeFilePath = System.getenv("RIKKA_RELEASE_STORE_FILE") ?: localProperties.getProperty("storeFile")
+            val storePasswordValue = System.getenv("RIKKA_RELEASE_STORE_PASSWORD") ?: localProperties.getProperty("storePassword")
+            val keyAliasValue = System.getenv("RIKKA_RELEASE_KEY_ALIAS") ?: localProperties.getProperty("keyAlias")
+            val keyPasswordValue = System.getenv("RIKKA_RELEASE_KEY_PASSWORD") ?: localProperties.getProperty("keyPassword")
 
-                if (storeFilePath != null && storePasswordValue != null &&
-                    keyAliasValue != null && keyPasswordValue != null
-                ) {
-                    storeFile = file(storeFilePath)
-                    storePassword = storePasswordValue
-                    keyAlias = keyAliasValue
-                    keyPassword = keyPasswordValue
-                } else {
-                    val missing = buildList {
-                        if (storeFilePath == null) add("storeFile")
-                        if (storePasswordValue == null) add("storePassword")
-                        if (keyAliasValue == null) add("keyAlias")
-                        if (keyPasswordValue == null) add("keyPassword")
-                    }
-                    logger.warn("Signing config: local.properties is missing $missing, release build will be unsigned")
+            if (storeFilePath != null && storePasswordValue != null &&
+                keyAliasValue != null && keyPasswordValue != null
+            ) {
+                storeFile = file(storeFilePath)
+                storePassword = storePasswordValue
+                keyAlias = keyAliasValue
+                keyPassword = keyPasswordValue
+            } else {
+                val missing = buildList {
+                    if (storeFilePath == null) add("storeFile")
+                    if (storePasswordValue == null) add("storePassword")
+                    if (keyAliasValue == null) add("keyAlias")
+                    if (keyPasswordValue == null) add("keyPassword")
                 }
+                logger.warn("Signing config: local.properties is missing $missing, release build will be unsigned")
+            }
         }
     }
 

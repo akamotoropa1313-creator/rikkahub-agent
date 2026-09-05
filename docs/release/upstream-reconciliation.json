@@ -1,0 +1,719 @@
+{
+  "scope": "101 upstream-only reachable commits from e8f10b70 to 0a463acc; primary categories",
+  "counts": {
+    "HIGH RISK": 35,
+    "SKIP": 48,
+    "ADAPT": 14,
+    "SAFE": 2,
+    "UPSTREAM BUG / REGRESSION": 2
+  },
+  "commits": [
+    {
+      "sequence": 1,
+      "sha": "8540274583464abb5be6056b1d9ccc514eace003",
+      "subject": "fix(thinking): ignore inline think tags",
+      "category": "HIGH RISK",
+      "decision": "DEFER: ThinkTagTransformer reasoning extraction affects native providers and translated gateway UIMessage.Reasoning."
+    },
+    {
+      "sequence": 2,
+      "sha": "adf333ec3cfaf2bf73586e5eac20258c82c3c09a",
+      "subject": "feat(assistant): use numeric context message limit",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Assistant context limit changes request trimming; retain Codex-owned history and old settings."
+    },
+    {
+      "sequence": 3,
+      "sha": "6b37912f9ffdc1baaba5bbfac2dfe5b8ae54b062",
+      "subject": "docs: 移除claude.md",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 4,
+      "sha": "f167a855b08f9383fe634abfa7f28c217e967d97",
+      "subject": "chore: 适配deepseek-v4-flash-vision-exp能力",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 5,
+      "sha": "91b81fef6ffa155e87aa50ea85cac8e2bef6d9ab",
+      "subject": "chore: 更新模型图标",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 6,
+      "sha": "8b3a1f8499cc710264db6cb3dabb683d72f7f8b2",
+      "subject": "feat: 适配小米 MiMo 思考参数",
+      "category": "HIGH RISK",
+      "decision": "DEFER: MiMo request effort mapping needs native and translated-gateway tests; unrelated to ChatGPT model/list."
+    },
+    {
+      "sequence": 7,
+      "sha": "c167c70ef2f69387f59e86351cfd83c2cb713c6c",
+      "subject": "feat: ModelRegistry 支持注册模型上下文长度",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Model context defaults feed compaction budgets and can silently alter trigger thresholds."
+    },
+    {
+      "sequence": 8,
+      "sha": "7a93c92a912e15da1500ab73100031c47785aaa7",
+      "subject": "feat(backup): 本地备份支持选择内容并调整为首页 tab",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Backup options depend on staged restore; preserve Room 32 bindings and credential exclusions."
+    },
+    {
+      "sequence": 9,
+      "sha": "f557cef50b1550353cb62aca5fe1d721846b3bed",
+      "subject": "feat(backup): 本地备份导入前增加覆盖确认",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Restore confirmation belongs with the deferred backup architecture, not an isolated string change."
+    },
+    {
+      "sequence": 10,
+      "sha": "54b3ba799f3c0b7648fd9775ac1e97d138373bc3",
+      "subject": "fix: 修复更新检查频繁调用的问题",
+      "category": "ADAPT",
+      "decision": "DEFER: UpdateChecker is already disabled for release via empty UPDATE_API_URL; defer DI lifetime changes until fork update feed exists."
+    },
+    {
+      "sequence": 11,
+      "sha": "02a0c81c00fe402775434186d28c183027535bc4",
+      "subject": "chore: 更新依赖",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 12,
+      "sha": "986b9c3997b9536fdd92420422e6018f298b134a",
+      "subject": "feat: 新增网络配置页 支持配置 user agent 和  代理",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Global proxy/HTTP clients intersect loopback gateway, OAuth and token refresh; require loopback bypass and credential isolation."
+    },
+    {
+      "sequence": 13,
+      "sha": "3509406b1a1f6c5a3807cc91b7cebe155b768ca7",
+      "subject": "fix: use LocalResources for proxy test messages",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 14,
+      "sha": "b270766f06671d7456ce3d248622dc667648b6d1",
+      "subject": "chore: bump to 2.4.11",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 15,
+      "sha": "3a533a6a2443fb19e10a73837eb012aff8004f31",
+      "subject": "feat: 支持工作区终端后台运行，并且支持多Tab",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Terminal session manager uses WorkspaceManager; retain conversation-owned process registry, cleanup, mounts, DNS and CA hooks."
+    },
+    {
+      "sequence": 16,
+      "sha": "f4508dfac2255cf83e75859a8fe37dd7da6778a3",
+      "subject": "chore: 更新proot lib",
+      "category": "HIGH RISK",
+      "decision": "DEFER: PRoot binary update requires Redmi provisioning, stdio, symlink and process-lifecycle verification."
+    },
+    {
+      "sequence": 17,
+      "sha": "e6ebcf599ddafaf50a5ab8db9ec4779b29b2c893",
+      "subject": "feat: add `session_id` header to OpenRouter requests (#1760)",
+      "category": "ADAPT",
+      "decision": "DEFER: Session header must derive conversation identity without leaking gateway tokens or cross-thread correlation."
+    },
+    {
+      "sequence": 18,
+      "sha": "54030ec4139e9eed85cca937f5ada11bcb50b879",
+      "subject": "chore: 使用SnakeYAML解析skill确保稳定性",
+      "category": "HIGH RISK",
+      "decision": "DEFER: YAML parser changes auto_load/metadata interpretation and Skill ownership; test existing bundles and selected roots."
+    },
+    {
+      "sequence": 19,
+      "sha": "f86d6e82afc0b7725029de2ab61cc53dbd3fe06e",
+      "subject": "fix: 键盘弹出时 ChatInput 保持圆角和底部间距",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 20,
+      "sha": "e6e0dfd453c1865e48ab8658fed4f753d7860da2",
+      "subject": "feat: 键盘弹出时收起 ChatInput 工具栏并上移发送按钮",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 21,
+      "sha": "1e3351f732e7cf18a7c0ac71c15e6b136b9c14aa",
+      "subject": "chore: 初始化 videogen 模块",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 22,
+      "sha": "96fbe7e35e156b5446c6199d2f84313992d153f0",
+      "subject": "chore: 初始化video生成api层",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 23,
+      "sha": "11a814abb9f916f16251a146b911f79a2e3b9205",
+      "subject": "i18n: extract hardcoded strings into resources and complete zh translations",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 24,
+      "sha": "4fcb590a0978f8702f94b2803f48331088f80c26",
+      "subject": "fix(setting): 为供应商测试连接对话框补全本地化",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 25,
+      "sha": "6c6a8458805cde901f3b0b72f3a9b6f951eb50dc",
+      "subject": "fix: 修复 fork 会话没有继承 folder id 和 workspace cwd 的问题",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Forked conversations must inherit folder/CWD without copying durable Codex bindings into a different conversation."
+    },
+    {
+      "sequence": 26,
+      "sha": "aab5026e3e9c6ff2b1c9e0944af0020fe798c732",
+      "subject": "fix(notification): 修复 Live Update 焦点通知胶囊不显示图标 (#1782)",
+      "category": "ADAPT",
+      "decision": "DEFER: Notification icon port must preserve fork Android API guards and foreground reference ownership."
+    },
+    {
+      "sequence": 27,
+      "sha": "0c056d08c62f34a49d92220e54a422da558fdbc7",
+      "subject": "chore: bump version to 2.4.12",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 28,
+      "sha": "e8293d358592dc074b91b52341b4f7b19fc5b9a6",
+      "subject": "fix(ai): normalize empty Chat Completions tool schema (#1781)",
+      "category": "ADAPT",
+      "decision": "ADOPT: normalize only empty Chat Completions tool schema; translated gateway covered, raw Responses unchanged."
+    },
+    {
+      "sequence": 29,
+      "sha": "daae37494916bb1be875f3a9cb83d471dbd9620d",
+      "subject": "fix: 改价chat input ime动画稳定性",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 30,
+      "sha": "fa0305ba54cda8c7d16a7ce7a6f40b6462da4353",
+      "subject": "fix: 修复模型搜索ime打开后自动关闭的问题",
+      "category": "ADAPT",
+      "decision": "DEFER: Model-picker focus/IME correction must adapt to unified Codex picker and active-turn selection lock."
+    },
+    {
+      "sequence": 31,
+      "sha": "0826a3b99c2eacd678e0226bacc01eeca2181c96",
+      "subject": "feat: 新增 Qwen 3.8 模型匹配",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 32,
+      "sha": "bce7876661fd8e41d92e6dee0e5bd4aac1fd6090",
+      "subject": "feat(workspace): confirm before closing terminal tabs",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 33,
+      "sha": "942d0d28b8431bcf315142c0200388cf9d6234e3",
+      "subject": "fix: 避免合成消息参与消息模版",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Synthetic template exclusions must coordinate with compaction and display-only Codex tool rows."
+    },
+    {
+      "sequence": 34,
+      "sha": "e9b98a4b1d40e8b03d1f86f92d8f11037b252a56",
+      "subject": "fix: 修复qwen tts预制音色列表 close #1793",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 35,
+      "sha": "b5be6a96334e9ddb04a76e2dafb6a68c411ccbc2",
+      "subject": "i18n(ar): Add missing strings from v2.4.10 and restore exact technical ranges",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 36,
+      "sha": "03534d14499e46c1cc3e166e049d9e9dce98ceac",
+      "subject": "feat: 适配qwen audio 3.0 tts",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 37,
+      "sha": "2dc501266b8ca1004e00110f9e45742a5aab888c",
+      "subject": "docs(contributing): add contribution guidelines",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 38,
+      "sha": "c62f1eb1549f3cade4e3b1a2b9fe93d2934af152",
+      "subject": "chore: 使用前台服务避免后台生成断开",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Fork already owns foreground work in ChatService; wholesale port can double acquire/release and change cancellation."
+    },
+    {
+      "sequence": 39,
+      "sha": "86c852361ed0488ba311c5555750c95294c5765a",
+      "subject": "chore: 新增hy4模型注册",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 40,
+      "sha": "b62d29d16124a4f9a3b2c5ac72178e2cdc58e9a6",
+      "subject": "fix(workspace): 非交互命令 stdin 立即 EOF，避免 CLI 工具永久阻塞 (#1605)",
+      "category": "ADAPT",
+      "decision": "ADOPT PART: close stdin only in non-interactive readResult; retain App Server start streams and custom PRoot environment."
+    },
+    {
+      "sequence": 41,
+      "sha": "c16fe44ff98f123288d8d401c58f8ac77a5cd818",
+      "subject": "feat: 支持自动重试",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Fork already retries; never wrap Codex turn/start or side-effecting dynamic tools in a second agent/retry loop."
+    },
+    {
+      "sequence": 42,
+      "sha": "5b58c9575a5ae1ea20e81f03fdb69c7c5500923f",
+      "subject": "chore: 注册 glm 5.3 模型",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 43,
+      "sha": "170a612e9ee8e11fb181b3059f9208f13b2c334a",
+      "subject": "chore: bump to 2.4.13",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 44,
+      "sha": "53dc38b8c5b624a4cea6a1539c7eb244beb07e7e",
+      "subject": "chore: 移除无用mcp transport代码",
+      "category": "HIGH RISK",
+      "decision": "DEFER: MCP transport deletion depends on SDK/OAuth migration and selected-tool registration."
+    },
+    {
+      "sequence": 45,
+      "sha": "ca31612dab816820e5c10af6dbbe2bfc31e1f37e",
+      "subject": "fix: 改进输入栏折叠动画和易用性",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 46,
+      "sha": "8f4f1286a1c471ff82f571a3b24f988f7578d30e",
+      "subject": "refactor(ai): extract translation handler",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Translation handler extraction crosses ProviderHandler defaults; independent feature for later review."
+    },
+    {
+      "sequence": 47,
+      "sha": "7714f2bc24a259d4325e7d489e0df64671e5173b",
+      "subject": "feat: 支持chatbox v2备份导入",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Chatbox importer depends on backup restore and fork schema reconciliation; preserve bindings and FTS."
+    },
+    {
+      "sequence": 48,
+      "sha": "0533acdee247874146e1911f04574d4227b69b03",
+      "subject": "chore: 移除默认rikkahub提供商",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Removing a default provider can change persisted route resolution; retain provider identities."
+    },
+    {
+      "sequence": 49,
+      "sha": "979cd1698e6cf520e52f407918109b339831ddb3",
+      "subject": "chore: 调整kimi icon",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 50,
+      "sha": "6e26affefec67b2378a225b369b0a76f53e75617",
+      "subject": "feat: mimo tts支持快速选择音色",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 51,
+      "sha": "da5fd77bcd4f04a2aab77deeed8be85466f79ada",
+      "subject": "chore: bump to 2.4.14",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 52,
+      "sha": "8a9f4f0f3a25b51f9a16de88c04b851540a47b76",
+      "subject": "chore: 新增抖音群加群信息",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 53,
+      "sha": "9687f97a00535fa62659bb713ce53231e6f92e1e",
+      "subject": "build: 北京时间下午五点也触发自动构建",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 54,
+      "sha": "eba2e96c36d6bb2996fa4633afabc5f085d2cf29",
+      "subject": "chore: update dependencies",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Dependency churn changes serialization, coroutine, MCP and OAuth contracts; separate compiled upgrade."
+    },
+    {
+      "sequence": 55,
+      "sha": "7aa909b8997947bd2ac02ca5d661746101271333",
+      "subject": "chore: 回滚输入栏折叠功能",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 56,
+      "sha": "5b890d22b21a180e9b4fc4d7cc99973d5666d1cd",
+      "subject": "fix(ai): remove vision support from hy4",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 57,
+      "sha": "321443d87b16dfddb379c06e748fdf11fadc2957",
+      "subject": "fix(chat): keep actions visible for tool-only messages",
+      "category": "SAFE",
+      "decision": "ADOPT: Tool/ServerTool UI visibility; callsites are UI/export, wire encoding and harness metadata unchanged."
+    },
+    {
+      "sequence": 58,
+      "sha": "ecc6d910f2eea0a200b8d363e903794a76fae377",
+      "subject": "chore: 简化claude api skill",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 59,
+      "sha": "b6df5f044c717ea09ff92a3f3c64dfe9adc28c97",
+      "subject": "refactor: 改进oauth流程",
+      "category": "HIGH RISK",
+      "decision": "DEFER: OAuth module replacement crosses callback lifecycle and provider-owned credential source; do not reintroduce App Server OAuth ownership."
+    },
+    {
+      "sequence": 60,
+      "sha": "9851d0370d72ef90e1fbcf0628cfcd09e97f1a1b",
+      "subject": "fix: gemini允许服务端工具和客户端工具同时使用",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Google mixed tools change decoder, StreamChunk and ServerTool semantics; requires final fix #79 plus gateway SSE tests."
+    },
+    {
+      "sequence": 61,
+      "sha": "7da697707a20285a2d40a3ed86ad1f6cf36d0715",
+      "subject": "feat(settings): add scoped file cleanup",
+      "category": "HIGH RISK",
+      "decision": "DEFER: File cleanup must exclude active managed runtime, Skills, staged media and persisted Codex state."
+    },
+    {
+      "sequence": 62,
+      "sha": "5662945cfff32dfda25ba760ec3f590f4a04447e",
+      "subject": "chore: bump to 2.4.15",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 63,
+      "sha": "5403bc9604cf92762e7fbc848e75cfc411f0ec86",
+      "subject": "fix: 改进 TTS 稳定性，支持自动重试",
+      "category": "ADAPT",
+      "decision": "DEFER: TTS retry refactor needs provider error classification and cancellation tests."
+    },
+    {
+      "sequence": 64,
+      "sha": "2f05019ba005106ba86d8b55834cd17a226e9246",
+      "subject": "chore: 改进 tts 重试判断",
+      "category": "ADAPT",
+      "decision": "DEFER: Companion TTS retry classification fix; port together with #63."
+    },
+    {
+      "sequence": 65,
+      "sha": "ef94834a761cb9141301ced6360b64fb1d43e2b0",
+      "subject": "chore: mcp仅使用 client sdk",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Client-only MCP SDK follows #44/#59; preserve sanitized ASCII tool names and fingerprints."
+    },
+    {
+      "sequence": 66,
+      "sha": "8ea375a93db86d119d888e9c1ebbd3c41cb65e83",
+      "subject": "fix: 修复 cloudflare mcp 没有匹配到 oauth 的问题",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Cloudflare matching fix must adapt to the retained fork OAuth coordinator."
+    },
+    {
+      "sequence": 67,
+      "sha": "0bd5a924e7ae1d33bd25d83323014e7fb6294faf",
+      "subject": "fix(chat): stop compaction from resending raw history and breaking the prompt cache",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Compaction changes summary identity, raw-tail offsets, budget and positional persistence merge; test regenerate/branch edits."
+    },
+    {
+      "sequence": 68,
+      "sha": "3537173a8392689e25af999f5cdb6e806844f981",
+      "subject": "fix(i18n): complete the Simplified and Traditional Chinese translations",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 69,
+      "sha": "1ea13e5b79ff7f344b769c5aa73beebbeb2c3d6f",
+      "subject": "fix(termux): wait for the real command result instead of Termux's start acknowledgement",
+      "category": "ADAPT",
+      "decision": "ADOPT: per-call UUID completion marker and literal argv; Android dynamic tool entrypoint retained."
+    },
+    {
+      "sequence": 70,
+      "sha": "1eb873abb8c5e76f790c3f9349b68091ef857ae8",
+      "subject": "fix(skills): keep a deleted bundled skill deleted across restarts",
+      "category": "UPSTREAM BUG / REGRESSION",
+      "decision": "ADOPT WITH #94: first fix reads placeholder Settings.dummy; include the later wait-for-loaded-settings correction."
+    },
+    {
+      "sequence": 71,
+      "sha": "c50140667043742f689ced65fd24b820668e28bd",
+      "subject": "fix(shizuku): report why binding the user service failed",
+      "category": "ADAPT",
+      "decision": "DEFER: Retain fork bind-timeout recovery and stale-connection handling while adding phase diagnostics."
+    },
+    {
+      "sequence": 72,
+      "sha": "9cf98e7f9ae6783fa7a495cf42411d7f23a0724a",
+      "subject": "fix(archive): read zip entry names written on Chinese Windows",
+      "category": "UPSTREAM BUG / REGRESSION",
+      "decision": "ADOPT WITH LOCAL PATCH: bound ZIP stream probe and Skill spool; close input and clean failed temporary files."
+    },
+    {
+      "sequence": 73,
+      "sha": "6991b23ecd896915d62d5429c3f66106eec23dff",
+      "subject": "fix(mcp): stop a server from looking usable when none of its tools are callable",
+      "category": "HIGH RISK",
+      "decision": "DEFER: MCP control gains caller-assistant parameters; refresh dynamic tool fingerprints and do not enable unrelated assistants."
+    },
+    {
+      "sequence": 74,
+      "sha": "9316df2245597fe79d971377d1e6816ddbaf6d6d",
+      "subject": "fix(chat): make compression, renaming and truncated tool results behave",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Mixed compression/rename/tool-render fixes cross custom chat timeline and saved snapshots; split into semantic ports."
+    },
+    {
+      "sequence": 75,
+      "sha": "ec61c88338375d4e6e541b21b76aaabee58475db",
+      "subject": "merge upstream 2.4.15 into the fork",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 76,
+      "sha": "f6a5330f20367378055d12253b2433d88a5cbb32",
+      "subject": "feat: trace-cli 支持 Google Interactions API",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 77,
+      "sha": "1231b8af1de9e6c4a5d6e94c5318e06d8c869ebc",
+      "subject": "test: 修正加密 reasoning 的请求断言",
+      "category": "SKIP",
+      "decision": "DEFER: decoder expectation belongs to deferred decoder changes; retain passing fork assertions."
+    },
+    {
+      "sequence": 78,
+      "sha": "0651cad9bd98a9243703f59f1fc14c1fb3661f36",
+      "subject": "fix: round bubble opacity percentage",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 79,
+      "sha": "f7869e353537640da726e61bf063bc7b85d1cc30",
+      "subject": "fix: 修复 gemini mix server/client tool下的错误",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Final Gemini correction requires #60 request/decoder set and native/translated-gateway coverage."
+    },
+    {
+      "sequence": 80,
+      "sha": "1b9dd0923e75700dd8c464455e79d24f8c35e55d",
+      "subject": "fix: 移除硅基流动余额查询",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 81,
+      "sha": "5c217d2ef0e55b13397130990fd7b3a229f070d1",
+      "subject": "fix: 默认关闭 HTML/SVG 内嵌预览",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 82,
+      "sha": "9365c297acfd6af17a2089838f55c13a3ab34589",
+      "subject": "fix: 支持配置快速模型思考级别，并移除单独的标题和建议模型配置",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Title/suggestion setting removal may discard user choices; explicit settings migration required."
+    },
+    {
+      "sequence": 83,
+      "sha": "413535671fea82580bffe6a7b3f609422a98c183",
+      "subject": "feat: 支持关闭自动重试",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Retry toggle depends on #41; preserve single retry owner and Codex cancellation."
+    },
+    {
+      "sequence": 84,
+      "sha": "d3a53e0add759b1f7d75868ce6d118e23e895067",
+      "subject": "fix: 改进图片选择，使用PickVisualMedia替代",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Photo picker changes require Codex media staging and permission checks; include file-browser restoration #90."
+    },
+    {
+      "sequence": 85,
+      "sha": "883bde7daa84480eb9b9a59483df2011a25c8633",
+      "subject": "refactor(settings): 移动 TTS 默认播放倍速设置",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 86,
+      "sha": "4309fdfe778e26f4e9e3ddfc0c89ced61d2d89d5",
+      "subject": "chore: bump to 2.4.16",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 87,
+      "sha": "ec20570b6f67a9ccfae03084a72c3c6b8cb9616d",
+      "subject": "fix(i18n): 补全 TTS 播放倍速本地化",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 88,
+      "sha": "08c2648b5a58c79e5eec9d39af1ffc85eb07e939",
+      "subject": "chore: 移除记忆id显示",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 89,
+      "sha": "540b9dfaf238d66b71f3b4de58a032f1a72028ff",
+      "subject": "fix(backup): 使用一致性快照并在启动时安全恢复备份",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Staged restore must run before Koin/Room/StateFlow startup and preserve 31->32 migration, FTS, bindings and credentials."
+    },
+    {
+      "sequence": 90,
+      "sha": "4b36640a967a3d02722273a921e38ed3ef5e8d3e",
+      "subject": "fix: 恢复图片选择器的文件浏览入口",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Companion correction for #84; preserve existing picker until both are adapted."
+    },
+    {
+      "sequence": 91,
+      "sha": "0f2c495b86da5c20f9bea354257791c98821fc56",
+      "subject": "feat(search): 支持切换当前助手与全部助手搜索",
+      "category": "HIGH RISK",
+      "decision": "DEFER: DAO/search scope changes must retain assistant isolation and searchable harness/tool-only messages."
+    },
+    {
+      "sequence": 92,
+      "sha": "5cdab9478e1920fd73ab586307f0d4e6a77e3649",
+      "subject": "fix: 为opencode端点添加x-opencode-session头",
+      "category": "ADAPT",
+      "decision": "DEFER: OpenCode session header needs the same conversation isolation policy as OpenRouter #17."
+    },
+    {
+      "sequence": 93,
+      "sha": "500a54701e65d811f074b20a517d7fdcca8fa9f9",
+      "subject": "merge upstream 2.4.16 into the fork",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 94,
+      "sha": "dda4a55214d4472d6df0923df353fd0b74022dbc",
+      "subject": "fix(skills): read the deletion record after settings have loaded",
+      "category": "ADAPT",
+      "decision": "ADOPT: wait for initialized settings; mandatory companion to #70."
+    },
+    {
+      "sequence": 95,
+      "sha": "69b000afa065dd267cd8a3951b2695061118024a",
+      "subject": "i18n(ar): merge the Arabic string updates from PR #85",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 96,
+      "sha": "dd8d6802d3bdbe9e5d20b1cb59559480db0c59f8",
+      "subject": "i18n: merge PR #82, moving hardcoded Doctor and permission text into resources",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 97,
+      "sha": "a1a15b7526ccf04d1c480e3ddb1ed79640520cc2",
+      "subject": "a11y: complete TalkBack coverage for the drawer, MCP servers, tables and code blocks",
+      "category": "ADAPT",
+      "decision": "DEFER: Accessibility changes span unified picker, native tool rows and drawer; manually preserve custom composables."
+    },
+    {
+      "sequence": 98,
+      "sha": "a6b25c6248fbfe6667e2c7dc95ae17cc2c10ef11",
+      "subject": "fix(chat): fall back to the first user line when a title cannot be generated",
+      "category": "HIGH RISK",
+      "decision": "DEFER: Title fallback assumes fast-model policy #82; preserve manual rename and background compare-and-set."
+    },
+    {
+      "sequence": 99,
+      "sha": "9c91af7f8d03ae29ceca1a27826507a484da0791",
+      "subject": "feat(subagent): add a no_result dispatch flag and raise the global cap to 30",
+      "category": "SKIP",
+      "decision": "DEFER: optional metadata/UI/scaffolding, dependency/version change or intermediate change outside this alpha."
+    },
+    {
+      "sequence": 100,
+      "sha": "316c9e88014832091cf1f850c6570838f653ecbb",
+      "subject": "feat(tools): report app versions and requested permissions in list_installed_apps",
+      "category": "ADAPT",
+      "decision": "DEFER: App metadata tool expansion changes dynamic tool schema/fingerprint; verify Android permission behavior before enabling."
+    },
+    {
+      "sequence": 101,
+      "sha": "0a463acc3e16c979678d073169d94a6a962146f4",
+      "subject": "feat(highlight): recognise luau code blocks and files",
+      "category": "SAFE",
+      "decision": "ADOPT: Luau grammar/file aliases; no lifecycle/API/persistence change."
+    }
+  ]
+}
